@@ -16,7 +16,7 @@ This file is the long-lived project memory for multi-location development. Daily
 
 - `A/v11`: original high-frequency/scanner strategy, now has full-position replacement/release logic and same-symbol no-stacking protection.
 - `B/v16`: CVD/OFI order-flow strategy. Small-stage guard was temporarily removed per user instruction; latest server event check on 2026-05-26 showed active scanning and new opens today, not a two-day stall.
-- `C/v14`: four-factor scoring strategy with same-symbol no-stacking protection.
+- `C/v14`: four-factor scoring strategy with same-symbol no-stacking protection. Signal reporting now distinguishes raw analysis candidates from real 1h entry candidates; no entry loosen was made in that observability fix.
 - Sentinel: market mover detector feeds unusual movers into strategies; strategy scans now record which layer opened, filtered, rejected, or had no signal.
 
 ## Done
@@ -52,6 +52,7 @@ This file is the long-lived project memory for multi-location development. Daily
 - Strategy evolution currently has P2 observations and rejects, but no verified P0/P1 automatic upgrade ready.
 - Polymarket monitor has found no executable gross arbitrage in the latest observed rounds; continue collecting samples before any trading design.
 - B/v16 perceived two-day inactivity was a visibility issue: the event store showed a 2026-05-26 09:21:29 +08:00 `XRPUSDT` short open plus earlier same-day opens.
+- C/v14 needs post-fix monitoring of raw candidates versus entry candidates versus opens; the old headline signal count was inflated by 15m confirmation candidates and low-score raw analysis candidates.
 
 ## Not Done / Next
 

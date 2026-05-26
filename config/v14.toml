@@ -24,11 +24,11 @@ symbol_sl_ban_hours = 72
 timeframes = ["1h", "15m"]
 entry_timeframes = ["1h"]
 confirm_timeframe = "15m"
-confirm_min_score = 25
-score_min = 35
+confirm_min_score = 35
+score_min = 25
 score_max = 80
-score_threshold_1h = 35
-score_threshold_15m = 55
+score_threshold_1h = 55
+score_threshold_15m = 65
 short_entry_penalty = 15
 
 [exit]
@@ -41,4 +41,3 @@ tp_max_mult = 10.0
 trail_stage_1_profit_atr = 2.5
 trail_stage_2_profit_atr = 4.0
 trail_stage_3_profit_atr = 6.0
-

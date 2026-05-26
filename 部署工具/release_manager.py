@@ -327,6 +327,8 @@ def upload_manifest(sftp: paramiko.SFTPClient, manifest: dict[str, Any], remote_
 
 
 def deploy(args: argparse.Namespace) -> int:
+    if args.apply and getattr(args, "dry_run", False):
+        raise SystemExit("--apply and --dry-run cannot be used together")
     target = TARGETS[args.target]
     spec = component_spec(args.target, args.component)
     rid = args.release_id or release_id(args.component)
@@ -438,6 +440,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     deploy_p.add_argument("--release-id")
     deploy_p.add_argument("--timeout", type=int, default=20)
     deploy_p.add_argument("--apply", action="store_true", help="Actually upload, compile, and restart")
+    deploy_p.add_argument("--dry-run", action="store_true", help="Explicit dry-run mode; this is also the default")
     deploy_p.add_argument("--no-restart", action="store_true")
 
     list_p = sub.add_parser("list", help="List remote releases")

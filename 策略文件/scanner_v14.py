@@ -92,6 +92,7 @@ LEVERAGE = 4
 SCORE_MIN = 25                      # 最低开仓阈值，v14优化(2026-05-06): 20→25
 SCORE_MAX = 80                      # 过热信号跳过，v14优化(2026-05-06): 60→80
 SCORE_THRESHOLDS = {"15m": 65, "1h": 55}  # 15m只做确认，1h收紧低质开仓
+SIGNAL_SCHEMA_VERSION = "v14_entry_candidate_v2"
 TAIL_GUARD_MIN_SCORE = 60
 TAIL_GUARD_LONG_BB_POS = 72
 TAIL_GUARD_SHORT_BB_POS = 28
@@ -100,6 +101,22 @@ TAIL_GUARD_MAX_ATR_PCT = 0.045
 LONG_PENALTY = 0                    # v14: 暂不扣分，等数据验证后再调整
 SHORT_ENTRY_PENALTY = 15            # P1: v14历史空头拖累，空头额外提高门槛
 SENTINEL_CONTEXT: dict[str, dict] = {}
+
+
+def entry_threshold_for(tf: str, side: str, trend_dir: str = "neutral", trend_strength: float = 0.0) -> tuple[float, int]:
+    """Return the real entry threshold used by the v14 open gate."""
+    trend_penalty = 0
+    if trend_dir == "bull" and trend_strength >= 50 and side == "short":
+        trend_penalty = 15
+    elif trend_dir == "bear" and trend_strength >= 50 and side == "long":
+        trend_penalty = 15
+    threshold = (
+        SCORE_THRESHOLDS.get(tf, SCORE_MIN)
+        + (LONG_PENALTY if side == "long" else 0)
+        + (SHORT_ENTRY_PENALTY if side == "short" else 0)
+        + trend_penalty
+    )
+    return threshold, trend_penalty
 
 # ── 止损止盈参数（ATR倍数）──
 # v14优化(2026-05-06): 分档ATR止损，替代固定倍数
@@ -900,6 +917,7 @@ def _decision_from_event(event: dict) -> dict:
     }
 
 def _decision_from_signal(signal: dict) -> dict:
+    status = str(signal.get("event") or signal.get("status") or "SIGNAL").upper()
     side = str(signal.get("trade_side") or signal.get("side") or "").lower()
     score = signal.get("net_score", signal.get("score", signal.get("vpb_score", 0)))
     reasons = signal.get("reasons") or signal.get(f"reasons_{side}") or []
@@ -911,18 +929,21 @@ def _decision_from_signal(signal: dict) -> dict:
         "time": signal.get("time") or signal.get("ts") or str(datetime.now(CST)),
         "strategy": "C/v14",
         "symbol": signal.get("symbol", ""),
-        "status": "SIGNAL",
-        "category": "signal_candidate",
+        "status": status,
+        "category": signal.get("category") or "entry_candidate",
         "side": side,
         "score": score,
         "raw_score": score,
         "timeframe": signal.get("timeframe") or signal.get("tf") or "",
         "reason": reason,
         "source": "signal",
-        "event": "SIGNAL",
+        "event": status,
         "can_trade": signal.get("can_trade"),
-        "decision_stage": "candidate",
-        "filter_layer": "strategy",
+        "entry_threshold": signal.get("entry_threshold"),
+        "raw_signal_counted": signal.get("raw_signal_counted", False),
+        "signal_schema": signal.get("signal_schema") or SIGNAL_SCHEMA_VERSION,
+        "decision_stage": signal.get("decision_stage") or "entry_candidate",
+        "filter_layer": signal.get("filter_layer") or "entry_gate",
         "reasons": reasons,
         "atr_pct": signal.get("atr_pct"),
         "bb_pos": signal.get("bb_pos"),
@@ -1555,22 +1576,38 @@ class Scanner:
             tf_signals.sort(key=lambda x: abs(x["net_score"]), reverse=True)
             all_signals[tf] = tf_signals
 
-        # 4. 输出信号
-        for tf in TIMEFRAMES:
+        # 4. 输出入场候选信号
+        # 15m 是确认周期，低于真实入场门槛的 1h 结果只是原始分析候选；
+        # 只有能进入开仓门控的 1h 候选才写 SIGNAL，避免入口页把噪声当成可交易信号。
+        raw_signal_count = sum(len(s) for s in all_signals.values())
+        entry_signal_count = 0
+        for tf in ENTRY_TIMEFRAMES:
             for sig in all_signals[tf]:
                 side = sig["trade_side"]
+                abs_score = abs(float(sig.get("net_score") or 0))
+                threshold, trend_penalty = entry_threshold_for(tf, side, trend_dir, trend_str)
+                if abs_score > SCORE_MAX or abs_score < threshold:
+                    continue
                 reasons = sig["reasons_long"] if side == "long" else sig["reasons_short"]
                 logger.info(
-                    f"  📡 [{tf}] {sig['symbol']}: score={sig['net_score']:+.0f} "
-                    f"side={side} | {'|'.join(reasons)}"
+                    f"  📡 入场候选[{tf}] {sig['symbol']}: score={sig['net_score']:+.0f} "
+                    f"threshold={threshold:.0f} side={side} | {'|'.join(reasons)}"
                 )
                 log_signal({
                     "ts": now_str,
+                    "event": "SIGNAL",
+                    "category": "entry_candidate",
+                    "decision_stage": "entry_candidate",
+                    "filter_layer": "entry_gate",
                     "strategy": "v14_multi_dim",
+                    "signal_schema": SIGNAL_SCHEMA_VERSION,
                     "timeframe": tf,
                     "symbol": sig["symbol"],
                     "net_score": sig["net_score"],
                     "trade_side": side,
+                    "entry_threshold": threshold,
+                    "trend_penalty": trend_penalty,
+                    "raw_signal_counted": False,
                     "reasons": reasons,
                     "price": sig.get("price", 0),
                     "atr": sig.get("atr", 0),
@@ -1583,6 +1620,7 @@ class Scanner:
                     "st_flipped": sig.get("st_flipped", False),
                     **sentinel_fields(sig["symbol"]),
                 })
+                entry_signal_count += 1
 
         # 5. 开仓（1h优先，15m只做确认）
         opened_symbols = set()
@@ -1597,15 +1635,6 @@ class Scanner:
                     continue
                 if sym in opened_symbols:
                     continue
-
-                # v14优化(2026-05-08): BTC大趋势过滤
-                # 大趋势向上 → 空头门槛+15（降低空头频率）
-                # 大趋势向下 → 多头门槛+15（降低多头频率）
-                trend_penalty = 0
-                if trend_dir == "bull" and trend_str >= 50 and side == "short":
-                    trend_penalty = 15
-                elif trend_dir == "bear" and trend_str >= 50 and side == "long":
-                    trend_penalty = 15
 
                 # 否决: 同方向持仓已存在（跨周期检查）
                 already_holding = self._has_position(sym, side)
@@ -1652,12 +1681,7 @@ class Scanner:
                         continue
 
                 # 多头额外门槛 + 趋势惩罚
-                threshold = (
-                    SCORE_THRESHOLDS.get(tf, SCORE_MIN)
-                    + (LONG_PENALTY if side == "long" else 0)
-                    + (SHORT_ENTRY_PENALTY if side == "short" else 0)
-                    + trend_penalty
-                )
+                threshold, trend_penalty = entry_threshold_for(tf, side, trend_dir, trend_str)
                 if abs_score < threshold:
                     if trend_penalty > 0:
                         logger.info(f"  ⏭️ [{tf}] {sym} {side} 趋势门槛+{trend_penalty} → 需{threshold}分，实际{abs_score:.0f}分，跳过")
@@ -1711,7 +1735,10 @@ class Scanner:
             "positions": total_pos,
             "consecutive_losses": self.consecutive_losses,
             "symbols_scanned": len(symbols),
-            "signals_found": sum(len(s) for s in all_signals.values()),
+            "signals_found": entry_signal_count,
+            "entry_signals_found": entry_signal_count,
+            "raw_signals_found": raw_signal_count,
+            "signal_schema": SIGNAL_SCHEMA_VERSION,
             "status": "running",
         })
 

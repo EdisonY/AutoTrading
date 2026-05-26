@@ -808,7 +808,47 @@ def sqlite_strategy_decision_summary() -> list[dict[str, Any]]:
                 """,
                 (name, cutoff_day),
             ).fetchall()
-            signal_count = sum(int(r["n"] or 0) for r in grouped if str(r["source"]).endswith("/signals"))
+            raw_signal_count = sum(int(r["n"] or 0) for r in grouped if str(r["source"]).endswith("/signals"))
+            signal_count = raw_signal_count
+            if name == "C/v14":
+                try:
+                    signal_count = int(
+                        conn.execute(
+                            """
+                            select count(*) from events
+                            where strategy='C/v14' and source like '%/signals' and substr(ts, 1, 10) >= ?
+                              and event_type='SIGNAL'
+                              and coalesce(json_extract(payload_json, '$.timeframe'), '')='1h'
+                              and abs(coalesce(score, 0)) <= 80
+                              and (
+                                (lower(side)='long' and abs(coalesce(score, 0)) >= 55)
+                                or (lower(side)='short' and abs(coalesce(score, 0)) >= 70)
+                              )
+                            """,
+                            (cutoff_day,),
+                        ).fetchone()[0]
+                    )
+                except Exception:
+                    rows = conn.execute(
+                        """
+                        select side, score, payload_json from events
+                        where strategy='C/v14' and source like '%/signals' and substr(ts, 1, 10) >= ?
+                          and event_type='SIGNAL'
+                        """,
+                        (cutoff_day,),
+                    ).fetchall()
+                    signal_count = 0
+                    for row in rows:
+                        try:
+                            payload = json.loads(row["payload_json"])
+                        except Exception:
+                            payload = {}
+                        if str(payload.get("timeframe") or "").lower() != "1h":
+                            continue
+                        side = str(row["side"] or payload.get("trade_side") or "").lower()
+                        score = abs(float(row["score"] or payload.get("net_score") or 0))
+                        if score <= 80 and ((side == "long" and score >= 55) or (side == "short" and score >= 70)):
+                            signal_count += 1
             decision_counts = Counter()
             for row in grouped:
                 if str(row["source"]).endswith("/decisions"):
@@ -889,6 +929,8 @@ def sqlite_strategy_decision_summary() -> list[dict[str, Any]]:
                 notes.append("胜率偏低")
             if signal_count > 5000 and opens < 10:
                 notes.append("信号过密/转化低")
+            if name == "C/v14" and raw_signal_count > max(signal_count * 5, signal_count + 1000):
+                notes.append(f"原始候选{raw_signal_count}/入场候选{signal_count}")
             if http400:
                 notes.append("哨兵400未清零")
             if not signal_count:
@@ -908,6 +950,7 @@ def sqlite_strategy_decision_summary() -> list[dict[str, Any]]:
                     "wins": wins,
                     "win_rate": win_rate,
                     "signals": signal_count,
+                    "raw_signals": raw_signal_count,
                     "opens": opens,
                     "sentinel": sentinel_count,
                     "http400": http400,
@@ -1466,7 +1509,7 @@ def render_html(out_dir: Path) -> str:
   <td class="num {'pos' if r['pnl'] >= 0 else 'neg'}">{r['pnl']:+.2f}</td>
   <td>{h(r['closed'])}</td>
   <td>{r['win_rate']:.1f}%</td>
-  <td>{h(r['signals'])}</td>
+  <td>{h(r['signals'])}{f"<br><small>原始 {h(r.get('raw_signals'))}</small>" if r.get('raw_signals') and r.get('raw_signals') != r.get('signals') else ""}</td>
   <td>{h(r['opens'])}</td>
   <td>{h(r['positions'])}</td>
   <td>{h(r['sentinel'])}</td>
@@ -1871,7 +1914,7 @@ th {{ background:#f1f5f9; color:#334155; }}
     <h2>策略决策总览</h2>
     <p class="note">这是你最关心的表：每套策略昨天到当前镜像的盈亏、信号是否还在产生、是否开仓、哨兵是否参与、有没有明显异常。</p>
     <table>
-      <thead><tr><th>策略</th><th>PnL</th><th>平仓</th><th>胜率</th><th>信号</th><th>开仓事件</th><th>持仓</th><th>哨兵决策</th><th>最近开仓</th><th>最后活动</th><th>判断</th></tr></thead>
+      <thead><tr><th>策略</th><th>PnL</th><th>平仓</th><th>胜率</th><th>入场候选</th><th>开仓事件</th><th>持仓</th><th>哨兵决策</th><th>最近开仓</th><th>最后活动</th><th>判断</th></tr></thead>
       <tbody>{decision_rows}</tbody>
     </table>
   </section>

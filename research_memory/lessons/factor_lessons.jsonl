@@ -1,0 +1,9 @@
+{"date": "2026-05-22", "strategy": "A/v11", "case_type": "loss_trade", "count": 42, "avg_score": 57.1286, "avg_move_pct": 0.351, "avg_confidence": 0.6262, "top_attribution": "仅基于交易日志归因，未做日内K线阶段判断"}
+{"date": "2026-05-22", "strategy": "A/v11", "case_type": "missed_big_move", "count": 12, "avg_score": 0.0, "avg_move_pct": 3.5834, "avg_confidence": 0.8675, "top_attribution": "无信号/无跳过记录，可能被成交量、ATR、扫描名单或前置分数过滤"}
+{"date": "2026-05-22", "strategy": "A/v11", "case_type": "reverse_trade", "count": 5, "avg_score": 93.16, "avg_move_pct": -6.8687, "avg_confidence": 0.776, "top_attribution": "局部信号有效但缺少日内方向确认"}
+{"date": "2026-05-22", "strategy": "B/v16", "case_type": "loss_trade", "count": 10, "avg_score": 43.2, "avg_move_pct": 0.0, "avg_confidence": 0.63, "top_attribution": "仅基于交易日志归因，未做日内K线阶段判断"}
+{"date": "2026-05-22", "strategy": "B/v16", "case_type": "missed_big_move", "count": 15, "avg_score": 0.0, "avg_move_pct": 4.5991, "avg_confidence": 0.8633, "top_attribution": "无信号/无跳过记录，可能被成交量、ATR、扫描名单或前置分数过滤"}
+{"date": "2026-05-22", "strategy": "B/v16", "case_type": "reverse_trade", "count": 2, "avg_score": 43.0, "avg_move_pct": -10.0707, "avg_confidence": 0.765, "top_attribution": "局部信号有效但缺少日内方向确认"}
+{"date": "2026-05-22", "strategy": "C/v14", "case_type": "loss_trade", "count": 10, "avg_score": 46.94, "avg_move_pct": 0.0, "avg_confidence": 0.63, "top_attribution": "仅基于交易日志归因，未做日内K线阶段判断"}
+{"date": "2026-05-22", "strategy": "C/v14", "case_type": "missed_big_move", "count": 16, "avg_score": 0.0, "avg_move_pct": 3.0907, "avg_confidence": 0.8644, "top_attribution": "无信号/无跳过记录，可能被成交量、ATR、扫描名单或前置分数过滤"}
+{"date": "2026-05-22", "strategy": "C/v14", "case_type": "reverse_trade", "count": 1, "avg_score": 47.0, "avg_move_pct": -0.6043, "avg_confidence": 0.65, "top_attribution": "把趋势中的回调/反弹当成反转"}

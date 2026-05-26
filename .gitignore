@@ -1,0 +1,53 @@
+# Python/runtime caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Local virtual environments and package caches
+.venv/
+venv/
+env/
+.env
+.env.*
+!.env.example
+
+# Secrets, keys, certificates, and local credentials
+*.pem
+*.key
+*.pfx
+*.p12
+*.crt
+id_rsa*
+id_ed25519*
+*_credentials.json
+*secret*
+*secrets*
+credentials/
+
+# Runtime state, SQLite databases, logs, and server mirrors
+runtime/
+logs/
+server_logs_tencent/
+*.sqlite
+*.sqlite3
+*.db
+*.db-*
+*.log
+
+# Generated reports and bulky analysis outputs
+reports/
+复盘报告/
+回测数据/
+polymarket_lab/reports/
+experiments/results/
+research_memory/cases/
+research_memory/snapshots/
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+

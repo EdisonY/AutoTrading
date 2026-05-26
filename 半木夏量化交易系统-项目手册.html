@@ -1,0 +1,803 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>半木夏量化交易系统 — 项目全景手册</title>
+<style>
+:root {
+  --bg: #0d1117; --bg2: #161b22; --bg3: #1c2333;
+  --text: #c9d1d9; --text2: #8b949e; --accent: #58a6ff;
+  --green: #22c55e; --red: #ef4444; --yellow: #eab308;
+  --border: #30363d; --card: #161b22;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); line-height: 1.7; }
+.container { max-width: 1200px; margin: 0 auto; padding: 20px; }
+
+/* Header */
+.header { text-align: center; padding: 60px 20px 40px; border-bottom: 1px solid var(--border); margin-bottom: 40px; }
+.header h1 { font-size: 2.2em; color: #fff; margin-bottom: 8px; }
+.header .subtitle { color: var(--text2); font-size: 1.1em; }
+.header .meta { margin-top: 16px; display: flex; justify-content: center; gap: 24px; flex-wrap: wrap; }
+.header .meta .tag { background: var(--bg3); padding: 4px 14px; border-radius: 20px; font-size: 0.85em; border: 1px solid var(--border); }
+
+/* Navigation */
+.nav { position: sticky; top: 0; background: var(--bg); border-bottom: 1px solid var(--border); padding: 10px 0; z-index: 100; margin-bottom: 30px; }
+.nav-inner { max-width: 1200px; margin: 0 auto; display: flex; gap: 6px; overflow-x: auto; padding: 0 20px; flex-wrap: wrap; }
+.nav a { color: var(--text2); text-decoration: none; padding: 6px 14px; border-radius: 6px; font-size: 0.85em; white-space: nowrap; transition: all 0.2s; border: 1px solid transparent; }
+.nav a:hover { background: var(--bg3); color: var(--accent); border-color: var(--border); }
+
+/* Sections */
+section { margin-bottom: 50px; }
+section h2 { font-size: 1.5em; color: #fff; margin-bottom: 20px; padding-bottom: 10px; border-bottom: 2px solid var(--accent); }
+section h3 { font-size: 1.15em; color: var(--accent); margin: 20px 0 10px; }
+
+/* Cards */
+.card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 20px; margin-bottom: 16px; }
+.card-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 16px; }
+.card-title { font-weight: 600; color: #fff; margin-bottom: 10px; display: flex; align-items: center; gap: 8px; }
+.card-title .emoji { font-size: 1.2em; }
+
+/* Stats */
+.stats-row { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
+.stat { background: var(--bg3); border: 1px solid var(--border); border-radius: 8px; padding: 12px 18px; min-width: 120px; flex: 1; }
+.stat .label { font-size: 0.75em; color: var(--text2); text-transform: uppercase; letter-spacing: 0.5px; }
+.stat .value { font-size: 1.4em; font-weight: 700; margin-top: 2px; }
+.stat .value.pos { color: var(--green); }
+.stat .value.neg { color: var(--red); }
+
+/* Tables */
+table { width: 100%; border-collapse: collapse; margin: 10px 0; font-size: 0.9em; }
+th { background: var(--bg3); color: var(--text2); text-align: left; padding: 10px 12px; font-weight: 600; font-size: 0.8em; text-transform: uppercase; letter-spacing: 0.5px; }
+td { padding: 10px 12px; border-bottom: 1px solid var(--border); }
+tr:hover { background: rgba(88,166,255,0.04); }
+.pos-val { color: var(--green); font-weight: 600; }
+.neg-val { color: var(--red); font-weight: 600; }
+
+/* Code / Config */
+pre, code { font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace; }
+pre { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 16px; overflow-x: auto; font-size: 0.85em; line-height: 1.6; margin: 10px 0; }
+code { background: var(--bg3); padding: 2px 6px; border-radius: 4px; font-size: 0.9em; }
+pre code { background: none; padding: 0; }
+
+/* Config list */
+.config-list { list-style: none; }
+.config-list li { padding: 6px 0; border-bottom: 1px solid rgba(48,54,61,0.5); display: flex; gap: 10px; align-items: baseline; }
+.config-list li:last-child { border-bottom: none; }
+.config-list .key { color: var(--accent); font-weight: 600; min-width: 160px; font-size: 0.9em; }
+.config-list .val { color: var(--text); word-break: break-all; }
+
+/* Timeline */
+.timeline { position: relative; padding-left: 30px; }
+.timeline::before { content: ''; position: absolute; left: 8px; top: 0; bottom: 0; width: 2px; background: var(--border); }
+.timeline-item { position: relative; margin-bottom: 20px; }
+.timeline-item::before { content: ''; position: absolute; left: -26px; top: 8px; width: 12px; height: 12px; border-radius: 50%; background: var(--accent); border: 2px solid var(--bg); }
+.timeline-item .date { font-size: 0.8em; color: var(--accent); font-weight: 600; }
+.timeline-item .content { margin-top: 4px; }
+
+/* Alerts */
+.alert { padding: 14px 18px; border-radius: 8px; margin: 10px 0; font-size: 0.9em; }
+.alert-warn { background: rgba(234,179,8,0.1); border: 1px solid rgba(234,179,8,0.3); color: var(--yellow); }
+.alert-info { background: rgba(88,166,255,0.1); border: 1px solid rgba(88,166,255,0.3); color: var(--accent); }
+.alert-danger { background: rgba(239,68,68,0.1); border: 1px solid rgba(239,68,68,0.3); color: var(--red); }
+.alert-success { background: rgba(34,197,94,0.1); border: 1px solid rgba(34,197,94,0.3); color: var(--green); }
+
+/* File tree */
+.file-tree { font-family: 'Cascadia Code', monospace; font-size: 0.85em; line-height: 1.8; }
+.file-tree .dir { color: var(--accent); }
+.file-tree .file { color: var(--text); }
+.file-tree .desc { color: var(--text2); font-style: italic; }
+
+/* Collapsible */
+details { margin: 10px 0; }
+details summary { cursor: pointer; padding: 10px 16px; background: var(--bg3); border: 1px solid var(--border); border-radius: 8px; font-weight: 600; color: var(--accent); user-select: none; }
+details summary:hover { background: rgba(88,166,255,0.08); }
+details[open] summary { border-radius: 8px 8px 0 0; }
+details .detail-content { padding: 16px; border: 1px solid var(--border); border-top: none; border-radius: 0 0 8px 8px; background: var(--card); }
+
+/* Responsive */
+@media (max-width: 768px) {
+  .header h1 { font-size: 1.5em; }
+  .card-grid { grid-template-columns: 1fr; }
+  .stats-row { flex-direction: column; }
+  .config-list li { flex-direction: column; gap: 2px; }
+  .config-list .key { min-width: auto; }
+}
+</style>
+</head>
+<body>
+
+<div class="container">
+<!-- ═══════════════ HEADER ═══════════════ -->
+<div class="header">
+  <h1>🤖 半木夏量化交易系统</h1>
+  <div class="subtitle">Binance USDM Futures · 三账号并行测试 · v11半木夏 / v16订单流 / v14四维度</div>
+  <div class="meta">
+    <span class="tag">📅 生成时间: 2026-05-12 18:55 CST</span>
+    <span class="tag">🖥️ 服务器: 39.105.156.210</span>
+    <span class="tag">📊 总交易: 3,682笔</span>
+    <span class="tag">💰 累计PnL: -$201</span>
+  </div>
+</div>
+
+<!-- ═══════════════ NAV ═══════════════ -->
+<div class="nav">
+<div class="nav-inner">
+  <a href="#overview">总览</a>
+  <a href="#server">服务器</a>
+  <a href="#accounts">三账号配置</a>
+  <a href="#strategy">策略架构</a>
+  <a href="#files">关键文件</a>
+  <a href="#backtest">回测系统</a>
+  <a href="#performance">实盘表现</a>
+  <a href="#v13-analysis">v13深度分析</a>
+  <a href="#issues">已知问题</a>
+  <a href="#deploy">部署指南</a>
+  <a href="#timeline">开发时间线</a>
+</div>
+</div>
+
+<!-- ═══════════════ 1. OVERVIEW ═══════════════ -->
+<section id="overview">
+<h2>📋 项目总览</h2>
+
+<div class="stats-row">
+  <div class="stat"><div class="label">账号A (v11)</div><div class="value pos">+$132</div></div>
+  <div class="stat"><div class="label">账号B (v16)</div><div class="value">新上线</div></div>
+  <div class="stat"><div class="label">账号C (v14)</div><div class="value neg">-$543</div></div>
+  <div class="stat"><div class="label">累计PnL</div><div class="value neg">-$201</div></div>
+  <div class="stat"><div class="label">总余额</div><div class="value">$3,510</div></div>
+</div>
+
+<div class="card">
+  <div class="card-title"><span class="emoji">🏗️</span> 系统架构</div>
+  <ul class="config-list">
+    <li><span class="key">交易模式</span><span class="val">Binance USDM Futures Testnet · 双向持仓(Hedge Mode) · 4倍全仓(CROSSED)</span></li>
+    <li><span class="key">API方式</span><span class="val">原生 urllib + HMAC-SHA256 签名（不依赖ccxt）</span></li>
+    <li><span class="key">止盈止损</span><span class="val">Scanner自身追踪（Binance Testnet不支持STOP_MARKET，报-4120）</span></li>
+    <li><span class="key">持仓恢复</span><span class="val">重启后自动从交易所恢复持仓到内存SimPosition</span></li>
+    <li><span class="key">AB测试</span><span class="val">v11/v13/v14三策略并行，不同参数互不同步</span></li>
+  </ul>
+</div>
+</section>
+
+<!-- ═══════════════ 2. SERVER ═══════════════ -->
+<section id="server">
+<h2>🖥️ 服务器信息</h2>
+
+<div class="card">
+  <div class="card-title"><span class="emoji">☁️</span> 阿里云 ECS</div>
+  <ul class="config-list">
+    <li><span class="key">IP地址</span><span class="val"><code>39.105.156.210</code></span></li>
+    <li><span class="key">用户名</span><span class="val"><code>root</code></span></li>
+    <li><span class="key">密码</span><span class="val"><code>Caosinima00.</code></span></li>
+    <li><span class="key">操作系统</span><span class="val">CentOS 8.2</span></li>
+    <li><span class="key">内存</span><span class="val">1,745 MB（可用约1GB）</span></li>
+    <li><span class="key">Python</span><span class="val">/root/miniconda3/bin/python3 (3.13.12)</span></li>
+    <li><span class="key">项目路径</span><span class="val"><code>/opt/crypto-auto-trader</code></span></li>
+    <li><span class="key">SSH免密</span><span class="val">已配置</span></li>
+  </ul>
+</div>
+
+<div class="card">
+  <div class="card-title"><span class="emoji">⚙️</span> Systemd 服务</div>
+  <table>
+    <tr><th>服务名</th><th>用途</th><th>端口</th><th>状态</th></tr>
+    <tr><td><code>crypto-scanner</code></td><td>v11 Scanner (账号A)</td><td>—</td><td style="color:var(--green)">active</td></tr>
+    <tr><td><code>crypto-scanner-v14</code></td><td>v14 Scanner (账号C)</td><td>—</td><td style="color:var(--green)">active</td></tr>
+    <tr><td><code>crypto-scanner-v16</code></td><td>v16 Scanner (账号B，2026-05-12新增)</td><td>—</td><td style="color:var(--green)">active</td></tr>
+    <tr><td><code>crypto-scanner-v13</code></td><td>v13 Scanner (账号B，已停用)</td><td>—</td><td style="color:var(--red)">disabled</td></tr>
+    <tr><td><code>crypto-dashboard</code></td><td>Dashboard A</td><td>8081</td><td style="color:var(--green)">active</td></tr>
+    <tr><td><code>crypto-dashboard-b</code></td><td>Dashboard B（v16配套，已停用）</td><td>8082</td><td style="color:var(--yellow)">stopped</td></tr>
+    <tr><td><code>crypto-dashboard-c</code></td><td>Dashboard C</td><td>8084</td><td style="color:var(--green)">active</td></tr>
+    <tr><td><code>crypto-dashboard-dual</code></td><td>双账号对比</td><td>8083</td><td style="color:var(--green)">active</td></tr>
+    <tr><td><code>crypto-scanner-v12</code></td><td>v12 (已停用)</td><td>—</td><td style="color:var(--red)">disabled</td></tr>
+  </table>
+</div>
+
+<div class="alert alert-warn">
+  ⚠️ 阿里云安全组未开放8081/8082/8083/8084端口，Dashboard仅服务器本地可访问。
+</div>
+</section>
+
+<!-- ═══════════════ 3. ACCOUNTS ═══════════════ -->
+<section id="accounts">
+<h2>🔑 三账号配置</h2>
+
+<div class="card-grid">
+<!-- Account A -->
+<div class="card">
+  <div class="card-title"><span class="emoji">🇦</span> Account A — v11策略</div>
+  <ul class="config-list">
+    <li><span class="key">API Key</span><span class="val" style="font-size:0.8em">GVj9IiAxSFBR3rxIfaYrpY8ejnaYEyrIAAxsDIC96fU9OihvTi2o0HpTdlWDd7nh</span></li>
+    <li><span class="key">API Secret</span><span class="val" style="font-size:0.8em">zJzHayctHUzUlsGz6ct8yNCHm8wT7RhgP4fFYinAZedP4DPj3WxeTunkwFWeV4bd</span></li>
+    <li><span class="key">Scanner</span><span class="val"><code>scanner.py</code></span></li>
+    <li><span class="key">Client</span><span class="val"><code>binance_client.py</code></span></li>
+    <li><span class="key">日志</span><span class="val"><code>logs/</code> + <code>scanner_data/</code></span></li>
+    <li><span class="key">Dashboard</span><span class="val">端口 8081 · 蓝色主题</span></li>
+    <li><span class="key">历史PnL</span><span class="val pos">+$132.90 ✅</span></li>
+    <li><span class="key">钱包余额</span><span class="val">$3,083</span></li>
+    <li><span class="key">持仓</span><span class="val">70个</span></li>
+  </ul>
+</div>
+
+<!-- Account B -->
+<div class="card">
+  <div class="card-title"><span class="emoji">🇧</span> Account B — v16策略（2026-05-12新增）</div>
+  <ul class="config-list">
+    <li><span class="key">API Key</span><span class="val" style="font-size:0.8em">vGlIBNOECTVfOeEdPMSbSNzgJN7MM2I7dN3DhAapwlLfo6adna8wu6UAnXaGvNJv</span></li>
+    <li><span class="key">API Secret</span><span class="val" style="font-size:0.8em">3qDiJaLSBG5pjipfV42qSMZwdvZcuoQf2Zo9TxTnr6ZchLMGqr4gZo3JVpHKiPqV</span></li>
+    <li><span class="key">Scanner</span><span class="val"><code>scanner_v16.py</code>（订单流策略，2026-05-12新增）</span></li>
+    <li><span class="key">Client</span><span class="val"><code>binance_client_v2.py</code></span></li>
+    <li><span class="key">日志</span><span class="val"><code>logs_v16/</code> + <code>scanner_data_v16/</code></span></li>
+    <li><span class="key">Dashboard</span><span class="val">已停用（端口8082）</span></li>
+    <li><span class="key">历史PnL</span><span class="val pos">+$209.12 ✅（v13历史，2026-05-01~05-12）</span></li>
+    <li><span class="key">钱包余额</span><span class="val">$0（v13历史持仓未平）</span></li>
+    <li><span class="key">v16状态</span><span class="val" style="color:var(--green)">active since 2026-05-12 18:33</span></li>
+  </ul>
+</div>
+
+<!-- Account C -->
+<div class="card">
+  <div class="card-title"><span class="emoji">🇨</span> Account C — v14策略</div>
+  <ul class="config-list">
+    <li><span class="key">API Key</span><span class="val" style="font-size:0.8em">JHrzk9ZAmjn3f6dEztm7eYEfwTlOvLGTP3PdiJJS5XLU9gd2ZezHZAXV09oiB67f</span></li>
+    <li><span class="key">API Secret</span><span class="val" style="font-size:0.8em">tlfSQBj0n9vcnpKdHBnSu5rvCH5QnD9osQenweJukSndwNy9JoifKZBc5uhMn9CZ</span></li>
+    <li><span class="key">Scanner</span><span class="val"><code>scanner_v14.py</code></span></li>
+    <li><span class="key">Client</span><span class="val"><code>binance_client_v3.py</code></span></li>
+    <li><span class="key">日志</span><span class="val"><code>logs_v14/</code> + <code>scanner_data_v14/</code></span></li>
+    <li><span class="key">Dashboard</span><span class="val">端口 8084 · 绿色主题</span></li>
+    <li><span class="key">历史PnL</span><span class="val neg">-$543.70 ❌</span></li>
+    <li><span class="key">可用余额</span><span class="val">$307</span></li>
+    <li><span class="key">持仓</span><span class="val">28个</span></li>
+  </ul>
+</div>
+</div>
+
+<div class="alert alert-info">
+  💡 <strong>get_balance格式差异：</strong> 账号A/B返回dict（assets列表），<strong>账号C返回list</strong>（直接遍历）。Dashboard API已兼容两种格式。
+</div>
+</section>
+
+<!-- ═══════════════ 4. STRATEGY ═══════════════ -->
+<section id="strategy">
+<h2>📊 策略架构</h2>
+
+<h3>核心参数</h3>
+<div class="card">
+  <ul class="config-list">
+    <li><span class="key">杠杆</span><span class="val">4倍 全仓(CROSSED)</span></li>
+    <li><span class="key">每笔开仓</span><span class="val">$100 USDT</span></li>
+    <li><span class="key">高波动过滤</span><span class="val">ATR/Price > 5% 跳过</span></li>
+    <li><span class="key">ATR=0异常</span><span class="val">自动黑名单</span></li>
+    <li><span class="key">最大亏损</span><span class="val">30% 强制平仓</span></li>
+    <li><span class="key">双向持仓</span><span class="val">Hedge Mode，独立监控</span></li>
+  </ul>
+</div>
+
+<h3>v11 策略 (Account A) — 半木夏基础版</h3>
+<div class="card">
+  <ul class="config-list">
+    <li><span class="key">信号</span><span class="val">MACD(13,34,9) + SuperTrend(ATR=10, 乘数=3.0) 条件加权</span></li>
+    <li><span class="key">止损</span><span class="val">去掉固定止损，只用浮动止损 + 30%最大亏损兜底</span></li>
+    <li><span class="key">冷却</span><span class="val">30分钟</span></li>
+    <li><span class="key">特点</span><span class="val">对照组不改，用于对比基准</span></li>
+  </ul>
+</div>
+
+<h3>v13 策略 (Account B) — 半木夏优化版</h3>
+<div class="card">
+  <ul class="config-list">
+    <li><span class="key">信号</span><span class="val">半木夏 + WaveTrend(回测胜率70%, 盈亏比2.2)</span></li>
+    <li><span class="key">WaveTrend</span><span class="val">WT超卖金叉(-60) +20分 / WT低位上升(-50) +10分 / WT超买死叉(+60) +20分 / WT高位下降(+50) +10分</span></li>
+    <li><span class="key">阈值</span><span class="val">15m≥100 / 30m≥100，SCORE_CAP=150</span></li>
+    <li><span class="key">最大持仓</span><span class="val">4个/周期</span></li>
+    <li><span class="key">冷却</span><span class="val">240分钟</span></li>
+    <li><span class="key">ATR止损</span><span class="val">2.0×ATR (15m) / 2.0×ATR (30m)</span></li>
+    <li><span class="key">浮动止损</span><span class="val">activate=2.0, pullback=2.0/2.5</span></li>
+    <li><span class="key">VPB</span><span class="val">已禁用（待优化后重新集成）</span></li>
+    <li><span class="key">ATR/Price</span><span class="val">&lt;1% 跳过</span></li>
+  </ul>
+</div>
+
+<h3>v14 策略 (Account C) — 四维度新策略</h3>
+<div class="card">
+  <ul class="config-list">
+    <li><span class="key">评分体系</span><span class="val">趋势(25) + 动量(25) + 量价(25) + 结构(25) = 满分100</span></li>
+    <li><span class="key">否决机制</span><span class="val">7条系统性否决规则</span></li>
+    <li><span class="key">扫描周期</span><span class="val">15m + 1h 双周期（1h过滤噪声）</span></li>
+    <li><span class="key">阈值</span><span class="val">25</span></li>
+    <li><span class="key">初始止损</span><span class="val">1.8×ATR(15m) / 2.0×ATR(1h)</span></li>
+    <li><span class="key">阶梯止损</span><span class="val">2.5×ATR→成本价 → 4.0×ATR→2.0×ATR → 6.0×ATR→2.5×ATR</span></li>
+    <li><span class="key">分档ATR</span><span class="val">低波2.3 / 中波2.0 / 高波1.5</span></li>
+    <li><span class="key">硬底</span><span class="val">30% 强制平仓</span></li>
+    <li><span class="key">赛道分散</span><span class="val">同赛道 ≤3仓</span></li>
+    <li><span class="key">冷却</span><span class="val">120分钟（连续5次亏损触发）</span></li>
+    <li><span class="key">空头惩罚</span><span class="val">+15分门槛</span></li>
+    <li><span class="key">BTC过滤</span><span class="val">bull→空头+15 / bear→多头+15</span></li>
+  </ul>
+</div>
+
+<h3>Scanner 版本演进</h3>
+<div class="card">
+  <table>
+    <tr><th>版本</th><th>状态</th><th>关键变更</th></tr>
+    <tr><td>v14</td><td style="color:var(--green)">生产</td><td>四维度评分 + 资金费率信号 + 黑名单优化 + 硬底20%</td></tr>
+    <tr><td>v16</td><td style="color:var(--green)">生产</td><td>订单流OFI(25分) + RSI背离(25分) + 资金费率(10分) + EMA确认(10分) · OFI窗口20 · 阈值30</td></tr>
+    <tr><td>v13</td><td style="color:var(--red)">停用</td><td>85%恢复仓位无alpha，已被v16替代</td></tr>
+    <tr><td>v11</td><td style="color:var(--green)">生产</td><td>去掉固定止损 + 浮动止损+30%兜底 + 冷却30min</td></tr>
+    <tr><td>v12</td><td style="color:var(--red)">停用</td><td>30m阈值90，EVICT恢复，被v13替代</td></tr>
+    <tr><td>v10</td><td style="color:var(--red)">停用</td><td>15m+30m双周期，阈值80</td></tr>
+  </table>
+</div>
+</section>
+
+<h3>v16 策略 (Account B) — 订单流策略（2026-05-12新增）</h3>
+<div class="card">
+  <ul class="config-list">
+    <li><span class="key">信号体系</span><span class="val">订单流OFI + RSI背离 + 资金费率 + EMA确认，极简高效</span></li>
+    <li><span class="key">OFI</span><span class="val">OFI>+30% = 多头+25 / OFI<-30% = 空头+25 / 确认阈值±15%</span></li>
+    <li><span class="key">RSI背离</span><span class="val">底背离=多头+25 / 顶背离=空头+25 / 超卖<30超买>70额外+15</span></li>
+    <li><span class="key">资金费率</span><span class="val">>+0.08% = 空头+10 / <-0.08% = 多头+10</span></li>
+    <li><span class="key">EMA确认</span><span class="val">EMA多头=多头+10 / EMA空头=空头+10</span></li>
+    <li><span class="key">阈值</span><span class="val">30-90分，MAX_POS=4/周期，冷却60min</span></li>
+    <li><span class="key">止损</span><span class="val">2.0×ATR | 止盈4.0×ATR | 浮动止损激活2.0回撤1.5</span></li>
+    <li><span class="key">特点</span><span class="val">纯numpy实现，不用sklearn，L2订单簿获取OFI</span></li>
+  </ul>
+</div>
+
+<!-- ═══════════════ 5. FILES ═══════════════ -->
+<section id="files">
+<h2>📁 关键文件清单</h2>
+
+<div class="card">
+  <div class="card-title"><span class="emoji">📄</span> 核心策略文件</div>
+  <table>
+    <tr><th>文件</th><th>用途</th><th>账号</th></tr>
+    <tr><td><code>scanner.py</code></td><td>v11扫描器（对照组不改）</td><td>A</td></tr>
+    <tr><td><code>scanner_v14.py</code></td><td>v14扫描器（四维度+资金费率，2026-05-12优化）</td><td>C</td></tr>
+    <tr><td><code>scanner_v16.py</code></td><td>v16扫描器（订单流+OFI+RSI背离，2026-05-12新增）</td><td>B</td></tr>
+    <tr><td><code>scanner_v13.py</code></td><td>v13扫描器（已停用）</td><td>—</td></tr>
+    <tr><td><code>strategy_breakout.py</code></td><td>VPB量价突破策略模块</td><td>—</td></tr>
+    <tr><td><code>cloud/analyzer/auxiliary.py</code></td><td>指标库（MACD/RSI/ATR/ADX/BB/Stoch/ST等）</td><td>共享</td></tr>
+  </table>
+</div>
+
+<div class="card">
+  <div class="card-title"><span class="emoji">🔗</span> 交易客户端</div>
+  <table>
+    <tr><th>文件</th><th>用途</th><th>账号</th></tr>
+    <tr><td><code>binance_client.py</code></td><td>Binance客户端（urllib+HMAC签名）</td><td>A</td></tr>
+    <tr><td><code>binance_client_v2.py</code></td><td>Binance客户端</td><td>B</td></tr>
+    <tr><td><code>binance_client_v3.py</code></td><td>Binance客户端（get_balance返回list）</td><td>C</td></tr>
+  </table>
+</div>
+
+<div class="card">
+  <div class="card-title"><span class="emoji">📊</span> Dashboard &amp; 前端</div>
+  <table>
+    <tr><th>文件</th><th>端口</th><th>主题</th></tr>
+    <tr><td><code>web/dashboard_api.py</code> + <code>web/dashboard_static/</code></td><td>8081</td><td>蓝色</td></tr>
+    <tr><td><code>web/dashboard_api_b.py</code> + <code>web/dashboard_static_b/</code></td><td>8082</td><td>紫色</td></tr>
+    <tr><td><code>web/dashboard_api_c.py</code> + <code>web/dashboard_static_c/</code></td><td>8084</td><td>绿色 #064e3b</td></tr>
+    <tr><td><code>web/dashboard_dual_api.py</code> + <code>web/dashboard_static_dual/</code></td><td>8083</td><td>A/B对比</td></tr>
+  </table>
+</div>
+
+<div class="card">
+  <div class="card-title"><span class="emoji">🔧</span> 部署与运维</div>
+  <table>
+    <tr><th>文件</th><th>用途</th></tr>
+    <tr><td><code>deploy.py</code></td><td>一键部署所有服务</td></tr>
+    <tr><td><code>deploy_v14.py</code></td><td>v14专用部署</td></tr>
+    <tr><td><code>deploy_dashboard_dual.py</code></td><td>双Dashboard部署</td></tr>
+    <tr><td><code>pull_logs.py</code></td><td>从服务器拉取日志</td></tr>
+    <tr><td><code>daily_review.py</code></td><td>每日复盘脚本</td></tr>
+    <tr><td><code>_full_review.py</code></td><td>全账号深度复盘（三合一）</td></tr>
+  </table>
+</div>
+
+<div class="card">
+  <div class="card-title"><span class="emoji">🧪</span> 回测系统</div>
+  <table>
+    <tr><th>文件</th><th>说明</th></tr>
+    <tr><td><code>backtest/backtest_v13_real.py</code></td><td>v13回测（monkey-patch原始信号函数，O(logN)二分查找）</td></tr>
+    <tr><td><code>backtest/backtest_v13_v2.py</code></td><td>v13-v2简化回测（分数不匹配，已弃用）</td></tr>
+    <tr><td><code>backtest/data/</code></td><td>44币种 × 4周期 K线CSV数据</td></tr>
+    <tr><td><code>backtest/results/</code></td><td>回测结果JSONL和摘要</td></tr>
+  </table>
+</div>
+
+<div class="card">
+  <div class="card-title"><span class="emoji">🗂️</span> 服务器目录结构</div>
+<pre><code>/opt/crypto-auto-trader/
+├── scanner.py              # v11
+├── scanner_v13.py          # v13 (生产)
+├── scanner_v14.py          # v14 (生产)
+├── binance_client.py       # 账号A
+├── binance_client_v2.py    # 账号B
+├── binance_client_v3.py    # 账号C
+├── strategy_breakout.py    # VPB策略
+├── deploy.py               # 部署脚本
+├── logs/                   # v11日志
+├── logs_v13/               # v13日志
+├── logs_v14/               # v14日志
+├── scanner_data/           # v11交易数据
+├── scanner_data_v13/       # v13交易数据
+│   └── trades.jsonl        # v13交易记录
+├── scanner_data_v14/       # v14交易数据
+│   └── trades.jsonl        # v14交易记录
+├── backtest_data/          # 回测CSV数据（133个文件）
+├── backtest_results/       # 回测结果
+│   ├── v13v2_real_summary.txt
+│   └── v13v2_real_trades.jsonl
+├── backtest_v13_real.py    # 回测脚本
+└── web/                    # Dashboard
+    ├── dashboard_api.py
+    ├── dashboard_api_b.py
+    ├── dashboard_api_c.py
+    ├── dashboard_dual_api.py
+    ├── dashboard_static/
+    ├── dashboard_static_b/
+    ├── dashboard_static_c/
+    └── dashboard_static_dual/</code></pre>
+</div>
+</section>
+
+<!-- ═══════════════ 6. BACKTEST ═══════════════ -->
+<section id="backtest">
+<h2>🧪 回测系统</h2>
+
+<div class="card">
+  <div class="card-title"><span class="emoji">📐</span> 回测引擎设计</div>
+  <ul class="config-list">
+    <li><span class="key">核心思路</span><span class="val">Monkey-patch <code>fetch_klines</code>，从本地CSV读取数据，调用原始<code>analyze_symbol</code>函数</span></li>
+    <li><span class="key">数据加载</span><span class="val">预转换CSV为fetch_klines格式，二分查找O(logN)，20币+6月约141MB</span></li>
+    <li><span class="key">内存</span><span class="val">服务器仅1.7GB，必须精简数据集（44币+3个月 → 374MB）</span></li>
+    <li><span class="key">输出</span><span class="val">TeeOutput双写文件+stdout（解决Git Bash吞输出问题）</span></li>
+    <li><span class="key">手续费</span><span class="val">0.1% round-trip</span></li>
+  </ul>
+</div>
+
+<h3>v13 回测结果（2026-05-12 完成）</h3>
+<div class="card">
+  <div class="alert alert-danger">
+    ⚠️ <strong>回测结论：阈值80信号质量太低，v13策略在原始信号体系下不盈利</strong><br>
+    净PnL $-9,904 (-99.0%) | 257笔 | 胜率31.1% | 盈亏比1.44 | 月月亏损
+  </div>
+  <table>
+    <tr><th>参数</th><th>值</th></tr>
+    <tr><td>SCORE_MIN</td><td>80</td></tr>
+    <tr><td>MAX_POS</td><td>6/周期</td></tr>
+    <tr><td>COOLDOWN</td><td>120min</td></tr>
+    <tr><td>数据范围</td><td>2026-02 ~ 2026-05（3个月，44币种）</td></tr>
+    <tr><td>耗时</td><td>7,074s（~2小时）</td></tr>
+    <tr><td>总交易</td><td>257笔（日均0.7笔）</td></tr>
+    <tr><td>净PnL</td><td class="neg-val">$-9,904 (-99.0%)</td></tr>
+    <tr><td>胜率</td><td>31.1%</td></tr>
+    <tr><td>盈亏比</td><td>1.44</td></tr>
+    <tr><td>手续费</td><td>$103</td></tr>
+    <tr><td>最大回撤</td><td>5.2%</td></tr>
+  </table>
+
+  <h3 style="margin-top:16px">退出原因</h3>
+  <table>
+    <tr><th>原因</th><th>笔数</th><th>PnL</th></tr>
+    <tr><td>止盈 (tp)</td><td>42</td><td class="pos-val">+$784</td></tr>
+    <tr><td>浮动止损 (trail)</td><td>126</td><td class="neg-val">-$326</td></tr>
+    <tr><td>ATR止损 (atr_stop)</td><td>87</td><td class="neg-val">-$920</td></tr>
+    <tr><td>硬底30% (hard_stop)</td><td>2</td><td class="neg-val">-$42</td></tr>
+  </table>
+
+  <h3 style="margin-top:16px">月度</h3>
+  <table>
+    <tr><th>月份</th><th>笔数</th><th>胜率</th><th>PnL</th></tr>
+    <tr><td>2026-02</td><td>184</td><td>31%</td><td class="neg-val">-$400</td></tr>
+    <tr><td>2026-03</td><td>66</td><td>33%</td><td class="neg-val">-$59</td></tr>
+    <tr><td>2026-04</td><td>7</td><td>14%</td><td class="neg-val">-$46</td></tr>
+  </table>
+</div>
+
+<div class="alert alert-info">
+  💡 <strong>回测vs实盘差异：</strong> 回测亏99%，实盘+$209。差异原因：实盘盈利主要来自交易所自动平仓（+$289），这些是scanner之前挂的止盈止损单被交易所触发，不是策略信号本身的alpha。
+</div>
+</section>
+
+<!-- ═══════════════ 7. PERFORMANCE ═══════════════ -->
+<section id="performance">
+<h2>📈 实盘表现（截至 2026-05-12）</h2>
+
+<h3>三账号汇总</h3>
+<div class="stats-row">
+  <div class="stat"><div class="label">总交易</div><div class="value">3,682</div></div>
+  <div class="stat"><div class="label">整体胜率</div><div class="value">41.8%</div></div>
+  <div class="stat"><div class="label">累计PnL</div><div class="value neg">-$201</div></div>
+  <div class="stat"><div class="label">钱包余额</div><div class="value">$3,083</div></div>
+  <div class="stat"><div class="label">可用余额</div><div class="value">$427</div></div>
+  <div class="stat"><div class="label">总持仓</div><div class="value">149</div></div>
+</div>
+
+<h3>近5天走势</h3>
+<table>
+  <tr><th>日期</th><th>笔数</th><th>胜率</th><th>合计PnL</th><th>v11</th><th>v13</th><th>v14</th></tr>
+  <tr><td>5/12</td><td>64</td><td>28%</td><td class="pos-val">+$45</td><td class="pos-val">+$14</td><td class="neg-val">-$1</td><td class="neg-val">-$189</td></tr>
+  <tr><td>5/11</td><td>64</td><td>28%</td><td class="pos-val">+$45</td><td class="pos-val">+$369</td><td class="neg-val">-$53</td><td class="neg-val">-$271</td></tr>
+  <tr><td>5/10</td><td>33</td><td>33%</td><td class="pos-val">+$120</td><td class="neg-val">-$16</td><td class="pos-val">+$42</td><td class="pos-val">+$95</td></tr>
+  <tr><td>5/9</td><td>114</td><td>68%</td><td class="pos-val">+$346</td><td class="pos-val">+$325</td><td>$0</td><td class="pos-val">+$21</td></tr>
+  <tr><td>5/8</td><td>221</td><td>47%</td><td class="pos-val">+$60</td><td class="pos-val">+$186</td><td class="neg-val">-$63</td><td class="neg-val">-$63</td></tr>
+</table>
+
+<h3>各账号月度表现</h3>
+<table>
+  <tr><th>账号</th><th>2026-04</th><th>2026-05</th><th>合计</th></tr>
+  <tr><td>A (v11)</td><td class="neg-val">-$1,050</td><td class="pos-val">+$1,183</td><td class="pos-val">+$132</td></tr>
+  <tr><td>B (v13)</td><td>—</td><td class="pos-val">+$209</td><td class="pos-val">+$209</td></tr>
+  <tr><td>C (v14)</td><td>—</td><td class="neg-val">-$543</td><td class="neg-val">-$543</td></tr>
+</table>
+
+<h3>币种表现 TOP</h3>
+<div class="card-grid">
+<div class="card">
+  <div class="card-title" style="color:var(--green)">🏆 TOP5 盈利币种</div>
+  <table>
+    <tr><th>币种</th><th>笔数</th><th>胜率</th><th>PnL</th></tr>
+    <tr><td>UBUSDT</td><td>7</td><td>42.9%</td><td class="pos-val">+$1,732</td></tr>
+    <tr><td>TRADOORUSDT</td><td>15</td><td>73.3%</td><td class="pos-val">+$431</td></tr>
+    <tr><td>SIRENUSDT</td><td>51</td><td>37%</td><td class="pos-val">+$449</td></tr>
+    <tr><td>FXSUSDT</td><td>18</td><td>100%</td><td class="pos-val">+$268</td></tr>
+    <tr><td>IOUSDT</td><td>7</td><td>100%</td><td class="pos-val">+$269</td></tr>
+  </table>
+</div>
+<div class="card">
+  <div class="card-title" style="color:var(--red)">💀 TOP5 亏损币种</div>
+  <table>
+    <tr><th>币种</th><th>笔数</th><th>胜率</th><th>PnL</th></tr>
+    <tr><td>LABUSDT</td><td>4</td><td>25%</td><td class="neg-val">-$632</td></tr>
+    <tr><td>BASUSDT</td><td>8</td><td>0%</td><td class="neg-val">-$574</td></tr>
+    <tr><td>RIVERUSDT</td><td>38</td><td>23.7%</td><td class="neg-val">-$262</td></tr>
+    <tr><td>LUMIAUSDT</td><td>5</td><td>20%</td><td class="neg-val">-$350</td></tr>
+    <tr><td>WIFUSDT</td><td>5</td><td>0%</td><td class="neg-val">-$303</td></tr>
+  </table>
+</div>
+</div>
+</section>
+
+<!-- ═══════════════ 8. V13 ANALYSIS ═══════════════ -->
+<section id="v13-analysis">
+<h2>🔍 v13 深度分析（2026-05-12）</h2>
+
+<div class="alert alert-danger">
+  🔴 <strong>核心发现：v13的"盈利"是假象，85%交易是恢复仓位(score=0)，真实信号没有alpha</strong>
+</div>
+
+<div class="card">
+  <div class="card-title"><span class="emoji">🔑</span> 关键发现</div>
+  <ol style="padding-left:20px; line-height:2">
+    <li><strong>85%交易是"恢复仓位"（score=0）：</strong>374笔中317笔score=0，每次重启scanner时从交易所恢复旧持仓。真正scanner信号只有57笔。</li>
+    <li><strong>score>0的交易本质上不赚不赔：</strong>57笔真实信号，45.5%胜率，PnL仅-$0.60</li>
+    <li><strong>盈利全靠交易所自动平仓：</strong>273笔交易所TP/SL自动平仓+$289（66.3%胜率），Scanner内部平仓101笔-$80</li>
+    <li><strong>Long赚钱，Short亏钱：</strong>Long 199笔 69.8%胜率 +$445 / Short 175笔 38.3%胜率 -$236</li>
+    <li><strong>BTCDOMUSDT连续做空20笔全亏 -$142：</strong>应加入黑名单</li>
+    <li><strong>持仓<1小时占88%：</strong>短线TP/SL被交易所触发是唯一赚钱模式</li>
+  </ol>
+</div>
+
+<h3>退出原因对比</h3>
+<table>
+  <tr><th>退出原因</th><th>笔数</th><th>胜率</th><th>平均盈亏%</th><th>PnL</th></tr>
+  <tr><td>交易所止盈止损自动平仓</td><td>273</td><td class="pos-val">66.3%</td><td>+4.5%</td><td class="pos-val">+$289</td></tr>
+  <tr><td>止盈</td><td>23</td><td class="pos-val">100%</td><td>+29.2%</td><td class="pos-val">+$206</td></tr>
+  <tr><td>最大亏损限制-30%</td><td>6</td><td class="neg-val">0%</td><td>-52.8%</td><td class="neg-val">-$12</td></tr>
+  <tr><td>浮动止损</td><td>72</td><td class="neg-val">2.8%</td><td>-12.6%</td><td class="neg-val">-$274</td></tr>
+</table>
+
+<h3>方向分析</h3>
+<table>
+  <tr><th>方向</th><th>笔数</th><th>胜率</th><th>PnL</th><th>盈利笔均</th><th>亏损笔均</th></tr>
+  <tr><td>Long</td><td>199</td><td class="pos-val">69.8%</td><td class="pos-val">+$445</td><td>$4.42</td><td>-$2.80</td></tr>
+  <tr><td>Short</td><td>175</td><td class="neg-val">38.3%</td><td class="neg-val">-$236</td><td>$2.72</td><td>-$3.88</td></tr>
+</table>
+
+<h3>持仓时长 vs 盈亏</h3>
+<table>
+  <tr><th>持仓时长</th><th>笔数</th><th>胜率</th><th>PnL</th></tr>
+  <tr><td>0-1小时</td><td>331</td><td>55.0%</td><td class="pos-val">+$214</td></tr>
+  <tr><td>1-4小时</td><td>15</td><td>66.7%</td><td class="pos-val">+$15</td></tr>
+  <tr><td>4-12小时</td><td>25</td><td>56.0%</td><td class="neg-val">-$20</td></tr>
+</table>
+
+<div class="alert alert-warn">
+  ⚡ <strong>优化建议：</strong><br>
+  1. 立即黑名单BTCDOMUSDT<br>
+  2. 禁用Short方向（或提高short阈值到120+）<br>
+  3. 减少scanner重启频率<br>
+  4. 优化浮动止损逻辑（72笔亏-$274）
+</div>
+</section>
+
+<!-- ═══════════════ 9. ISSUES ═══════════════ -->
+<section id="issues">
+<h2>🐛 已知问题与修复记录</h2>
+
+<h3>已修复</h3>
+<div class="card">
+  <table>
+    <tr><th>问题</th><th>影响</th><th>修复日期</th><th>方案</th></tr>
+    <tr><td>双向持仓key bug</td><td>SIRENUSDT空头亏-116%未被止损</td><td>2026-05-08</td><td>positions dict改为(symbol, side)复合key</td></tr>
+    <tr><td>calc_size bug</td><td>下单数量计算错误</td><td>2026-04-27</td><td>qty=(usdt×leverage)/price，不用ctVal</td></tr>
+    <tr><td>回测OOM</td><td>服务器1.7GB内存不够加载数据</td><td>2026-05-11</td><td>缩减到3个月数据 + numpy数组存储</td></tr>
+    <tr><td>回测分数不匹配</td><td>回测最高73分 vs 实盘80-100分</td><td>2026-05-11</td><td>改用原始scanner.analyze_symbol函数</td></tr>
+    <tr><td>Git Bash吞SSH输出</td><td>回测结果无法获取</td><td>2026-05-11</td><td>TeeOutput双写文件+stdout</td></tr>
+  </table>
+</div>
+
+<h3>已知未解决</h3>
+<div class="card">
+  <table>
+    <tr><th>问题</th><th>影响</th><th>状态</th></tr>
+    <tr><td>阿里云安全组未开放端口</td><td>Dashboard外部无法访问</td><td>待开放8081-8084</td></tr>
+    <tr><td>v14连续亏损</td><td>5/5起连续8天亏，硬底触发24次</td><td>需优化或暂停</td></tr>
+    <tr><td>v13信号无alpha</td><td>实盘盈利靠交易所自动平仓，非策略本身</td><td>需重新评估策略</td></tr>
+    <tr><td>Binance Testnet SSL瞬断</td><td>偶发，不影响运行</td><td>可忽略</td></tr>
+    <tr><td>小币种-4131 PERCENT_PRICE</td><td>Testnet流动性不足</td><td>自动加入黑名单</td></tr>
+  </table>
+</div>
+</section>
+
+<!-- ═══════════════ 10. DEPLOY ═══════════════ -->
+<section id="deploy">
+<h2>🚀 新机器部署指南</h2>
+
+<div class="card">
+  <div class="card-title"><span class="emoji">1️⃣</span> 服务器连接</div>
+<pre><code># SSH连接
+ssh root@39.105.156.210
+# 密码: Caosinima00.
+
+# 确认SSH免密（本地已配置）
+ssh root@39.105.156.210 "echo OK"</code></pre>
+</div>
+
+<div class="card">
+  <div class="card-title"><span class="emoji">2️⃣</span> 检查服务状态</div>
+<pre><code># 检查所有服务
+ssh root@39.105.156.210 "systemctl is-active crypto-scanner crypto-scanner-v13 crypto-scanner-v14"
+
+# 查看日志
+ssh root@39.105.156.210 "tail -20 /opt/crypto-auto-trader/logs_v13/scanner_v13_stdout.log"
+
+# 查看余额
+ssh root@39.105.156.210 "cd /opt/crypto-auto-trader && /root/miniconda3/bin/python3 -c \"
+import sys; sys.path.insert(0,'.')
+from binance_client_v2 import get_client
+c = get_client()
+bal = c.get_balance()
+for item in bal.get('assets', []):
+    if item.get('asset') == 'USDT':
+        print('wallet=%s avail=%s' % (item.get('walletBalance'), item.get('availableBalance')))
+\""</code></pre>
+</div>
+
+<div class="card">
+  <div class="card-title"><span class="emoji">3️⃣</span> 代码同步</div>
+<pre><code># 本地项目路径
+C:\Users\Eels\WorkBuddy\20260419103335\crypto-auto-trader\
+
+# 部署脚本
+python deploy.py          # 一键部署
+python deploy_v14.py      # v14专用
+python pull_logs.py       # 拉取日志
+
+# SCP手动上传
+scp scanner_v13.py root@39.105.156.210:/opt/crypto-auto-trader/scanner_v13.py
+
+# 重启服务
+ssh root@39.105.156.210 "systemctl restart crypto-scanner-v13"</code></pre>
+</div>
+
+<div class="card">
+  <div class="card-title"><span class="emoji">4️⃣</span> 全账号复盘</div>
+<pre><code># 上传复盘脚本并运行
+scp _full_review.py root@39.105.156.210:/opt/crypto-auto-trader/
+ssh root@39.105.156.210 "cd /opt/crypto-auto-trader && /root/miniconda3/bin/python3 _full_review.py"</code></pre>
+</div>
+
+<div class="card">
+  <div class="card-title"><span class="emoji">5️⃣</span> 回测运行</div>
+<pre><code># 上传回测脚本和数据
+scp backtest/backtest_v13_real.py root@39.105.156.210:/opt/crypto-auto-trader/
+scp -r backtest/data/*.csv root@39.105.156.210:/opt/crypto-auto-trader/backtest_data/
+
+# 服务器运行（注意内存限制，只用3个月数据）
+ssh root@39.105.156.210 "cd /opt/crypto-auto-trader && /root/miniconda3/bin/python3 -u backtest_v13_real.py &>/tmp/bt.log &"
+
+# 检查结果
+ssh root@39.105.156.210 "cat /opt/crypto-auto-trader/backtest_results/v13v2_real_summary.txt"</code></pre>
+</div>
+
+<div class="card">
+  <div class="card-title"><span class="emoji">6️⃣</span> SimPosition 数据类</div>
+<pre><code>字段说明:
+- symbol, side, entry_price, size, leverage
+- stop_loss, take_profit, atr_at_entry
+- entry_time, entry_score, entry_reason, timeframe
+- resonance, trailing_sl/active, pos_id
+- sl_mult, tp_mult, trail_activate, trail_pullback
+- order_id（交易所订单ID）
+- exchange_qty（交易所下单数量，float，基础币数量）
+
+注意: 旧版字段名okx_ord_id/okx_sz已于2026-04-29替换</code></pre>
+</div>
+
+<div class="alert alert-info">
+  💡 <strong>换机器要点：</strong><br>
+  1. 确保SSH免密配置（~/.ssh/id_rsa）<br>
+  2. Python环境不需要本地安装，所有运行都在服务器上<br>
+  3. 本地代码和服务器代码保持同步（deploy.py）<br>
+  4. 服务器数据（trades.jsonl、日志）不会丢失，都在服务器上<br>
+  5. Dashboard配色偏好：绿涨红跌（--up:#22c55e, --down:#ef4444）
+</div>
+</section>
+
+<!-- ═══════════════ 11. TIMELINE ═══════════════ -->
+<section id="timeline">
+<h2>📅 开发时间线</h2>
+
+<div class="timeline">
+  <div class="timeline-item">
+    <div class="date">2026-04-19 ~ 04-25</div>
+    <div class="content">项目初始化，从OKX迁移至纯Binance逻辑，建立v8/v9/v10策略迭代</div>
+  </div>
+  <div class="timeline-item">
+    <div class="date">2026-04-27</div>
+    <div class="content">修复calc_size bug（qty计算方式修正）</div>
+  </div>
+  <div class="timeline-item">
+    <div class="date">2026-04-29</div>
+    <div class="content">字段名替换：okx_ord_id→order_id，okx_sz→exchange_qty</div>
+  </div>
+  <div class="timeline-item">
+    <div class="date">2026-05-01</div>
+    <div class="content">v13策略上线（Account B），去掉EVICT、禁用VPB、阈值80→100</div>
+  </div>
+  <div class="timeline-item">
+    <div class="date">2026-05-02</div>
+    <div class="content">v14策略上线（Account C），四维度评分系统+阶梯止损</div>
+  </div>
+  <div class="timeline-item">
+    <div class="date">2026-05-03 ~ 05-06</div>
+    <div class="content">v14优化：空头惩罚+15、分档ATR止损、赛道分散、连续亏损冷却</div>
+  </div>
+  <div class="timeline-item">
+    <div class="date">2026-05-08</div>
+    <div class="content">修复双向持仓key bug（SIRENUSDT事件）、v11 MAX_LOSS改30%、v14 BTC趋势过滤</div>
+  </div>
+  <div class="timeline-item">
+    <div class="date">2026-05-09</div>
+    <div class="content">近5天最好一天：+$346，v11胜率73.2%</div>
+  </div>
+  <div class="timeline-item">
+    <div class="date">2026-05-10</div>
+    <div class="content">v13-v2部署：WaveTrend指标、阈值100、冷却240min、最大仓4</div>
+  </div>
+  <div class="timeline-item">
+    <div class="date">2026-05-11</div>
+    <div class="content">回测引擎开发：修复OOM、分数不匹配、Git Bash输出问题。v11首次转正+$118</div>
+  </div>
+  <div class="timeline-item">
+    <div class="date">2026-05-12</div>
+    <div class="content">v13回测完成（阈值80亏99%）。v13停用，v14优化（黑名单+硬底20%+资金费率信号），<strong>v16部署</strong>（订单流OFI+RSI背离+资金费率，复用v13 API Key）</div>
+  </div>
+</div>
+</section>
+
+<!-- ═══════════════ FOOTER ═══════════════ -->
+<div style="text-align:center; padding:40px 0 20px; color:var(--text2); border-top:1px solid var(--border); margin-top:60px;">
+  <p>半木夏量化交易系统 · 项目全景手册</p>
+  <p style="font-size:0.8em; margin-top:8px;">生成于 2026-05-12 17:20 CST · 换机器时请携带此文件 + 本地代码目录</p>
+</div>
+
+</div><!-- container -->
+</body>
+</html>

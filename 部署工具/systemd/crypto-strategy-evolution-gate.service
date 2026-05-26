@@ -1,0 +1,9 @@
+[Unit]
+Description=Crypto Strategy Evolution Unified Gate
+After=network-online.target crypto-account-snapshot.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/crypto-auto-trader
+Environment=PYTHONIOENCODING=utf-8
+ExecStart=/bin/bash /opt/crypto-auto-trader/run_strategy_evolution_gate.sh

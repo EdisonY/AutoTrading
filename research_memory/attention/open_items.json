@@ -1,0 +1,58 @@
+{
+  "generated_at": "2026-05-26T11:30:48.054092+08:00",
+  "summary": {
+    "total_visible": 3,
+    "open": 3,
+    "cleared_pending_review": 0,
+    "counts": {
+      "P0": 1,
+      "P1": 0,
+      "P2": 2,
+      "P3": 0
+    }
+  },
+  "items": [
+    {
+      "item_id": "evolution:exp-20260523-v11-replacement-quality",
+      "priority": "P0",
+      "category": "策略进化",
+      "title": "P0 A/v11 EXP-20260523-v11-replacement-quality",
+      "status": "open",
+      "first_seen": "2026-05-26T11:30:42.758220+08:00",
+      "last_seen": "2026-05-26T11:30:48.054054+08:00",
+      "last_confirmed_active": "2026-05-26T11:30:48.054054+08:00",
+      "evidence": "状态 verified_upgrade_ready；证据分 97；风险分 0；阻塞 -",
+      "recommended_action": "review_for_expansion",
+      "source": "/opt/crypto-auto-trader/runtime/strategy_evolution_latest.json",
+      "requires_user_confirmation": true
+    },
+    {
+      "item_id": "evolution:exp-20260523-v16-confirm-soft-pass",
+      "priority": "P2",
+      "category": "策略进化",
+      "title": "P2 B/v16 EXP-20260523-v16-confirm-soft-pass",
+      "status": "open",
+      "first_seen": "2026-05-26T11:30:42.758262+08:00",
+      "last_seen": "2026-05-26T11:30:48.054054+08:00",
+      "last_confirmed_active": "2026-05-26T11:30:48.054054+08:00",
+      "evidence": "状态 counterfactual_supported；证据分 20；风险分 35；阻塞 长窗口影子验证不足",
+      "recommended_action": "run_multi_window_shadow",
+      "source": "/opt/crypto-auto-trader/runtime/strategy_evolution_latest.json",
+      "requires_user_confirmation": true
+    },
+    {
+      "item_id": "evolution:hyp-2026-05-25-b-v16-confirmation-soft-pass",
+      "priority": "P2",
+      "category": "策略进化",
+      "title": "P2 B/v16 HYP-2026-05-25-B-v16-confirmation-soft-pass",
+      "status": "open",
+      "first_seen": "2026-05-26T11:30:42.758252+08:00",
+      "last_seen": "2026-05-26T11:30:48.054054+08:00",
+      "last_confirmed_active": "2026-05-26T11:30:48.054054+08:00",
+      "evidence": "状态 counterfactual_supported；证据分 20；风险分 35；阻塞 长窗口影子验证不足",
+      "recommended_action": "run_multi_window_shadow",
+      "source": "/opt/crypto-auto-trader/runtime/strategy_evolution_latest.json",
+      "requires_user_confirmation": true
+    }
+  ]
+}

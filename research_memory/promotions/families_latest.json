@@ -1,0 +1,286 @@
+[
+  {
+    "family_id": "FAM-A-v11-market_stage_filter-stage-guard",
+    "base_strategy": "A/v11",
+    "change_type": "market_stage_filter",
+    "governance_status": "active",
+    "generation": 1,
+    "experiment_count": 1,
+    "candidate_count": 1,
+    "latest_experiment_id": "HYP-2026-05-22-A-v11-reverse_trade-stage-guard",
+    "latest_status": "reject",
+    "recommended_action": "archive_or_rework",
+    "best_experiment_id": "HYP-2026-05-22-A-v11-reverse_trade-stage-guard",
+    "best_pnl_delta": -39.57,
+    "hard_stop_delta": 0,
+    "source_cases": [
+      "CASE-2026-05-22-A-v11-BTCUSDT-reverse_trade-43",
+      "CASE-2026-05-22-A-v11-DODOXUSDT-reverse_trade-14",
+      "CASE-2026-05-22-A-v11-HIGHUSDT-reverse_trade-41",
+      "CASE-2026-05-22-A-v11-STORJUSDT-reverse_trade-8",
+      "CASE-2026-05-22-A-v11-ZECUSDT-reverse_trade-34"
+    ],
+    "experiments": [
+      {
+        "experiment_id": "HYP-2026-05-22-A-v11-reverse_trade-stage-guard",
+        "base_strategy": "A/v11",
+        "sample_window": "2026-05-23~2026-05-25",
+        "sample_trades": 53,
+        "original_pnl": 27.929,
+        "shadow_pnl": -11.641,
+        "filtered_trades": 3,
+        "avoided_loss": 6.06,
+        "missed_profit": 45.63,
+        "hard_stop_before": 0,
+        "hard_stop_after": 0,
+        "promotion_status": "reject",
+        "candidate_id": "HYP-2026-05-22-A-v11-reverse_trade-stage-guard",
+        "source_cases": [
+          "CASE-2026-05-22-A-v11-DODOXUSDT-reverse_trade-14",
+          "CASE-2026-05-22-A-v11-HIGHUSDT-reverse_trade-41",
+          "CASE-2026-05-22-A-v11-STORJUSDT-reverse_trade-8",
+          "CASE-2026-05-22-A-v11-ZECUSDT-reverse_trade-34",
+          "CASE-2026-05-22-A-v11-BTCUSDT-reverse_trade-43"
+        ],
+        "change_type": "market_stage_filter",
+        "gate_passed": false,
+        "family_id": "FAM-A-v11-market_stage_filter-stage-guard",
+        "generation": 1,
+        "notes": [
+          "阶段过滤样本 3 / 53",
+          "阈值 min_score=55.0, tail_guard=True, reverse_guard=True",
+          "影子PnL较原版恶化超过5%"
+        ]
+      }
+    ]
+  },
+  {
+    "family_id": "FAM-A-v11-replacement-quality",
+    "base_strategy": "A/v11",
+    "change_type": "replacement_policy",
+    "governance_status": "active",
+    "generation": 1,
+    "experiment_count": 1,
+    "candidate_count": 0,
+    "latest_experiment_id": "EXP-20260523-v11-replacement-quality",
+    "latest_status": "observe",
+    "recommended_action": "observe",
+    "best_experiment_id": "EXP-20260523-v11-replacement-quality",
+    "best_pnl_delta": 20.9782,
+    "hard_stop_delta": 0,
+    "source_cases": [],
+    "experiments": [
+      {
+        "experiment_id": "EXP-20260523-v11-replacement-quality",
+        "base_strategy": "A/v11",
+        "sample_window": "2026-05-23~2026-05-25",
+        "sample_trades": 53,
+        "original_pnl": 27.929,
+        "shadow_pnl": 48.9072,
+        "filtered_trades": 13,
+        "avoided_loss": 20.9782,
+        "missed_profit": 0.0,
+        "hard_stop_before": 0,
+        "hard_stop_after": 0,
+        "promotion_status": "observe",
+        "candidate_id": "",
+        "source_cases": [],
+        "change_type": "replacement_policy",
+        "gate_passed": false,
+        "family_id": "FAM-A-v11-replacement-quality",
+        "generation": 1,
+        "notes": [
+          "低分浮动止损噪音样本 13 条",
+          "该实验是替换质量审计，不直接晋级，需结合持仓释放事件判断"
+        ]
+      }
+    ]
+  },
+  {
+    "family_id": "FAM-B-v16-confirmation-policy",
+    "base_strategy": "B/v16",
+    "change_type": "confirmation_policy",
+    "governance_status": "active",
+    "generation": 1,
+    "experiment_count": 1,
+    "candidate_count": 0,
+    "latest_experiment_id": "EXP-20260523-v16-confirm-soft-pass",
+    "latest_status": "observe",
+    "recommended_action": "observe",
+    "best_experiment_id": "EXP-20260523-v16-confirm-soft-pass",
+    "best_pnl_delta": 0.0,
+    "hard_stop_delta": 0,
+    "source_cases": [],
+    "experiments": [
+      {
+        "experiment_id": "EXP-20260523-v16-confirm-soft-pass",
+        "base_strategy": "B/v16",
+        "sample_window": "2026-05-23~2026-05-25",
+        "sample_trades": 222,
+        "original_pnl": 0.0,
+        "shadow_pnl": 0.0,
+        "filtered_trades": 0,
+        "avoided_loss": 0.0,
+        "missed_profit": 0.0,
+        "hard_stop_before": 0,
+        "hard_stop_after": 0,
+        "promotion_status": "observe",
+        "candidate_id": "",
+        "source_cases": [],
+        "change_type": "confirmation_policy",
+        "gate_passed": false,
+        "family_id": "FAM-B-v16-confirmation-policy",
+        "generation": 1,
+        "notes": [
+          "确认层跳过 222 条，软放行候选 0 条",
+          "该实验没有真实成交PnL，需要进入影子纸面撮合或小样本人工审批",
+          "候选分布: {}"
+        ]
+      }
+    ]
+  },
+  {
+    "family_id": "FAM-B-v16-market_stage_filter-stage-guard",
+    "base_strategy": "B/v16",
+    "change_type": "market_stage_filter",
+    "governance_status": "approved",
+    "generation": 1,
+    "experiment_count": 1,
+    "candidate_count": 1,
+    "latest_experiment_id": "HYP-2026-05-22-B-v16-reverse_trade-stage-guard",
+    "latest_status": "approved_for_small_live",
+    "recommended_action": "small_live_observation",
+    "best_experiment_id": "HYP-2026-05-22-B-v16-reverse_trade-stage-guard",
+    "best_pnl_delta": -64.1061,
+    "hard_stop_delta": -4,
+    "source_cases": [
+      "CASE-2026-05-22-B-v16-BTCUSDT-reverse_trade-49",
+      "CASE-2026-05-22-B-v16-DODOXUSDT-reverse_trade-52"
+    ],
+    "experiments": [
+      {
+        "experiment_id": "HYP-2026-05-22-B-v16-reverse_trade-stage-guard",
+        "base_strategy": "B/v16",
+        "sample_window": "2026-05-23~2026-05-25",
+        "sample_trades": 34,
+        "original_pnl": 64.1061,
+        "shadow_pnl": 0,
+        "filtered_trades": 34,
+        "avoided_loss": 84.2239,
+        "missed_profit": 148.33,
+        "hard_stop_before": 4,
+        "hard_stop_after": 0,
+        "promotion_status": "approved_for_small_live",
+        "candidate_id": "HYP-2026-05-22-B-v16-reverse_trade-stage-guard",
+        "source_cases": [
+          "CASE-2026-05-22-B-v16-DODOXUSDT-reverse_trade-52",
+          "CASE-2026-05-22-B-v16-BTCUSDT-reverse_trade-49"
+        ],
+        "change_type": "market_stage_filter",
+        "gate_passed": true,
+        "family_id": "FAM-B-v16-market_stage_filter-stage-guard",
+        "generation": 1,
+        "notes": [
+          "阶段过滤样本 34 / 34",
+          "阈值 min_score=55.0, tail_guard=True, reverse_guard=True",
+          "影子PnL较原版恶化超过5%",
+          "人工审批: 小仓观察 scope=shadow_plus_small_live"
+        ]
+      }
+    ]
+  },
+  {
+    "family_id": "FAM-C-v14-confirmation_policy-soft-pass",
+    "base_strategy": "C/v14",
+    "change_type": "confirmation_policy",
+    "governance_status": "active",
+    "generation": 1,
+    "experiment_count": 1,
+    "candidate_count": 1,
+    "latest_experiment_id": "HYP-2026-05-22-C-v14-confirmation-soft-pass",
+    "latest_status": "observe",
+    "recommended_action": "observe",
+    "best_experiment_id": "HYP-2026-05-22-C-v14-confirmation-soft-pass",
+    "best_pnl_delta": 0.0,
+    "hard_stop_delta": 0,
+    "source_cases": [
+      "CASE-2026-05-22-C-v14-ARKMUSDT-missed_big_move-43",
+      "CASE-2026-05-22-C-v14-LPTUSDT-missed_big_move-37",
+      "CASE-2026-05-22-C-v14-ONDOUSDT-missed_big_move-35"
+    ],
+    "experiments": [
+      {
+        "experiment_id": "HYP-2026-05-22-C-v14-confirmation-soft-pass",
+        "base_strategy": "C/v14",
+        "sample_window": "2026-05-23~2026-05-25",
+        "sample_trades": 222,
+        "original_pnl": 0.0,
+        "shadow_pnl": 0.0,
+        "filtered_trades": 0,
+        "avoided_loss": 0.0,
+        "missed_profit": 0.0,
+        "hard_stop_before": 0,
+        "hard_stop_after": 0,
+        "promotion_status": "observe",
+        "candidate_id": "HYP-2026-05-22-C-v14-confirmation-soft-pass",
+        "source_cases": [
+          "CASE-2026-05-22-C-v14-ONDOUSDT-missed_big_move-35",
+          "CASE-2026-05-22-C-v14-LPTUSDT-missed_big_move-37",
+          "CASE-2026-05-22-C-v14-ARKMUSDT-missed_big_move-43"
+        ],
+        "change_type": "confirmation_policy",
+        "gate_passed": false,
+        "family_id": "FAM-C-v14-confirmation_policy-soft-pass",
+        "generation": 1,
+        "notes": [
+          "确认层跳过 222 条，软放行候选 0 条",
+          "该实验没有真实成交PnL，需要进入影子纸面撮合或小样本人工审批",
+          "候选分布: {}"
+        ]
+      }
+    ]
+  },
+  {
+    "family_id": "FAM-C-v14-filter-tail-guard",
+    "base_strategy": "C/v14",
+    "change_type": "filter",
+    "governance_status": "active",
+    "generation": 1,
+    "experiment_count": 1,
+    "candidate_count": 0,
+    "latest_experiment_id": "EXP-20260523-v14-tail-guard",
+    "latest_status": "observe",
+    "recommended_action": "observe",
+    "best_experiment_id": "EXP-20260523-v14-tail-guard",
+    "best_pnl_delta": -12.2287,
+    "hard_stop_delta": 0,
+    "source_cases": [],
+    "experiments": [
+      {
+        "experiment_id": "EXP-20260523-v14-tail-guard",
+        "base_strategy": "C/v14",
+        "sample_window": "2026-05-23~2026-05-25",
+        "sample_trades": 1,
+        "original_pnl": 12.2287,
+        "shadow_pnl": 0,
+        "filtered_trades": 1,
+        "avoided_loss": 0,
+        "missed_profit": 12.2287,
+        "hard_stop_before": 0,
+        "hard_stop_after": 0,
+        "promotion_status": "observe",
+        "candidate_id": "",
+        "source_cases": [],
+        "change_type": "filter",
+        "gate_passed": false,
+        "family_id": "FAM-C-v14-filter-tail-guard",
+        "generation": 1,
+        "notes": [
+          "原胜率 100.0%，影子胜率 0.0%",
+          "过滤分数阈值 min_score=55.0, tail_min=60.0",
+          "样本不足 1/30，只观察不晋级"
+        ]
+      }
+    ]
+  }
+]

@@ -1,0 +1,59 @@
+[strategy]
+key = "B"
+name = "B/v16"
+account = "订单流 CVD/OFI"
+scanner = "scanner_v16.py"
+data_dir = "scanner_data_v16"
+logs_dir = "logs_v16"
+
+[risk]
+leverage = 4
+trade_size_usdt = 100.0
+max_total_positions = 20
+max_active_new_positions = 12
+max_positions_per_timeframe = 2
+max_positions_per_side = 12
+max_loss_pct = 10.0
+min_available_balance_pct = 0.25
+min_available_balance_usdt = 300.0
+profit_protect_min_usdt = 30.0
+profit_protect_retrace = 0.25
+max_sl_per_symbol = 1
+symbol_sl_ban_cycles = 72
+
+[entry]
+timeframes = ["1h", "15m"]
+entry_timeframes = ["1h"]
+confirm_timeframe = "15m"
+confirm_min_score = 15
+confirm_opposite_reject_score = 25
+score_min = 35
+score_max = 90
+score_threshold_1h = 38
+score_threshold_15m = 55
+short_entry_penalty = 8
+low_position_threshold_discount = 3
+no_confirm_threshold_penalty = 5
+weak_opposite_confirm_penalty = 8
+confirm_bonus = 5
+confirm_strong_bonus = 8
+
+[order_flow]
+live_base_url = "https://fapi.binance.com"
+ofi_window = 20
+ofi_strong = 0.30
+ofi_weak = 0.15
+cvd_limit = 120
+cvd_strong = 0.18
+cvd_weak = 0.08
+cvd_cache_seconds = 60
+min_vol_ratio = 0.6
+min_vol_ratio_major = 0.45
+min_vol_ratio_high_vol = 0.8
+
+[exit]
+sl_mult = 2.0
+tp_mult = 4.0
+trail_activate = 1.0
+trail_pullback = 1.0
+

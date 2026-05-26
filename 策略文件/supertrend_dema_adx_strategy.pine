@@ -1,0 +1,101 @@
+//@version=5
+strategy('Supertrend Dema Dmi Strategy', overlay=true)
+
+// 输入变量
+Periods = input(14, title='ATR Period', defval=10)
+src = input(hl2, title='Source')
+Multiplier = input.float(1.5, title='ATR Multiplier', step=0.1, defval=3.0)
+changeATR = input(title='Change ATR Calculation Method ?', defval=true)
+dema_length1 = input.int(34, title='DEMA Length 1', group='DEMA')
+dema_length2 = input.int(58, title='DEMA Length 2', group='DEMA')
+stopLossPercent = 0.97
+
+// DEMA 函数定义
+dema(src, length) =>
+    2 * ta.ema(src, length) - ta.ema(ta.ema(src, length), length)
+
+// SuperTrend
+atr2 = ta.sma(ta.tr, Periods)
+atr = changeATR ? ta.atr(Periods) : atr2
+up = src - Multiplier * atr
+up1 = nz(up[1], up)
+up := close[1] > up1 ? math.max(up, up1) : up
+dn = src + Multiplier * atr
+dn1 = nz(dn[1], dn)
+dn := close[1] < dn1 ? math.min(dn, dn1) : dn
+trend = 1
+trend := nz(trend[1], trend)
+trend := trend == -1 and close > dn1 ? 1 : trend == 1 and close < up1 ? -1 : trend
+buySignal = trend == 1 and trend[1] == -1
+sellSignal = trend == -1 and trend[1] == 1
+
+// 计算 DMI
+adxlen = input.int(25, title='ADX Smoothing', group='ADX')
+dilen = input.int(13, title='DI Length', group='ADX')
+adxPower = input.int(20, title='adxPower', group='ADX')
+
+dirmov(len) =>
+    up = ta.change(high)
+    down = -ta.change(low)
+    plusDM = na(up) ? na : up > down and up > 0 ? up : 0
+    minusDM = na(down) ? na : down > up and down > 0 ? down : 0
+    truerange = ta.rma(ta.tr, len)
+    plus = fixnan(100 * ta.rma(plusDM, len) / truerange)
+    minus = fixnan(100 * ta.rma(minusDM, len) / truerange)
+    [plus, minus]
+adx(dilen, adxlen) =>
+    [plus, minus] = dirmov(dilen)
+    sum = plus + minus
+    adx = 100 * ta.rma(math.abs(plus - minus) / (sum == 0 ? 1 : sum), adxlen)
+    adx
+sig = adx(dilen, adxlen)
+prevSig = sig[1]
+
+//RSI
+rsiLengthInput = input.int(9, minval=1, title='RSI Length', group='RSI')
+rsiSourceInput = input.source(close, 'Source', group='RSI')
+
+up2 = ta.rma(math.max(ta.change(rsiSourceInput), 0), rsiLengthInput)
+down2 = ta.rma(-math.min(ta.change(rsiSourceInput), 0), rsiLengthInput)
+rsi = down2 == 0 ? 100 : up2 == 0 ? 0 : 100 - 100 / (1 + up2 / down2)
+
+x = input(36, defval=36)
+rsinew = ta.linreg(rsi, x, 0)
+
+// 画出指标和买卖信号
+plot(dema(close, dema_length1), color=color.new(color.orange, 0), linewidth=2)
+plot(dema(close, dema_length2), color=color.new(color.purple, 0), linewidth=2)
+
+plotshape(buySignal ? up : na, title='Buy', text='Buy', location=location.bottom, style=shape.labelup, size=size.tiny, color=color.new(color.green, 0), textcolor=color.new(color.white, 0))
+plotshape(sellSignal ? dn : na, title='Sell', text='Sell', location=location.top, style=shape.labeldown, size=size.tiny, color=color.new(color.red, 0), textcolor=color.new(color.white, 0))
+
+// 判断买入和卖出条件
+buyCondition = buySignal and close > math.max(dema(close, dema_length1), dema(close, dema_length2)) and sig >= adxPower and prevSig >= adxPower
+sellCondition = sellSignal and close < math.min(dema(close, dema_length1), dema(close, dema_length2)) and sig >= adxPower and prevSig >= adxPower
+
+// 开仓
+if buyCondition
+    strategy.entry('ST多', strategy.long)
+if sellCondition
+    strategy.entry('ST空', strategy.short)
+
+if ta.crossunder(rsinew, 75)
+    strategy.entry('RSI空', strategy.short)
+if ta.crossover(rsinew, 18)
+    strategy.entry('RSI多', strategy.long)
+
+//止盈
+if ta.crossunder(sig, 50)
+    if rsinew > 50
+        strategy.entry('ADX空', strategy.short)
+    if rsinew < 50
+        strategy.entry('ADX多', strategy.long)
+
+// 止损
+if strategy.position_size > 0
+    stopLossPrice = strategy.position_avg_price * stopLossPercent
+    strategy.exit('多单止损', stop=stopLossPrice)
+
+if strategy.position_size < 0
+    stopLossPrice = strategy.position_avg_price * (2 - stopLossPercent)
+    strategy.exit('空单止损', stop=stopLossPrice)

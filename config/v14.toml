@@ -1,0 +1,44 @@
+[strategy]
+key = "C"
+name = "C/v14"
+account = "四维度评分"
+scanner = "scanner_v14.py"
+data_dir = "scanner_data_v14"
+logs_dir = "logs_v14"
+
+[risk]
+leverage = 4
+max_total_positions = 20
+max_positions_per_timeframe = 2
+max_positions_per_side = 12
+max_positions_per_sector = 2
+max_loss_pct = 12.0
+min_available_balance_pct = 0.25
+min_available_balance_usdt = 300.0
+profit_protect_min_usdt = 30.0
+profit_protect_retrace = 0.25
+max_sl_per_symbol = 2
+symbol_sl_ban_hours = 72
+
+[entry]
+timeframes = ["1h", "15m"]
+entry_timeframes = ["1h"]
+confirm_timeframe = "15m"
+confirm_min_score = 25
+score_min = 35
+score_max = 80
+score_threshold_1h = 35
+score_threshold_15m = 55
+short_entry_penalty = 15
+
+[exit]
+sl_tier_low = 2.3
+sl_tier_mid = 2.0
+sl_tier_high = 1.5
+sl_tier_low_thresh = 0.02
+sl_tier_high_thresh = 0.04
+tp_max_mult = 10.0
+trail_stage_1_profit_atr = 2.5
+trail_stage_2_profit_atr = 4.0
+trail_stage_3_profit_atr = 6.0
+

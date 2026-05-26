@@ -1,0 +1,27 @@
+{
+  "mode": "shadow",
+  "gamma_base_url": "https://gamma-api.polymarket.com",
+  "clob_base_url": "https://clob.polymarket.com",
+  "market_limit": 250,
+  "request_timeout_seconds": 15,
+  "max_orderbooks": 80,
+  "min_liquidity_usd": 100,
+  "min_gross_edge_pct": 0.25,
+  "min_executable_usd": 5,
+  "include_keywords": [
+    "bitcoin",
+    "btc",
+    "ethereum",
+    "eth",
+    "solana",
+    "sol",
+    "xrp",
+    "doge",
+    "fed",
+    "trump",
+    "election",
+    "crypto"
+  ],
+  "exclude_keywords": [],
+  "user_agent": "AutoTrading-Polymarket-Lab/0.1"
+}

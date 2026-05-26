@@ -392,3 +392,12 @@
 - 日志、报告、SQLite、server mirror、回测数据、Polymarket probe 等运行数据不进 Git。原因不是“绝对高敏”，而是体积大、持续变化，且可能包含账户、订单、持仓、PnL 与策略行为细节；它们保留在服务器或本地 ignored 目录，按需同步分析。
 - 2026-05-26 13:22 CST 核对服务器数据：腾讯 `/opt/crypto-auto-trader` 有 `runtime 929M`、`logs 118M`、`reports 14M`、`scanner_data*` 约 `129M`、`backtest_data 166M`；腾讯 `/opt/polymarket-lab/reports` 约 `46M`；阿里云 `/opt/crypto-shadow-lab/server_logs_tencent` 约 `459M`。
 - 本地按需拉取腾讯紧凑日志镜像使用 `python 部署工具\sync_tencent_logs.py --days 3 --log-tail 800`，产物写入被 Git 忽略的 `server_logs_tencent/`。
+
+## 2026-05-26 跨电脑完整接手工具链
+- 已补齐“只依赖 Git 仓库 + 服务器访问资料”的接手链路：新增 `AGENTS.md` 给后续模型明确当前状态读取顺序、实时状态规则、部署回滚规则和防卡住约定；`README.md` 增加 fresh clone 依赖安装、实时上下文拉取、部署/回滚命令。
+- 新增 `requirements.txt`，声明本地分析、部署和同步所需依赖：`numpy`、`pandas`、`paramiko`、Python 3.10 下的 `tomli`。`core/strategy_config.py` 已兼容 Python 3.10 的 `tomli` 回退。
+- 从腾讯实盘节点恢复并纳入 Git 的关键依赖 `cloud/analyzer/auxiliary.py`，并补充 `cloud/__init__.py`、`cloud/analyzer/__init__.py`。此前 fresh clone 会缺少 scanner 引用的技术分析辅助模块，现在不会。
+- 新增 `部署工具/pull_live_context.py`：一条命令拉取腾讯当前总入口、账户快照、告警、策略进化、持久关注台账和 Polymarket 摘要到 ignored 本地文件，并生成 `runtime/live_context_summary_latest.json`。2026-05-26 17:35 CST 实测成功：21 个文件拉取，关键服务全 `active`，当前持仓 7 个，浮盈亏约 `+82.6639 USDT`，关注项 P0=1/P2=3。
+- 新增 `部署工具/release_manager.py`：按组件 dry-run/部署/列版本/回滚。部署时会在远端 `releases/<release-id>/backup` 备份旧文件、写 manifest、远端 `py_compile`、重启关联服务；默认不执行真实部署，必须加 `--apply`。
+- 已验证：`release_manager.py` 和 `pull_live_context.py` 本地 `py_compile` 通过；腾讯 portal 和 strategy-b dry-run 成功，strategy-b dry-run 已包含 `cloud/analyzer/auxiliary.py`，避免未来部署漏依赖。
+- 防再次“长时间无反馈”约定写入 `AGENTS.md`：长任务拆到 service/timer 或短超时命令，先报告阻塞再处理；当前状态问题必须先运行 `pull_live_context.py`，不能靠旧记忆猜测。

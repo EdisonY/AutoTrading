@@ -8,10 +8,11 @@ This repository is designed for multi-machine development. It contains code, con
 
 When opening this project on a new computer, read these files in order:
 
-1. `PROJECT_STATE.md` - current architecture, what is done, what is not done, and GitHub/server rules.
-2. `记忆文档/MEMORY.md` - chronological decision memory.
-3. `research_memory/attention/open_items.json` - durable open attention items that should not be forgotten after daily reports roll over.
-4. This `README.md` - how to work from a fresh clone.
+1. `AGENTS.md` - operating rules for any coding model that receives this repo.
+2. `PROJECT_STATE.md` - current architecture, what is done, what is not done, and GitHub/server rules.
+3. `记忆文档/MEMORY.md` - chronological decision memory.
+4. `research_memory/attention/open_items.json` - durable open attention items that should not be forgotten after daily reports roll over.
+5. This `README.md` - how to work from a fresh clone.
 
 ## Repository Layout
 
@@ -36,14 +37,24 @@ git status --short --branch
 Then:
 
 1. Confirm you have Python available.
-2. Compile the current core scripts before editing:
+2. Install local dependencies:
 
 ```powershell
-python -m py_compile 部署工具\decision_attention.py 部署工具\portal_dashboard.py 部署工具\portal_refresh_service.py 部署工具\system_alerts.py
+py -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
 ```
 
-3. Read `PROJECT_STATE.md` and `research_memory/attention/open_items.json` before changing strategy behavior.
-4. Do not run deployment or restart live services unless you have explicit authority for that machine and task.
+3. Compile the current core scripts before editing:
+
+```powershell
+python -m py_compile 部署工具\decision_attention.py 部署工具\portal_dashboard.py 部署工具\portal_refresh_service.py 部署工具\system_alerts.py 部署工具\pull_live_context.py 部署工具\release_manager.py
+```
+
+4. Read `PROJECT_STATE.md` and `research_memory/attention/open_items.json` before changing strategy behavior.
+5. Do not run deployment or restart live services unless you have explicit authority for that machine and task.
+
+The scanner dependency `cloud/analyzer/auxiliary.py` is included in Git. If a future import refers to another missing `cloud/analyzer` module, recover it from the live server before changing strategy behavior.
 
 ## Live/Shadow Servers
 
@@ -95,13 +106,37 @@ As of 2026-05-26 13:22 Asia/Shanghai, the data exists on servers:
 | Aliyun `/opt/crypto-shadow-lab` | `reports` | 692K |
 | Aliyun `/opt/polymarket-lab` | `reports` | 3.8M |
 
-To pull a compact local mirror from Tencent for analysis:
+## Current Live Context
+
+Git is not the source of truth for current positions, current PnL, live signals, or service state. Before answering a live-state question on a new computer, run:
 
 ```powershell
-python 部署工具\sync_tencent_logs.py --days 3 --log-tail 800
+python 部署工具\pull_live_context.py
 ```
 
-That writes to `server_logs_tencent/`, which is ignored by Git.
+This pulls a compact, ignored local mirror of the current command center, account snapshot, alerts, strategy evolution gate, durable attention ledger, and Polymarket summary. The main machine-readable output is `runtime/live_context_summary_latest.json`.
+
+For detailed recent logs, add:
+
+```powershell
+python 部署工具\pull_live_context.py --logs-days 3 --log-tail 800
+```
+
+That writes detailed log mirrors to `server_logs_tencent/`, which is ignored by Git.
+
+## Deployment And Rollback
+
+Use `release_manager.py` for live file deployment. It defaults to dry-run; add `--apply` only when the target and component are correct.
+
+```powershell
+python 部署工具\release_manager.py deploy --target tencent --component portal
+python 部署工具\release_manager.py deploy --target tencent --component strategy-b --apply
+python 部署工具\release_manager.py list --target tencent
+python 部署工具\release_manager.py rollback --target tencent --release-id <release-id>
+python 部署工具\release_manager.py rollback --target tencent --release-id <release-id> --apply
+```
+
+Deployments back up overwritten remote files under `/opt/crypto-auto-trader/releases/<release-id>/backup` and write a manifest. Rollback restores those backups and restarts the same recorded services unless `--no-restart` is used.
 
 ## Command Center
 
@@ -151,4 +186,3 @@ git ls-files | Select-String -Pattern 'runtime/|logs/|reports/|server_logs_tence
 ```
 
 This command should return no tracked files.
-

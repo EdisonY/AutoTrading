@@ -29,9 +29,16 @@ This file is the long-lived project memory for multi-location development. Daily
 - Polymarket read-only monitor exists as a separate system and is now represented in the command-center summary.
 - Operational alerts watch systemd services, timers, disk pressure, event freshness, account snapshots, strategy evolution, and the persistent attention ledger.
 - Log/data growth has guardrails: generated logs, reports, SQLite DBs, mirrors, and bulky backtest outputs are excluded from Git.
+- Cross-machine handoff is now explicit: `AGENTS.md`, `README.md`, `PROJECT_STATE.md`, and `记忆文档/MEMORY.md` tell a new model what to read and how to avoid stale conclusions.
+- Local dependencies are declared in `requirements.txt`; Python 3.10 compatibility for TOML parsing is handled through `tomli`.
+- The required scanner helper package `cloud/analyzer/auxiliary.py` is in Git, so fresh clones no longer miss the live indicator dependency.
+- `部署工具/pull_live_context.py` provides one-command compact live-state sync from Tencent into ignored local files before making current PnL/position/service conclusions.
+- `部署工具/release_manager.py` provides component-based dry-run deploys, remote backups, release manifests, service restarts, release listing, and rollback.
 
 ## Persistent Memory Files
 
+- `AGENTS.md`: model-facing operating rules. A new coding model should follow this first.
+- `README.md`: fresh-clone, data policy, live sync, and deployment handoff.
 - `PROJECT_STATE.md`: current state and migration rules. Update this when architecture, deployment, or unresolved priorities change.
 - `记忆文档/MEMORY.md`: chronological memory of decisions and major changes.
 - `research_memory/attention/open_items.json`: durable attention ledger. Items stay visible until explicitly confirmed or resolved; a daily report rolling over must not remove them.
@@ -50,6 +57,7 @@ This file is the long-lived project memory for multi-location development. Daily
 - Strategy evolution still needs stronger promotion rigor before auto-upgrade: walk-forward windows, paper fill simulation, fee/slippage modeling, regime segmentation, and post-change rollback rules.
 - Polymarket remains read-only. A trading version would need wallet custody design, CLOB auth/key handling, order placement, fill reconciliation, gas/fee accounting, and latency measurement.
 - GitHub CI is not configured yet.
+- Deployment tooling exists, but production deploys still require explicit operator judgement; secrets and server-side environment files remain outside Git.
 - Multi-machine deployment secrets must stay outside Git; use server-side environment files or GitHub Actions secrets only if CI/deploy is added.
 
 ## GitHub Migration Rules

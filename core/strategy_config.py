@@ -7,7 +7,10 @@ used by review/backtest tooling without importing scanner modules.
 from __future__ import annotations
 
 import json
-import tomllib
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python 3.10 on the current live server.
+    import tomli as tomllib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -77,4 +80,3 @@ def dump_config_manifest(config_dir: Path | None = None) -> str:
         for key, cfg in configs.items()
     }
     return json.dumps(payload, ensure_ascii=False, indent=2)
-

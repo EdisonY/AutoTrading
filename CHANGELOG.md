@@ -46,3 +46,11 @@ This is the durable reason-and-outcome ledger for every material design, code, c
 - Verification: Paramiko deployment failed before authentication with `Error reading SSH protocol banner`. Native SSH also timed out during banner exchange. A short TCP probe returned `tcp_22_connected`, so port 22 is reachable but sshd did not return the SSH banner in time.
 - Live impact / deployment: No live impact; deployment did not reach upload stage.
 - Files / release / commit: This ledger entry records the failed operational attempt; code remains at `051f7d5`.
+
+## 2026-05-26 21:45 CST - Tencent Lighthouse TAT channel also stalled
+- Trigger / reason: SSH remains blocked before banner while C/v14 and portal deployment are pending; user attempted Tencent automated command execution as an alternate access path.
+- Completed: Identified the target as Lighthouse instance `ap-singapore / lhins-8kx38vad`; evaluated the provided TAT invocation `invt-b43kp606bb`.
+- Not completed / remaining: The TAT command has not executed because its status remains `DELIVERING` with empty output. Server access and pending deployment now require VNC login or restoration of an instance-side management channel.
+- Verification: External TCP port 22 remains connectable while SSH banner times out; TAT returned `DELIVERING` for `ps aux | grep tat_agent | grep -v grep`, so it cannot currently confirm Agent state.
+- Live impact / deployment: No server mutation verified; do not reboot the instance while trading services may still be running.
+- Files / release / commit: Operational incident record only; pending deploy remains the C/v14/portal change from `4c37e4d`.

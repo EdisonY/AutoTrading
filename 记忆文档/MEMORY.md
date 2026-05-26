@@ -385,4 +385,4 @@
 - 新增持久关注台账 `research_memory/attention/open_items.json`：总入口和巡检会使用它保留值得决策者关注的问题/机会。日报滚动或复盘刷新不会自动遗忘，检测消失后先变成 `cleared_pending_review`，需要后续明确确认才关闭。
 - Polymarket 作为独立只读研究系统纳入总入口复盘摘要；当前定位仍是样本收集和机会可行性验证，不接实盘交易。
 - 2026-05-26 对 B/v16 的核对结论：不是超过两天未开仓。腾讯事件库显示 `2026-05-26 09:21:29 +08:00` 有 `XRPUSDT` short OPEN，且同日还有 `BTCUSDT`、`NEARUSDT`、`PORT3USDT` 等开仓；入口页需要区分“当前仍持仓的开仓时间”和“最近真实开仓事件”。
-- 本地 Git 仓库已初始化为 `main` 并配置 remote `git@github.com:EdisonY/AutoTrading.git`；第一次推送被 GitHub 拒绝为 `Permission denied (publickey)`。当前机器可登记到 GitHub 的公钥文件为 `C:\Users\Eels\.ssh\id_rsa.pub`，指纹 `SHA256:qxGXZU6nLnc0OtXLjRVjvH2NZv7p8c36rvRdTndJy+o`；授权后即可继续 push。
+- 本地 Git 仓库已初始化为 `main` 并配置 remote `git@github.com:EdisonY/AutoTrading.git`；第一次推送曾因 `Permission denied (publickey)` 被拒，用户添加本机公钥后已成功推送 `main` 到 GitHub。当前机器公钥文件为 `C:\Users\Eels\.ssh\id_rsa.pub`，指纹 `SHA256:qxGXZU6nLnc0OtXLjRVjvH2NZv7p8c36rvRdTndJy+o`。

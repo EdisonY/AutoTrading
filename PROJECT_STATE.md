@@ -55,7 +55,7 @@ This file is the long-lived project memory for multi-location development. Daily
 ## GitHub Migration Rules
 
 - Repository remote: `git@github.com:EdisonY/AutoTrading.git`.
-- Local repository initialized on branch `main`. Push is pending until GitHub accepts this machine's SSH key or a PAT/credential is configured.
+- Local repository initialized on branch `main` and pushed to GitHub. `main` tracks `origin/main`.
 - Current machine public key fingerprint: `SHA256:qxGXZU6nLnc0OtXLjRVjvH2NZv7p8c36rvRdTndJy+o` from `C:\Users\Eels\.ssh\id_rsa.pub`.
 - Commit code, configs, docs, systemd units, compact research memory, and long-lived project memory.
 - Do not commit `.env`, API keys, SSH keys, SQLite DBs, runtime snapshots, logs, reports, server mirrors, or bulky generated backtest/report data.

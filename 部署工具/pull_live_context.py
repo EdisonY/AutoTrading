@@ -3,10 +3,15 @@
 from __future__ import annotations
 
 import argparse
+import base64
+import io
 import json
 import os
+import shutil
 import subprocess
 import sys
+import tarfile
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -42,6 +47,9 @@ MAIN_FILES = [
     ("reports/counterfactual_open_skips_latest.json", "reports/counterfactual_open_skips_latest.json", False),
     ("reports/counterfactual_open_skips_latest.md", "reports/counterfactual_open_skips_latest.md", False),
     ("reports/alerts_latest.md", "reports/alerts_latest.md", False),
+    ("reports/market_review_latest.html", "reports/market_review_latest.html", False),
+    ("reports/market_review_latest.md", "reports/market_review_latest.md", False),
+    ("reports/market_snapshot_latest.json", "reports/market_snapshot_latest.json", False),
     ("复盘报告/account_snapshot_latest.html", "复盘报告/account_snapshot_latest.html", False),
     ("runtime/account_snapshot_latest.json", "runtime/account_snapshot_latest.json", True),
     ("runtime/alerts_latest.json", "runtime/alerts_latest.json", True),
@@ -56,6 +64,12 @@ POLYMARKET_FILES = [
     ("reports/polymarket_probe_latest.md", "polymarket_lab/reports/polymarket_probe_latest.md", False),
     ("reports/polymarket_monitor_summary.jsonl", "polymarket_lab/reports/polymarket_monitor_summary.jsonl", False),
 ]
+
+LARGE_LOCAL_FILES = {
+    "reports/market_review_latest.html",
+    "reports/market_review_latest.md",
+    "polymarket_lab/reports/polymarket_monitor_summary.jsonl",
+}
 
 REMOTE_SUMMARY_SCRIPT = r"""
 import json
@@ -162,17 +176,128 @@ def connect(timeout: int) -> paramiko.SSHClient:
         allow_agent=True,
         **kwargs,
     )
+    transport = client.get_transport()
+    if transport is not None:
+        transport.set_keepalive(max(5, min(timeout, 15)))
+        sock = getattr(transport, "sock", None)
+        if sock is not None:
+            sock.settimeout(timeout)
     return client
 
 
 def remote_command(client: paramiko.SSHClient, command: str, timeout: int) -> str:
     _stdin, stdout, stderr = client.exec_command(command, timeout=timeout)
-    rc = stdout.channel.recv_exit_status()
-    out = stdout.read().decode("utf-8", errors="replace")
-    err = stderr.read().decode("utf-8", errors="replace")
+    channel = stdout.channel
+    try:
+        channel.settimeout(1.0)
+    except Exception:
+        pass
+    deadline = time.monotonic() + max(1, timeout)
+    out_chunks: list[bytes] = []
+    err_chunks: list[bytes] = []
+    while True:
+        while channel.recv_ready():
+            out_chunks.append(channel.recv(65536))
+        while channel.recv_stderr_ready():
+            err_chunks.append(channel.recv_stderr(65536))
+        if channel.exit_status_ready():
+            rc = channel.recv_exit_status()
+            break
+        if time.monotonic() >= deadline:
+            channel.close()
+            raise TimeoutError(f"remote command timed out after {timeout}s: {command[:160]}")
+        time.sleep(0.1)
+    while channel.recv_ready():
+        out_chunks.append(channel.recv(65536))
+    while channel.recv_stderr_ready():
+        err_chunks.append(channel.recv_stderr(65536))
+    out = b"".join(out_chunks).decode("utf-8", errors="replace")
+    err = b"".join(err_chunks).decode("utf-8", errors="replace")
     if rc != 0:
         raise RuntimeError(f"remote command rc={rc}: {err[-400:] or out[-400:]}")
     return out.strip()
+
+
+def openssh_args(binary: str, timeout: int) -> list[str]:
+    args = [
+        binary,
+        "-o",
+        "BatchMode=yes",
+        "-o",
+        f"ConnectTimeout={timeout}",
+        "-o",
+        "ServerAliveInterval=5",
+        "-o",
+        "ServerAliveCountMax=1",
+    ]
+    if TENCENT_KEY:
+        args.extend(["-i", str(Path(TENCENT_KEY).expanduser())])
+    return args
+
+
+def openssh_remote_command(command: str, timeout: int) -> str:
+    target = f"{TENCENT_USER}@{TENCENT_HOST}"
+    try:
+        result = subprocess.run(
+            [*openssh_args("ssh", timeout), target, command],
+            capture_output=True,
+            timeout=timeout,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise TimeoutError(f"openssh remote command timed out after {timeout}s: {command[:160]}") from exc
+    out = result.stdout.decode("utf-8", errors="replace")
+    err = result.stderr.decode("utf-8", errors="replace")
+    if result.returncode != 0:
+        raise RuntimeError(f"openssh remote command rc={result.returncode}: {err[-400:] or out[-400:]}")
+    return out.strip()
+
+
+def pull_files_openssh(entries: list[tuple[str, str, str, bool]], timeout: int) -> list[dict[str, Any]]:
+    encoded = base64.b64encode(json.dumps(entries, ensure_ascii=False).encode("utf-8")).decode("ascii")
+    script = (
+        "import base64, json, pathlib, sys, tarfile\n"
+        f"entries=json.loads(base64.b64decode('{encoded}').decode('utf-8'))\n"
+        "with tarfile.open(fileobj=sys.stdout.buffer, mode='w|gz') as archive:\n"
+        "    for index, (remote_root, remote_relative, _local, _required) in enumerate(entries):\n"
+        "        path=pathlib.Path(remote_root) / remote_relative\n"
+        "        if path.exists() and path.is_file():\n"
+        "            archive.add(str(path), arcname=str(index), recursive=False)\n"
+    )
+    command = f"python3 - <<'PY'\n{script}PY"
+    target = f"{TENCENT_USER}@{TENCENT_HOST}"
+    try:
+        result = subprocess.run(
+            [*openssh_args("ssh", timeout), target, command],
+            capture_output=True,
+            timeout=timeout,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise TimeoutError(f"openssh file pull timed out after {timeout}s for {len(entries)} files") from exc
+    if result.returncode != 0:
+        err = result.stderr.decode("utf-8", errors="replace")
+        raise RuntimeError(f"openssh file pull rc={result.returncode}: {err[-400:]}")
+    members: dict[str, bytes] = {}
+    with tarfile.open(fileobj=io.BytesIO(result.stdout), mode="r:gz") as archive:
+        for member in archive.getmembers():
+            stream = archive.extractfile(member)
+            if stream is not None:
+                members[member.name] = stream.read()
+    pulled: list[dict[str, Any]] = []
+    for index, (remote_root, remote_relative, local_relative, required) in enumerate(entries):
+        remote_path = f"{remote_root}/{remote_relative}"
+        content = members.get(str(index))
+        if content is None:
+            if required:
+                raise FileNotFoundError(f"required live file missing: {remote_path}")
+            pulled.append({"remote": remote_path, "local": str(ROOT / local_relative), "bytes": 0, "status": "missing"})
+            continue
+        local_path = ROOT / Path(local_relative)
+        local_path.parent.mkdir(parents=True, exist_ok=True)
+        local_path.write_bytes(content)
+        pulled.append({"remote": remote_path, "local": str(local_path), "bytes": len(content), "status": "ok"})
+    return pulled
 
 
 def pull_file(
@@ -211,24 +336,57 @@ def localize_html_links(paths: list[Path]) -> None:
 
 
 def pull_context(timeout: int) -> dict[str, Any]:
-    pulled: list[dict[str, Any]] = []
-    client = connect(timeout)
-    try:
-        sftp = client.open_sftp()
-        try:
-            for remote, local, required in MAIN_FILES:
-                pulled.append(pull_file(sftp, LIVE_ROOT, remote, local, required))
-            for remote, local, required in POLYMARKET_FILES:
-                pulled.append(pull_file(sftp, POLYMARKET_ROOT, remote, local, required))
-        finally:
-            sftp.close()
-        raw_summary = remote_command(
-            client,
+    entries = [
+        *((LIVE_ROOT, remote, local, required) for remote, local, required in MAIN_FILES),
+        *((POLYMARKET_ROOT, remote, local, required) for remote, local, required in POLYMARKET_FILES),
+    ]
+    use_openssh = TENCENT_PASS is None and shutil.which("ssh") is not None
+    if use_openssh:
+        small_entries = [entry for entry in entries if entry[2] not in LARGE_LOCAL_FILES]
+        large_entries = [entry for entry in entries if entry[2] in LARGE_LOCAL_FILES]
+        pulled = pull_files_openssh(small_entries, timeout=max(60, timeout))
+        if large_entries:
+            try:
+                pulled.extend(pull_files_openssh(large_entries, timeout=max(90, timeout)))
+            except TimeoutError:
+                for remote_root, remote_relative, local_relative, required in large_entries:
+                    if required:
+                        raise
+                    pulled.append(
+                        {
+                            "remote": f"{remote_root}/{remote_relative}",
+                            "local": str(ROOT / local_relative),
+                            "bytes": 0,
+                            "status": "skipped_timeout",
+                        }
+                    )
+        raw_summary = openssh_remote_command(
             f"/opt/crypto-auto-trader/.venv/bin/python - <<'PY'\n{REMOTE_SUMMARY_SCRIPT}\nPY",
-            timeout=max(20, timeout),
+            timeout=max(30, timeout),
         )
-    finally:
-        client.close()
+    else:
+        pulled: list[dict[str, Any]] = []
+        client = connect(timeout)
+        try:
+            sftp = client.open_sftp()
+            try:
+                sftp.get_channel().settimeout(timeout)
+            except Exception:
+                pass
+            try:
+                for remote, local, required in MAIN_FILES:
+                    pulled.append(pull_file(sftp, LIVE_ROOT, remote, local, required))
+                for remote, local, required in POLYMARKET_FILES:
+                    pulled.append(pull_file(sftp, POLYMARKET_ROOT, remote, local, required))
+            finally:
+                sftp.close()
+            raw_summary = remote_command(
+                client,
+                f"/opt/crypto-auto-trader/.venv/bin/python - <<'PY'\n{REMOTE_SUMMARY_SCRIPT}\nPY",
+                timeout=max(20, timeout),
+            )
+        finally:
+            client.close()
     summary = json.loads(raw_summary)
     localize_html_links([ROOT / item["local"] if not Path(item["local"]).is_absolute() else Path(item["local"]) for item in pulled])
     payload = {
@@ -263,7 +421,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--log-tail", type=int, default=800, help="Text log lines to keep when --logs-days is used")
     parser.add_argument("--logs-timeout", type=int, default=300, help="Maximum seconds for optional log mirror pull")
     args = parser.parse_args(argv)
-    payload = pull_context(max(5, args.timeout))
+    try:
+        payload = pull_context(max(5, args.timeout))
+    except Exception as exc:
+        print(json.dumps({"status": "error", "error": str(exc)}, ensure_ascii=False), file=sys.stderr)
+        return 2
     if args.logs_days > 0:
         sync_logs(args.logs_days, args.log_tail, args.logs_timeout)
     live = payload["live_summary"]

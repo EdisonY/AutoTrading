@@ -860,6 +860,29 @@ def top_trades(data: dict, n: int = 5) -> tuple[list[dict], list[dict]]:
     return wins, losses
 
 
+def is_c_v14_entry_candidate_signal(row: dict) -> bool:
+    """Match the C/v14 real entry-candidate gate used by the portal summary."""
+    tf = str(row.get("timeframe") or row.get("tf") or "").lower()
+    side = str(row.get("trade_side") or row.get("side") or "").lower()
+    score = abs(to_float(row.get("net_score", row.get("score", row.get("vpb_score", 0)))))
+    if tf != "1h" or score > 80:
+        return False
+    return (side == "long" and score >= 55) or (side == "short" and score >= 70)
+
+
+def signal_summary(data: dict) -> dict[str, Any]:
+    raw = len(data["signals"])
+    if data.get("strategy_name") == "C/v14":
+        count = sum(1 for row in data["signals"] if is_c_v14_entry_candidate_signal(row))
+        return {
+            "count": count,
+            "raw": raw,
+            "cell": f"{count}<br><small>原始 {raw}</small>" if raw != count else str(count),
+            "label": "入场候选",
+        }
+    return {"count": raw, "raw": raw, "cell": str(raw), "label": "信号数"}
+
+
 def summarize_strategy(data: dict) -> dict:
     trades = [t for t in data["trades"] if "pnl_usd" in t]
     attributed = [t for t in data["attributed_trades"] if "pnl_usd" in t]
@@ -870,6 +893,7 @@ def summarize_strategy(data: dict) -> dict:
     all_full = summarize_trades([t for t in data["all_trades"] if "pnl_usd" in t])
     all_attributed = summarize_trades(data["all_attributed_trades"])
     all_restored = summarize_trades(data["all_restored_trades"])
+    sig = signal_summary(data)
     return {
         **full,
         "attributed": attributed_summary,
@@ -880,7 +904,9 @@ def summarize_strategy(data: dict) -> dict:
         "current": data.get("current", {}),
         "opens": len(data["opens"]),
         "skips": len(data["skips"]),
-        "signals": len(data["signals"]),
+        "signals": sig["count"],
+        "raw_signals": sig["raw"],
+        "signal_cell": sig["cell"],
     }
 
 
@@ -996,7 +1022,7 @@ def build_report(date_str: str, moves: list[dict], strategy_data: dict[str, dict
     lines += ["", "## 五、昨日策略交易表现", ""]
     lines.append("复盘结论必须同时看全量已平仓、剔除恢复仓、恢复仓贡献和当前浮盈；策略进化优先参考“剔除恢复仓PnL + 当前浮盈”。")
     lines.append("")
-    lines.append("| 策略 | 平仓笔数 | 胜率 | 全量已平仓PnL | 剔除恢复仓PnL | 恢复仓PnL | 当前浮盈 | 当前仓位 | 开仓事件 | 信号数 | 跳过数 |")
+    lines.append("| 策略 | 平仓笔数 | 胜率 | 全量已平仓PnL | 剔除恢复仓PnL | 恢复仓PnL | 当前浮盈 | 当前仓位 | 开仓事件 | 入场候选/信号 | 跳过数 |")
     lines.append("|------|----------|------|---------------|---------------|-----------|----------|----------|----------|--------|--------|")
     for strategy in STRATEGIES:
         data = strategy_data[strategy["key"]]
@@ -1010,7 +1036,7 @@ def build_report(date_str: str, moves: list[dict], strategy_data: dict[str, dict
             f"{s['pnl']:+.2f} | {attr['pnl']:+.2f} / {attr['trades']}笔 | "
             f"{restored['pnl']:+.2f} / {restored['trades']}笔 | "
             f"{current.get('unrealized',0):+.2f} | {positions} | "
-            f"{s['opens']} | {s['signals']} | {s['skips']} |"
+            f"{s['opens']} | {s['signal_cell']} | {s['skips']} |"
         )
 
     lines += ["", "### 累计口径校准", ""]
@@ -1333,7 +1359,7 @@ def build_report(date_str: str, moves: list[dict], strategy_data: dict[str, dict
         "",
         "## 一、策略账户与交易表现",
         "",
-        "| 策略 | 平仓笔数 | 胜率 | 全量已平仓PnL | 剔除恢复仓PnL | 恢复仓PnL | 当前浮盈 | 当前仓位 | 开仓事件 | 信号数 | 跳过数 |",
+        "| 策略 | 平仓笔数 | 胜率 | 全量已平仓PnL | 剔除恢复仓PnL | 恢复仓PnL | 当前浮盈 | 当前仓位 | 开仓事件 | 入场候选/信号 | 跳过数 |",
         "|------|----------|------|---------------|---------------|-----------|----------|----------|----------|--------|--------|",
     ]
 
@@ -1349,7 +1375,7 @@ def build_report(date_str: str, moves: list[dict], strategy_data: dict[str, dict
             f"{s['pnl']:+.2f} | {attr['pnl']:+.2f} / {attr['trades']}笔 | "
             f"{restored['pnl']:+.2f} / {restored['trades']}笔 | "
             f"{current.get('unrealized',0):+.2f} | {positions} | "
-            f"{s['opens']} | {s['signals']} | {s['skips']} |"
+            f"{s['opens']} | {s['signal_cell']} | {s['skips']} |"
         )
 
     lines += ["", "### 累计口径校准", ""]
@@ -1698,10 +1724,17 @@ def run(
     strategy_data = {s["key"]: load_strategy_day(s, date_str) for s in STRATEGIES}
     for s in STRATEGIES:
         d = strategy_data[s["key"]]
-        print(f"{s['name']}: opens={len(d['opens'])}, trades={len(d['trades'])}, signals={len(d['signals'])}, skips={len(d['skips'])}")
+        sig = signal_summary(d)
+        raw_note = f", raw_signals={sig['raw']}" if sig["raw"] != sig["count"] else ""
+        print(
+            f"{s['name']}: opens={len(d['opens'])}, trades={len(d['trades'])}, "
+            f"entry_candidates_or_signals={sig['count']}{raw_note}, skips={len(d['skips'])}"
+        )
     content = build_report(date_str, moves, strategy_data, top_n)
     out = REPORTS_DIR / f"market_review_{date_str}.md"
     out.write_text(content, encoding="utf-8")
+    latest_md = REPORTS_DIR / "market_review_latest.md"
+    latest_md.write_text(content, encoding="utf-8")
     print(f"报告已生成: {out}")
     snapshot = {
         "date": date_str,

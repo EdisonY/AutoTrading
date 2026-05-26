@@ -1,5 +1,17 @@
 # MEMORY.md - 长期记忆
 
+## 2026-05-27 全局巡检、OOM 修复与日报口径收口
+- 2026-05-26 21:56 CST 腾讯云发生过 OOM：kernel 杀掉一个 `python3` 进程，导致 SSH banner 卡住、`polymarket-monitor.service` / `crypto-system-alerts.service` 短暂失败、入口刷新异常。根因不是简单网络问题。
+- 已在腾讯云添加持久化 2G swap：`/swapfile none swap sw 0 0` 写入 `/etc/fstab`，`vm.swappiness=10` 写入 `/etc/sysctl.d/99-autotrading-swap.conf`。2026-05-27 00:33 复查：MemAvailable 约 1.3GiB，SwapTotal 2GiB。
+- `system_alerts.py` 已升级：入口/告警会暴露内存、swap、近期 kernel OOM。当前 OOM 会作为 P0/P1 注意项保留，直到用户确认或窗口自然清除。
+- `pull_live_context.py` 已从容易静默卡住的 Paramiko/SFTP 路径改为优先 OpenSSH 压缩分组拉取，并有硬 deadline；2026-05-27 00:40 验证 24 个入口/日报/账户/研究/Polymarket 文件约 20 秒拉取成功。
+- `daily_market_review.py` 已改 C/v14 口径：日报策略表现表显示 `入场候选/信号`，C/v14 用真实 1h 入场候选口径并同时显示原始信号数。2026-05-25 全量复盘确认：C/v14 入场候选 57，原始信号 46378，跳过 57。
+- 日报现在同时写 `reports/market_review_latest.md` 与 `market_review_latest.html`；新电脑/新 agent 不应读取可能由调试样本污染的日期文件作为最新结论，优先看 latest。
+- 2026-05-27 00:33 线上持久化检查：八个常驻服务和四个 timer 全部 enabled，failed units 为 0；23:56 统一进化门禁成功，00:00 数据维护成功。
+- 策略方向结论：A/v11 `EXP-20260523-v11-replacement-quality` 是当前 P0 `verified_upgrade_ready`，建议 review_for_expansion；两个 reverse_trade-stage-guard 假设已被 reject。OPEN_SKIPPED 反事实显示过滤整体保护价值为正，但 A/v11 周期池满/替换层有错失收益，仍是优先优化线索。
+- Polymarket 作为独立系统继续只读监控：最新摘要健康 OK，检查 80 个市场，机会数 0，book_errors 0，最接近盘口距毛盈利约 0.1%，尚未证明有可交易套利。
+- 当前 Git 树已脱敏 `MEMORY.md` 中历史明文凭据；但旧提交可能仍含凭据，若这些 key/password 仍有效，必须视为已暴露并轮换，或在扩大协作前做 Git 历史清理。
+
 ## 2026-05-23 研究闭环 P2/P3 继续推进
 - 已将经验库候选接入 `F:\AutoTrading\部署工具\experiment_runner.py`：`research_memory/hypotheses/candidates_latest.jsonl` 会自动转成影子实验，不再只跑固定三条。
 - 已新增统一追踪字段：`candidate_id`、`source_cases`、`change_type`、`gate_passed`，并写入实验结果与报告。
@@ -59,7 +71,7 @@
 ## 项目：crypto-auto-trader（半木夏量化交易系统）
 
 ### 架构
-- **主运行服务器** 129.226.151.144 (腾讯云新加坡 Ubuntu 22.04, 用户 ubuntu)，密码: Caosinima00.
+- **主运行服务器** 129.226.151.144 (腾讯云新加坡 Ubuntu 22.04, 用户 ubuntu)，凭据不写入 Git；使用本机 SSH key、服务器环境文件或外部密钥库。
 - **旧阿里云服务器** 39.105.156.210 (CentOS 8.2, root) 已空闲：所有 `crypto-*` systemd 服务 disabled，当前无 scanner/dashboard 进程。
 - 腾讯云 Python 运行环境：`/opt/crypto-auto-trader/.venv/bin/python` / 服务器路径: `/opt/crypto-auto-trader`
 - **币安 Binance Testnet** 交易与实时数据（纯币安，已移除所有OKX代码）
@@ -86,8 +98,7 @@
 - **A/B/C三账号**：v11(v11半木夏)、v13(v13半木夏优化)、v14(四维度新策略) 三种策略并行测试
 
 ### 账号A配置（v11策略）
-- API Key: GVj9IiAxSFBR3rxIfaYrpY8ejnaYEyrIAAxsDIC96fU9OihvTi2o0HpTdlWDd7nh
-- API Secret: zJzHayctHUzUlsGz6ct8yNCHm8wT7RhgP4fFYinAZedP4DPj3WxeTunkwFWeV4bd
+- API Key/Secret: 不写入 Git；服务器通过 `BINANCE_A_API_KEY` / `BINANCE_A_API_SECRET` 环境变量加载。
 - Scanner: scanner.py（v11），日志 logs/ 和 scanner_data/
 - BinanceClient: binance_client.py
 - Dashboard: crypto-dashboard.service，端口8081，前端web/dashboard_static/
@@ -95,8 +106,7 @@
 - 余额: ~2899 USDT（Testnet，2026-04-28）
 
 ### 账号B配置（v13策略，当前）
-- API Key: vGlIBNOECTVfOeEdPMSbSNzgJN7MM2I7dN3DhAapwlLfo6adna8wu6UAnXaGvNJv
-- API Secret: 3qDiJaLSBG5pjipfV42qSMZwdvZcuoQf2Zo9TxTnr6ZchLMGqr4gZo3JVpHKiPqV
+- API Key/Secret: 不写入 Git；服务器通过 `BINANCE_B_API_KEY` / `BINANCE_B_API_SECRET` 环境变量加载。
 - Scanner: scanner_v13.py（v13），独立日志 logs_v13/ 和 scanner_data_v13/
 - BinanceClientV2: binance_client_v2.py
 - Dashboard: crypto-dashboard-b.service，端口8082，前端web/dashboard_static_b/
@@ -104,8 +114,7 @@
 - v13特点：去掉EVICT、禁用VPB、不强制共振、110+分跳过、动态投入、多头+10分门槛、浮动止损放宽(1.2/1.5×ATR)、止盈收紧(3.0/4.0×ATR)、冷却期120分钟、MAX_LOSS=30%、同币种止损保护(≥2次→24h)
 
 ### 账号C配置（v14策略，2026-05-02新增）
-- API Key: JHrzk9ZAmjn3f6dEztm7eYEfwTlOvLGTP3PdiJJS5XLU9gd2ZezHZAXV09oiB67f
-- API Secret: tlfSQBj0n9vcnpKdHBnSu5rvCH5QnD9osQenweJukSndwNy9JoifKZBc5uhMn9CZ
+- API Key/Secret: 不写入 Git；服务器通过 `BINANCE_C_API_KEY` / `BINANCE_C_API_SECRET` 环境变量加载。
 - Scanner: scanner_v14.py（v14），独立日志 logs_v14/ 和 scanner_data_v14/
 - BinanceClientV3: binance_client_v3.py
 - Dashboard: crypto-dashboard-c.service，端口8084，前端web/dashboard_static_c/

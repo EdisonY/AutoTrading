@@ -106,6 +106,42 @@ def systemctl_value(unit: str, prop: str) -> str:
     return proc.stdout.strip()
 
 
+def read_meminfo() -> dict[str, int]:
+    values: dict[str, int] = {}
+    try:
+        for line in Path("/proc/meminfo").read_text(encoding="utf-8", errors="replace").splitlines():
+            if ":" not in line:
+                continue
+            key, rest = line.split(":", 1)
+            parts = rest.strip().split()
+            if not parts:
+                continue
+            values[key] = int(parts[0])
+    except Exception:
+        return {}
+    return values
+
+
+def recent_oom_lines() -> list[str]:
+    if not sys.platform.startswith("linux"):
+        return []
+    try:
+        proc = subprocess.run(
+            ["journalctl", "-k", "--since", "6 hours ago", "--no-pager", "-n", "240"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except Exception:
+        return []
+    lines = []
+    for line in (proc.stdout or "").splitlines():
+        lower = line.lower()
+        if "out of memory" in lower or "oom-kill" in lower or "killed process" in lower:
+            lines.append(line.strip())
+    return lines[-5:]
+
+
 def collect_alerts() -> dict[str, Any]:
     now = datetime.now(CST)
     alerts: list[dict[str, str]] = []
@@ -139,6 +175,30 @@ def collect_alerts() -> dict[str, Any]:
             alerts.append({"level": "warn", "title": "磁盘使用率偏高", "body": f"/opt 所在分区已用 {used_pct:.1f}%，剩余 {disk.free / 1024**3:.1f}GB"})
     except Exception as exc:
         alerts.append({"level": "warn", "title": "磁盘容量检查失败", "body": str(exc)})
+
+    memory_payload: dict[str, Any] = {}
+    meminfo = read_meminfo()
+    if meminfo:
+        mem_total = meminfo.get("MemTotal", 0)
+        mem_available = meminfo.get("MemAvailable", 0)
+        swap_total = meminfo.get("SwapTotal", 0)
+        swap_free = meminfo.get("SwapFree", 0)
+        memory_payload = {
+            "mem_total_mb": round(mem_total / 1024, 1),
+            "mem_available_mb": round(mem_available / 1024, 1),
+            "swap_total_mb": round(swap_total / 1024, 1),
+            "swap_used_mb": round((swap_total - swap_free) / 1024, 1),
+        }
+        if swap_total <= 0:
+            alerts.append({"level": "warn", "title": "服务器未启用 swap", "body": "小内存节点无 swap，研究任务/OOM 时可能拖垮 SSH。"})
+        if mem_available and mem_available < 250 * 1024:
+            alerts.append({"level": "bad", "title": "可用内存过低", "body": f"MemAvailable 约 {mem_available / 1024:.0f}MB"})
+        if swap_total > 0 and swap_free / swap_total < 0.2:
+            alerts.append({"level": "warn", "title": "swap 使用率偏高", "body": f"swap 剩余 {swap_free / 1024:.0f}MB / {swap_total / 1024:.0f}MB"})
+    oom_lines = recent_oom_lines()
+    if oom_lines:
+        alerts.append({"level": "bad", "title": "近期发生 OOM", "body": oom_lines[-1][-220:]})
+        memory_payload["recent_oom_count"] = len(oom_lines)
 
     today_name = now.strftime("%Y-%m-%d.jsonl")
     for shard_dir in WATCH_SHARDS:
@@ -263,6 +323,7 @@ def collect_alerts() -> dict[str, Any]:
         "services": states,
         "timers": timers,
         "disk": disk_payload,
+        "memory": memory_payload,
     }
 
 

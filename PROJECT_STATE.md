@@ -1,6 +1,6 @@
 # AutoTrading Project State
 
-Last updated: 2026-05-26 Asia/Shanghai
+Last updated: 2026-05-27 Asia/Shanghai
 
 This file is the long-lived project memory for multi-location development. Daily reports may roll forward, but this file records the current architecture, what is done, what is not done, and what must not be forgotten.
 
@@ -33,8 +33,10 @@ This file is the long-lived project memory for multi-location development. Daily
 - Local dependencies are declared in `requirements.txt`; Python 3.10 compatibility for TOML parsing is handled through `tomli`.
 - The required scanner helper package `cloud/analyzer/auxiliary.py` is in Git, so fresh clones no longer miss the live indicator dependency.
 - `部署工具/pull_live_context.py` provides one-command compact live-state sync from Tencent into ignored local files before making current PnL/position/service conclusions.
+- `部署工具/pull_live_context.py` now uses OpenSSH compressed grouped pulls with hard deadlines, so live sync should fail loudly instead of hanging silently. It pulls portal, alerts, account snapshot, strategy evolution, counterfactuals, daily market review latest MD/HTML, market snapshot, attention ledger, and Polymarket summaries.
 - `部署工具/release_manager.py` provides component-based dry-run deploys, remote backups, release manifests, service restarts, release listing, and rollback.
 - `部署工具/git_change_guard.py` enforces that material staged code/config/tool changes include a `CHANGELOG.md` entry and rejects staged runtime/secret-like artifacts.
+- Tencent server has persistent 2G swap configured through `/swapfile` and `/etc/fstab`; system alerts watch memory, swap, and recent OOM kernel events.
 
 ## Persistent Memory Files
 
@@ -49,10 +51,11 @@ This file is the long-lived project memory for multi-location development. Daily
 ## Current Open Attention
 
 - A/v11 sizing/risk must remain watched from real-time account snapshots and automatic alerts.
-- Strategy evolution currently has P2 observations and rejects, but no verified P0/P1 automatic upgrade ready.
-- Polymarket monitor has found no executable gross arbitrage in the latest observed rounds; continue collecting samples before any trading design.
+- Strategy evolution currently reports one P0: `EXP-20260523-v11-replacement-quality` is `verified_upgrade_ready` with evidence score 97 and risk score 0; it is a review/expansion candidate, not an automatic live code change.
+- System attention currently includes the 2026-05-26 21:56 CST OOM event. Swap is now enabled, but the alert should stay visible until the user accepts it or the journal window clears.
+- Polymarket monitor has found no executable gross arbitrage in the latest observed rounds; latest pulled summary checked 80 markets, health OK, opportunity count 0, book errors 0.
 - B/v16 perceived two-day inactivity was a visibility issue: the event store showed a 2026-05-26 09:21:29 +08:00 `XRPUSDT` short open plus earlier same-day opens.
-- C/v14 needs post-fix monitoring of raw candidates versus entry candidates versus opens; the old headline signal count was inflated by 15m confirmation candidates and low-score raw analysis candidates.
+- C/v14 reporting now uses entry-candidate wording. The 2026-05-25 daily review shows 57 entry candidates versus 46378 raw signals; raw data is still used for funnel analysis, but should not be read as executable signal count.
 
 ## Not Done / Next
 
@@ -63,6 +66,7 @@ This file is the long-lived project memory for multi-location development. Daily
 - The Git change ledger is enforced locally by `git_change_guard.py`; remote CI enforcement is not configured yet.
 - Deployment tooling exists, but production deploys still require explicit operator judgement; secrets and server-side environment files remain outside Git.
 - Multi-machine deployment secrets must stay outside Git; use server-side environment files or GitHub Actions secrets only if CI/deploy is added.
+- Historical Git commits and old notes may still contain credential text from before redaction. Treat those credentials as exposed if still valid; rotate them before broader collaborator access or rewrite history if necessary.
 
 ## GitHub Migration Rules
 

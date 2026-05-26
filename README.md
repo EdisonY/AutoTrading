@@ -12,7 +12,8 @@ When opening this project on a new computer, read these files in order:
 2. `PROJECT_STATE.md` - current architecture, what is done, what is not done, and GitHub/server rules.
 3. `记忆文档/MEMORY.md` - chronological decision memory.
 4. `research_memory/attention/open_items.json` - durable open attention items that should not be forgotten after daily reports roll over.
-5. This `README.md` - how to work from a fresh clone.
+5. `CHANGELOG.md` - reason, result, validation, and unfinished work for each material change.
+6. This `README.md` - how to work from a fresh clone.
 
 ## Repository Layout
 
@@ -25,6 +26,7 @@ When opening this project on a new computer, read these files in order:
 - `research_memory/` - compact research memory, approvals, hypotheses, lessons, promotions, and durable attention ledger.
 - `experiments/` - experiment registry and compact family metadata. Large generated results are ignored.
 - `记忆文档/` - human-readable long-term memory.
+- `CHANGELOG.md` - required Git-synchronized ledger of material changes and live operational actions.
 
 ## Fresh Clone Checklist
 
@@ -172,9 +174,20 @@ The current principle is:
 
 ## Git Rules
 
+Every material design/code/config/deployment/rollback/optimization/live-operation change must update `CHANGELOG.md` in the same pushed commit. The entry must include:
+
+- why the change was made;
+- what was completed;
+- what remains unfinished;
+- how it was verified;
+- whether it changed the live system or required deployment.
+
+Update `PROJECT_STATE.md` when architecture or current priorities change, and `记忆文档/MEMORY.md` when the decision or incident must be retained long term. Read-only status checks without a new decision or action do not require empty commits.
+
 ```powershell
 git status --short --branch
 git add <changed files>
+python 部署工具\git_change_guard.py
 git commit -m "Clear message"
 git push
 ```

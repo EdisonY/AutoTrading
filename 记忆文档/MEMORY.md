@@ -401,3 +401,9 @@
 - 新增 `部署工具/release_manager.py`：按组件 dry-run/部署/列版本/回滚。部署时会在远端 `releases/<release-id>/backup` 备份旧文件、写 manifest、远端 `py_compile`、重启关联服务；默认不执行真实部署，必须加 `--apply`。
 - 已验证：`release_manager.py` 和 `pull_live_context.py` 本地 `py_compile` 通过；腾讯 portal 和 strategy-b dry-run 成功，strategy-b dry-run 已包含 `cloud/analyzer/auxiliary.py`，避免未来部署漏依赖。
 - 防再次“长时间无反馈”约定写入 `AGENTS.md`：长任务拆到 service/timer 或短超时命令，先报告阻塞再处理；当前状态问题必须先运行 `pull_live_context.py`，不能靠旧记忆猜测。
+
+## 2026-05-26 全量变更同步 Git 与原因追踪规则
+- 用户明确要求：后续所有操作、设计更新、优化和变更均应在当次工作结束前同步 Git，并清晰写明原因、完成内容、未完成内容、验证结果和线上影响，避免换电脑或换模型后失去决策上下文。
+- 根目录新增 `CHANGELOG.md` 作为强制变更台账；只读查看且没有形成新结论/动作时不制造空提交，但部署、回滚、服务或配置调整、实盘风险决策即使没有改源代码也必须落账并推送。
+- 新增 `部署工具/git_change_guard.py`：暂存中出现策略、交易客户端、`core`、配置、部署工具、Polymarket 或 `cloud` 等实质变更而未同步 `CHANGELOG.md` 时阻止提交；同时阻止 runtime、日志、报告、SQLite 和密钥类文件被纳入提交。
+- `AGENTS.md` 与 `README.md` 已写入该规则，确保后续接手模型能理解并执行；待补项为未来配置 GitHub CI，在远端也自动校验此规则。

@@ -34,11 +34,13 @@ This file is the long-lived project memory for multi-location development. Daily
 - The required scanner helper package `cloud/analyzer/auxiliary.py` is in Git, so fresh clones no longer miss the live indicator dependency.
 - `部署工具/pull_live_context.py` provides one-command compact live-state sync from Tencent into ignored local files before making current PnL/position/service conclusions.
 - `部署工具/release_manager.py` provides component-based dry-run deploys, remote backups, release manifests, service restarts, release listing, and rollback.
+- `部署工具/git_change_guard.py` enforces that material staged code/config/tool changes include a `CHANGELOG.md` entry and rejects staged runtime/secret-like artifacts.
 
 ## Persistent Memory Files
 
 - `AGENTS.md`: model-facing operating rules. A new coding model should follow this first.
 - `README.md`: fresh-clone, data policy, live sync, and deployment handoff.
+- `CHANGELOG.md`: mandatory reason/outcome/verification/remaining-work ledger for every material Git or live operational change.
 - `PROJECT_STATE.md`: current state and migration rules. Update this when architecture, deployment, or unresolved priorities change.
 - `记忆文档/MEMORY.md`: chronological memory of decisions and major changes.
 - `research_memory/attention/open_items.json`: durable attention ledger. Items stay visible until explicitly confirmed or resolved; a daily report rolling over must not remove them.
@@ -57,6 +59,7 @@ This file is the long-lived project memory for multi-location development. Daily
 - Strategy evolution still needs stronger promotion rigor before auto-upgrade: walk-forward windows, paper fill simulation, fee/slippage modeling, regime segmentation, and post-change rollback rules.
 - Polymarket remains read-only. A trading version would need wallet custody design, CLOB auth/key handling, order placement, fill reconciliation, gas/fee accounting, and latency measurement.
 - GitHub CI is not configured yet.
+- The Git change ledger is enforced locally by `git_change_guard.py`; remote CI enforcement is not configured yet.
 - Deployment tooling exists, but production deploys still require explicit operator judgement; secrets and server-side environment files remain outside Git.
 - Multi-machine deployment secrets must stay outside Git; use server-side environment files or GitHub Actions secrets only if CI/deploy is added.
 

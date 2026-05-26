@@ -6,6 +6,7 @@ This repository operates a live trading system. Before analyzing current state o
 2. `PROJECT_STATE.md`
 3. `记忆文档/MEMORY.md` near the latest entries
 4. `research_memory/attention/open_items.json`
+5. `CHANGELOG.md` near the latest entries
 
 ## Current-State Rule
 
@@ -23,6 +24,15 @@ Then use the pulled `reports/index.html` and `runtime/live_context_summary_lates
 - Never infer current live state from tracked memory snapshots alone.
 - Treat strategy changes as live-risk changes: implement, compile-check, deploy with a release receipt, then verify service status and visible reports.
 - Do not automatically approve or roll out strategy upgrades based on one short-window result. Respect the strategy evolution gate and explicit user approval rules.
+
+## Mandatory Git Change Ledger
+
+- Every material design, strategy, code, configuration, deployment, rollback, optimization, or live operational change must be recorded in `CHANGELOG.md` and pushed to Git in the same work session.
+- Every entry must state the trigger/reason, what completed, what is not completed, verification performed, and live/deployment impact.
+- Update `PROJECT_STATE.md` when current architecture, operating procedure, or unresolved priorities change. Update `记忆文档/MEMORY.md` for durable decisions, incidents, or milestones.
+- A live deploy, rollback, service/config change, or consequential risk decision requires a Git ledger entry even if no code file changed.
+- A read-only inspection with no new conclusion or action need not create an empty commit.
+- Before committing staged changes, run `python 部署工具\git_change_guard.py`; do not push a material change if it fails.
 
 ## Deployment And Rollback
 

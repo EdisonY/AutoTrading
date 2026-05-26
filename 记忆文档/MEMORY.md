@@ -386,3 +386,9 @@
 - Polymarket 作为独立只读研究系统纳入总入口复盘摘要；当前定位仍是样本收集和机会可行性验证，不接实盘交易。
 - 2026-05-26 对 B/v16 的核对结论：不是超过两天未开仓。腾讯事件库显示 `2026-05-26 09:21:29 +08:00` 有 `XRPUSDT` short OPEN，且同日还有 `BTCUSDT`、`NEARUSDT`、`PORT3USDT` 等开仓；入口页需要区分“当前仍持仓的开仓时间”和“最近真实开仓事件”。
 - 本地 Git 仓库已初始化为 `main` 并配置 remote `git@github.com:EdisonY/AutoTrading.git`；第一次推送曾因 `Permission denied (publickey)` 被拒，用户添加本机公钥后已成功推送 `main` 到 GitHub。当前机器公钥文件为 `C:\Users\Eels\.ssh\id_rsa.pub`，指纹 `SHA256:qxGXZU6nLnc0OtXLjRVjvH2NZv7p8c36rvRdTndJy+o`。
+
+## 2026-05-26 README交接手册与运行数据口径
+- 新增根目录 `README.md` 作为新电脑/新协作者启动手册：先读 `PROJECT_STATE.md`、再读 `MEMORY.md`、再读 `research_memory/attention/open_items.json`，然后按 README 的 fresh clone checklist 做本地验证。
+- 日志、报告、SQLite、server mirror、回测数据、Polymarket probe 等运行数据不进 Git。原因不是“绝对高敏”，而是体积大、持续变化，且可能包含账户、订单、持仓、PnL 与策略行为细节；它们保留在服务器或本地 ignored 目录，按需同步分析。
+- 2026-05-26 13:22 CST 核对服务器数据：腾讯 `/opt/crypto-auto-trader` 有 `runtime 929M`、`logs 118M`、`reports 14M`、`scanner_data*` 约 `129M`、`backtest_data 166M`；腾讯 `/opt/polymarket-lab/reports` 约 `46M`；阿里云 `/opt/crypto-shadow-lab/server_logs_tencent` 约 `459M`。
+- 本地按需拉取腾讯紧凑日志镜像使用 `python 部署工具\sync_tencent_logs.py --days 3 --log-tail 800`，产物写入被 Git 忽略的 `server_logs_tencent/`。

@@ -26,9 +26,19 @@ score_threshold_30m = 90
 short_entry_penalty = 20
 require_resonance = false
 
+[replacement]
+policy_version = "small_live_v11_replacement_quality_v1"
+strong_signal_min_score = 112
+min_score_gap = 25
+weak_position_max_pnl_pct = 2.0
+hard_protect_pnl_pct = 2.0
+cooldown_minutes = 90
+min_age_minutes = 20
+elite_score = 120
+elite_min_age_minutes = 10
+
 [exit]
 sl_mult_15m = 1.5
 sl_mult_30m = 2.0
 tp_mult_15m = 5.5
 tp_mult_30m = 6.5
-

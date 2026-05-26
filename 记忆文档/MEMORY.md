@@ -1,5 +1,15 @@
 # MEMORY.md - 长期记忆
 
+## 2026-05-27 A/v11 替换策略小范围观察 + P级事项数据库化
+- 用户确认：继续推进 `A/v11 EXP-20260523-v11-replacement-quality`，但只按“扩展审核/小范围增强”走，不全量放开；其它 P0 全部归档。
+- 已把 A/v11 满仓替换参数收窄到实验验证口径：`STRONG_SIGNAL_THRESHOLD=112`、`EVICT_SCORE_GAP=25`、盈利 `>=2%` 仓位硬保护、策略版本 `small_live_v11_replacement_quality_v1`。不增加总仓位、不取消同币种禁止叠仓、不降低入场阈值。
+- 已写入人工审批记录：`research_memory/approvals/approve_small_live_A_v11_replacement_quality_2026-05-27.json`，scope 为 `shadow_plus_small_live_guarded`。
+- 已修复研究审批识别：`apply_research_approval.py` 和 `experiment_runner.py` 现在支持按 `candidate_id`、`experiment_id`、`family_id` 三种键读取人工动作，固定实验也能被门禁识别。
+- P级关注项不再以 JSON 为主存储。`decision_attention.py` 现在将 `attention_items` 与 `attention_acknowledgements` 写入 `runtime/event_store.sqlite3`；`research_memory/attention/open_items.json` 只是入口页/跨机同步缓存。
+- 新增 `部署工具/acknowledge_attention_items.py`：可把用户确认归档写入 SQLite 和导出 JSON。服务器已归档 `入口页刷新失败`、`总入口页面偏旧`、`近期发生 OOM` 三个非 A/v11 P0。
+- 线上验证：2026-05-27 01:14 服务器统一门禁跑通，`P0=0`，A/v11 变成 P2 `small_live_monitoring / keep_small_live_monitoring`；A/v11 replacement-quality 最新正式窗口增量约 `+844.0191`。所有核心服务仍 active。
+- 后续观察重点：A/v11 的 `EVICT_CLOSE`、`OPEN_RETRY_AFTER_EVICT`、真实 PnL、硬顶风险、错失盈利；未满观察窗口前不要继续扩大战略替换权限。
+
 ## 2026-05-27 全局巡检、OOM 修复与日报口径收口
 - 2026-05-26 21:56 CST 腾讯云发生过 OOM：kernel 杀掉一个 `python3` 进程，导致 SSH banner 卡住、`polymarket-monitor.service` / `crypto-system-alerts.service` 短暂失败、入口刷新异常。根因不是简单网络问题。
 - 已在腾讯云添加持久化 2G swap：`/swapfile none swap sw 0 0` 写入 `/etc/fstab`，`vm.swappiness=10` 写入 `/etc/sysctl.d/99-autotrading-swap.conf`。2026-05-27 00:33 复查：MemAvailable 约 1.3GiB，SwapTotal 2GiB。

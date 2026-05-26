@@ -411,17 +411,18 @@ def family_decision(results: list[ExperimentResult]) -> str:
 
 def load_manual_actions(memory_dir: Path) -> dict[str, dict[str, Any]]:
     rows = read_jsonl(memory_dir / "approvals" / "manual_actions.jsonl")
-    return {
-        str(row.get("candidate_id") or ""): row
-        for row in rows
-        if row.get("candidate_id")
-    }
+    out: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        for key in (row.get("candidate_id"), row.get("experiment_id"), row.get("family_id")):
+            if key:
+                out[str(key)] = row
+    return out
 
 
 def apply_manual_actions(results: list[ExperimentResult], memory_dir: Path) -> None:
     actions = load_manual_actions(memory_dir)
     for result in results:
-        record = actions.get(result.candidate_id)
+        record = actions.get(result.candidate_id) or actions.get(result.experiment_id) or actions.get(result.family_id)
         if not record:
             continue
         action = str(record.get("manual_action") or "")
@@ -485,7 +486,7 @@ def write_promotion_reviews(memory_dir: Path, results: list[ExperimentResult]) -
     for result in results:
         if not result.candidate_id:
             continue
-        action_record = actions.get(result.candidate_id, {})
+        action_record = actions.get(result.candidate_id) or actions.get(result.experiment_id) or actions.get(result.family_id) or {}
         decision = "manual_review"
         manual_review_required = True
         if result.promotion_status == "approved_for_small_live":

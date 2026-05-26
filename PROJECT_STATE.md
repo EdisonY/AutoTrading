@@ -14,7 +14,7 @@ This file is the long-lived project memory for multi-location development. Daily
 
 ## Strategy Stack
 
-- `A/v11`: original high-frequency/scanner strategy, now has full-position replacement/release logic and same-symbol no-stacking protection.
+- `A/v11`: original high-frequency/scanner strategy, now has full-position replacement/release logic and same-symbol no-stacking protection. As of 2026-05-27, replacement-quality is guarded small-live only: strong signal >=112, score gap >=25, profitable positions >=2% are protected, no total-position expansion.
 - `B/v16`: CVD/OFI order-flow strategy. Small-stage guard was temporarily removed per user instruction; latest server event check on 2026-05-26 showed active scanning and new opens today, not a two-day stall.
 - `C/v14`: four-factor scoring strategy with same-symbol no-stacking protection. Signal reporting now distinguishes raw analysis candidates from real 1h entry candidates; no entry loosen was made in that observability fix.
 - Sentinel: market mover detector feeds unusual movers into strategies; strategy scans now record which layer opened, filtered, rejected, or had no signal.
@@ -28,6 +28,7 @@ This file is the long-lived project memory for multi-location development. Daily
 - Gate safety rule: no P0/P1 promotion when evidence is only confirmation-policy shadow output without real or paper PnL.
 - Polymarket read-only monitor exists as a separate system and is now represented in the command-center summary.
 - Operational alerts watch systemd services, timers, disk pressure, event freshness, account snapshots, strategy evolution, and the persistent attention ledger.
+- P-level attention state is SQLite-backed in `runtime/event_store.sqlite3` via `attention_items` and `attention_acknowledgements`; `research_memory/attention/open_items.json` is an exported portal cache, not the canonical acknowledgement store.
 - Log/data growth has guardrails: generated logs, reports, SQLite DBs, mirrors, and bulky backtest outputs are excluded from Git.
 - Cross-machine handoff is now explicit: `AGENTS.md`, `README.md`, `PROJECT_STATE.md`, and `记忆文档/MEMORY.md` tell a new model what to read and how to avoid stale conclusions.
 - Local dependencies are declared in `requirements.txt`; Python 3.10 compatibility for TOML parsing is handled through `tomli`.
@@ -45,21 +46,22 @@ This file is the long-lived project memory for multi-location development. Daily
 - `CHANGELOG.md`: mandatory reason/outcome/verification/remaining-work ledger for every material Git or live operational change.
 - `PROJECT_STATE.md`: current state and migration rules. Update this when architecture, deployment, or unresolved priorities change.
 - `记忆文档/MEMORY.md`: chronological memory of decisions and major changes.
-- `research_memory/attention/open_items.json`: durable attention ledger. Items stay visible until explicitly confirmed or resolved; a daily report rolling over must not remove them.
+- `runtime/event_store.sqlite3`: canonical attention items and acknowledgements (`attention_items`, `attention_acknowledgements`) plus event/account tables.
+- `research_memory/attention/open_items.json`: exported attention ledger for portal/live sync. Items stay visible until explicitly confirmed or resolved; a daily report rolling over must not remove them.
 - `research_memory/hypotheses`, `research_memory/approvals`, `research_memory/lessons`, and `research_memory/promotions`: compact research memory worth carrying between machines.
 
 ## Current Open Attention
 
 - A/v11 sizing/risk must remain watched from real-time account snapshots and automatic alerts.
-- Strategy evolution currently reports one P0: `EXP-20260523-v11-replacement-quality` is `verified_upgrade_ready` with evidence score 97 and risk score 0; it is a review/expansion candidate, not an automatic live code change.
-- System attention currently includes the 2026-05-26 21:56 CST OOM event. Swap is now enabled, but the alert should stay visible until the user accepts it or the journal window clears.
+- Strategy evolution currently has no P0. `EXP-20260523-v11-replacement-quality` is now P2 `small_live_monitoring`; it is approved only for guarded small-live observation, not full rollout.
+- User-confirmed archived P0 system items: `入口页刷新失败`, `总入口页面偏旧`, and the 2026-05-26 21:56 CST OOM alert. They remain in SQLite acknowledgement history but no longer occupy P0.
 - Polymarket monitor has found no executable gross arbitrage in the latest observed rounds; latest pulled summary checked 80 markets, health OK, opportunity count 0, book errors 0.
 - B/v16 perceived two-day inactivity was a visibility issue: the event store showed a 2026-05-26 09:21:29 +08:00 `XRPUSDT` short open plus earlier same-day opens.
 - C/v14 reporting now uses entry-candidate wording. The 2026-05-25 daily review shows 57 entry candidates versus 46378 raw signals; raw data is still used for funnel analysis, but should not be read as executable signal count.
 
 ## Not Done / Next
 
-- User acknowledgement workflow for closing items in `research_memory/attention/open_items.json` is not yet interactive; currently items are retained or marked `cleared_pending_review`.
+- User acknowledgement workflow is script-driven through `部署工具/acknowledge_attention_items.py`; a portal button/UI for acknowledgements is still not implemented.
 - Strategy evolution still needs stronger promotion rigor before auto-upgrade: walk-forward windows, paper fill simulation, fee/slippage modeling, regime segmentation, and post-change rollback rules.
 - Polymarket remains read-only. A trading version would need wallet custody design, CLOB auth/key handling, order placement, fill reconciliation, gas/fee accounting, and latency measurement.
 - GitHub CI is not configured yet.

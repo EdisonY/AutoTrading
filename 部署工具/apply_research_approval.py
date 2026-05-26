@@ -95,6 +95,8 @@ def apply_to_candidates(memory_dir: Path, records: list[dict[str, Any]]) -> int:
         return 0
 
     by_candidate = {str(r.get("candidate_id") or ""): r for r in records if r.get("candidate_id")}
+    by_experiment = {str(r.get("experiment_id") or ""): r for r in records if r.get("experiment_id")}
+    by_family = {str(r.get("family_id") or ""): r for r in records if r.get("family_id")}
     archive_families = {
         str(r.get("family_id") or "")
         for r in records
@@ -103,8 +105,9 @@ def apply_to_candidates(memory_dir: Path, records: list[dict[str, Any]]) -> int:
     changed = 0
     for row in rows:
         cid = str(row.get("candidate_id") or "")
+        experiment_id = str(row.get("experiment_id") or "")
         family_id = str(row.get("family_id") or "")
-        record = by_candidate.get(cid)
+        record = by_candidate.get(cid) or by_experiment.get(experiment_id) or by_family.get(family_id)
         if not record and family_id in archive_families:
             record = {"manual_action": "archive_family"}
         if not record:
@@ -124,13 +127,17 @@ def apply_to_candidates(memory_dir: Path, records: list[dict[str, Any]]) -> int:
 def apply_to_reviews(memory_dir: Path, records: list[dict[str, Any]]) -> int:
     review_paths = sorted((memory_dir / "promotions").glob("reviews*.jsonl"))
     by_candidate = {str(r.get("candidate_id") or ""): r for r in records if r.get("candidate_id")}
+    by_experiment = {str(r.get("experiment_id") or ""): r for r in records if r.get("experiment_id")}
+    by_family = {str(r.get("family_id") or ""): r for r in records if r.get("family_id")}
     changed = 0
     for path in review_paths:
         rows = read_jsonl(path)
         path_changed = False
         for row in rows:
             cid = str(row.get("candidate_id") or "")
-            record = by_candidate.get(cid)
+            experiment_id = str(row.get("experiment_id") or "")
+            family_id = str(row.get("family_id") or "")
+            record = by_candidate.get(cid) or by_experiment.get(experiment_id) or by_family.get(family_id)
             if not record:
                 continue
             status, governance = candidate_status_for(str(record.get("manual_action") or "observe"))

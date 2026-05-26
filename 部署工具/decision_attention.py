@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import html
 import json
 import re
@@ -25,6 +26,7 @@ RUNTIME_DIR = ROOT / "runtime"
 REPORTS_DIR = ROOT / "reports"
 ATTENTION_DIR = ROOT / "research_memory" / "attention"
 ATTENTION_JSON = ATTENTION_DIR / "open_items.json"
+ATTENTION_ACK_JSONL = ATTENTION_DIR / "acknowledgements.jsonl"
 ATTENTION_MD = REPORTS_DIR / "decision_attention_latest.md"
 ATTENTION_HTML = REPORTS_DIR / "decision_attention_latest.html"
 ALERTS_JSON = RUNTIME_DIR / "alerts_latest.json"
@@ -109,6 +111,58 @@ def read_jsonl_tail(path: Path, limit: int = 500) -> list[dict[str, Any]]:
     return rows
 
 
+def ensure_attention_tables(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        create table if not exists attention_items (
+            item_id text primary key,
+            priority text,
+            category text,
+            title text,
+            status text,
+            first_seen text,
+            last_seen text,
+            last_confirmed_active text,
+            cleared_at text,
+            acknowledged_at text,
+            acknowledged_reason text,
+            evidence text,
+            recommended_action text,
+            source text,
+            fingerprint text,
+            payload_json text
+        )
+        """
+    )
+    conn.execute(
+        """
+        create table if not exists attention_acknowledgements (
+            item_id text primary key,
+            status text,
+            fingerprint text,
+            title text,
+            priority text,
+            category text,
+            reason text,
+            acknowledged_at text,
+            payload_json text
+        )
+        """
+    )
+    conn.commit()
+
+
+def connect_attention_db() -> sqlite3.Connection | None:
+    try:
+        RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
+        conn = sqlite3.connect(EVENT_STORE_DB)
+        conn.row_factory = sqlite3.Row
+        ensure_attention_tables(conn)
+        return conn
+    except Exception:
+        return None
+
+
 def slug(text: str, limit: int = 80) -> str:
     text = re.sub(r"\s+", "-", str(text).strip().lower())
     text = re.sub(r"[^a-z0-9\u4e00-\u9fff._:-]+", "-", text)
@@ -148,6 +202,60 @@ def make_item(
         "source": source,
         "requires_user_confirmation": True,
     }
+
+
+def item_fingerprint(item: dict[str, Any]) -> str:
+    text = "\n".join(
+        str(item.get(key) or "")
+        for key in ("item_id", "priority", "category", "title", "evidence", "source")
+    )
+    return hashlib.sha256(text.encode("utf-8", errors="replace")).hexdigest()[:16]
+
+
+def read_jsonl(path: Path) -> list[dict[str, Any]]:
+    if not path.exists():
+        return []
+    rows: list[dict[str, Any]] = []
+    with path.open("r", encoding="utf-8", errors="replace") as f:
+        for line in f:
+            if not line.strip():
+                continue
+            try:
+                row = json.loads(line)
+            except Exception:
+                continue
+            if isinstance(row, dict):
+                rows.append(row)
+    return rows
+
+
+def load_acknowledgements() -> dict[str, dict[str, Any]]:
+    out: dict[str, dict[str, Any]] = {}
+    conn = connect_attention_db()
+    if conn is not None:
+        try:
+            for row in conn.execute("select * from attention_acknowledgements"):
+                item = dict(row)
+                out[str(item.get("item_id") or "")] = item
+        except Exception:
+            pass
+        finally:
+            conn.close()
+    for row in read_jsonl(ATTENTION_ACK_JSONL):
+        item_id = str(row.get("item_id") or "")
+        if item_id and item_id not in out:
+            out[item_id] = row
+    return out
+
+
+def is_acknowledged(item: dict[str, Any], acknowledgements: dict[str, dict[str, Any]]) -> bool:
+    row = acknowledgements.get(str(item.get("item_id") or ""))
+    if not row:
+        return False
+    if str(row.get("status") or "") not in {"acknowledged", "archived", "resolved"}:
+        return False
+    expected = str(row.get("fingerprint") or "")
+    return not expected or expected == item_fingerprint(item)
 
 
 def polymarket_report_path(name: str) -> Path | None:
@@ -366,6 +474,24 @@ def detect_open_staleness_items() -> list[dict[str, Any]]:
 
 
 def load_existing() -> dict[str, dict[str, Any]]:
+    conn = connect_attention_db()
+    if conn is not None:
+        try:
+            rows = conn.execute("select payload_json from attention_items").fetchall()
+            out: dict[str, dict[str, Any]] = {}
+            for row in rows:
+                try:
+                    item = json.loads(row["payload_json"])
+                except Exception:
+                    continue
+                if isinstance(item, dict) and item.get("item_id"):
+                    out[str(item["item_id"])] = item
+            if out:
+                return out
+        except Exception:
+            pass
+        finally:
+            conn.close()
     payload = read_json(ATTENTION_JSON)
     items = payload.get("items") if isinstance(payload, dict) else []
     out: dict[str, dict[str, Any]] = {}
@@ -375,11 +501,68 @@ def load_existing() -> dict[str, dict[str, Any]]:
     return out
 
 
+def persist_attention_items(items: list[dict[str, Any]]) -> None:
+    conn = connect_attention_db()
+    if conn is None:
+        return
+    try:
+        for item in items:
+            conn.execute(
+                """
+                insert into attention_items (
+                    item_id, priority, category, title, status, first_seen, last_seen,
+                    last_confirmed_active, cleared_at, acknowledged_at, acknowledged_reason,
+                    evidence, recommended_action, source, fingerprint, payload_json
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                on conflict(item_id) do update set
+                    priority=excluded.priority,
+                    category=excluded.category,
+                    title=excluded.title,
+                    status=excluded.status,
+                    first_seen=excluded.first_seen,
+                    last_seen=excluded.last_seen,
+                    last_confirmed_active=excluded.last_confirmed_active,
+                    cleared_at=excluded.cleared_at,
+                    acknowledged_at=excluded.acknowledged_at,
+                    acknowledged_reason=excluded.acknowledged_reason,
+                    evidence=excluded.evidence,
+                    recommended_action=excluded.recommended_action,
+                    source=excluded.source,
+                    fingerprint=excluded.fingerprint,
+                    payload_json=excluded.payload_json
+                """,
+                (
+                    item.get("item_id"),
+                    item.get("priority"),
+                    item.get("category"),
+                    item.get("title"),
+                    item.get("status"),
+                    item.get("first_seen"),
+                    item.get("last_seen"),
+                    item.get("last_confirmed_active"),
+                    item.get("cleared_at"),
+                    item.get("acknowledged_at"),
+                    item.get("acknowledged_reason"),
+                    item.get("evidence"),
+                    item.get("recommended_action"),
+                    item.get("source"),
+                    item_fingerprint(item),
+                    json.dumps(item, ensure_ascii=False, default=str),
+                ),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def merge_items(existing: dict[str, dict[str, Any]], detected: list[dict[str, Any]]) -> list[dict[str, Any]]:
     now = now_cst().isoformat()
+    acknowledgements = load_acknowledgements()
     detected_by_id = {str(item["item_id"]): item for item in detected if item.get("item_id")}
     merged: dict[str, dict[str, Any]] = {}
     for item_id, item in detected_by_id.items():
+        if is_acknowledged(item, acknowledgements):
+            continue
         prior = existing.get(item_id, {})
         current = dict(prior)
         current.update(item)
@@ -390,6 +573,15 @@ def merge_items(existing: dict[str, dict[str, Any]], detected: list[dict[str, An
         merged[item_id] = current
     for item_id, prior in existing.items():
         if item_id in merged:
+            continue
+        ack = acknowledgements.get(item_id)
+        if ack and str(ack.get("status") or "") in {"acknowledged", "archived", "resolved"}:
+            current = dict(prior)
+            current["status"] = str(ack.get("status") or "archived")
+            current["acknowledged_at"] = ack.get("acknowledged_at") or now
+            current["acknowledged_reason"] = ack.get("reason") or ""
+            current["last_seen"] = current.get("last_seen") or now
+            merged[item_id] = current
             continue
         current = dict(prior)
         status = str(current.get("status") or "open")
@@ -417,7 +609,8 @@ def build_payload() -> dict[str, Any]:
     detected.extend(detect_polymarket_items())
     detected.extend(detect_open_staleness_items())
     items = merge_items(load_existing(), detected)
-    visible = [i for i in items if i.get("status") in {"open", "cleared_pending_review", "acknowledged"}]
+    persist_attention_items(items)
+    visible = [i for i in items if i.get("status") in {"open", "cleared_pending_review"}]
     counts: dict[str, int] = {}
     for item in visible:
         key = str(item.get("priority") or "P3")

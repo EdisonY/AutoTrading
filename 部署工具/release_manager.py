@@ -102,6 +102,7 @@ TENCENT_COMPONENTS: dict[str, dict[str, Any]] = {
     "portal": {
         "files": [
             file_pair("部署工具/decision_attention.py", "decision_attention.py"),
+            file_pair("部署工具/acknowledge_attention_items.py", "acknowledge_attention_items.py"),
             file_pair("部署工具/portal_dashboard.py", "portal_dashboard.py"),
             file_pair("部署工具/portal_refresh_service.py", "portal_refresh_service.py"),
             file_pair("部署工具/system_alerts.py", "system_alerts.py"),
@@ -163,6 +164,7 @@ TENCENT_COMPONENTS: dict[str, dict[str, Any]] = {
         "files": RESEARCH_CORE
         + [
             file_pair("部署工具/counterfactual_open_skips.py", "counterfactual_open_skips.py"),
+            file_pair("部署工具/apply_research_approval.py", "apply_research_approval.py"),
             file_pair("部署工具/daily_market_review.py", "daily_market_review.py"),
             file_pair("部署工具/decision_attention.py", "decision_attention.py"),
             file_pair("部署工具/experiment_report.py", "experiment_report.py"),
@@ -198,6 +200,7 @@ ALIYUN_COMPONENTS: dict[str, dict[str, Any]] = {
             file_pair("部署工具/decision_attention.py", "decision_attention.py"),
             file_pair("部署工具/experiment_report.py", "experiment_report.py"),
             file_pair("部署工具/experiment_runner.py", "experiment_runner.py"),
+            file_pair("部署工具/apply_research_approval.py", "apply_research_approval.py"),
             file_pair("部署工具/portal_dashboard.py", "portal_dashboard.py"),
             file_pair("部署工具/research_memory_builder.py", "research_memory_builder.py"),
             file_pair("部署工具/research_review_dashboard.py", "research_review_dashboard.py"),

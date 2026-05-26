@@ -38,3 +38,11 @@ This is the durable reason-and-outcome ledger for every material design, code, c
 - Verification: Local `py_compile` passed for `策略文件/scanner_v14.py`, `部署工具/portal_dashboard.py`, and `部署工具/release_manager.py`. Local portal generation completed. `release_manager.py` dry-run passed for Tencent `strategy-c` and `portal`.
 - Live impact / deployment: Intended live impact is observability/reporting only for C/v14 and portal; no trade threshold is loosened. Live deployment was attempted for release `20260526-210539-strategy-c-4c37e4d` but did not upload files because both Paramiko and native SSH timed out during SSH protocol banner exchange.
 - Files / release / commit: `策略文件/scanner_v14.py`, `部署工具/portal_dashboard.py`, `config/v14.toml`, `部署工具/release_manager.py`; code commit `4c37e4d` pushed; live deployment remains pending until SSH access is healthy.
+
+## 2026-05-26 21:14 CST - Retry Tencent deployment blocked before SSH login
+- Trigger / reason: User requested updating the C/v14 observability fix to the server.
+- Completed: Retried Tencent `strategy-c` release `20260526-211114-strategy-c-051f7d5` with a 30 second SSH/banner timeout and separately probed local TCP connectivity to port 22.
+- Not completed / remaining: No server files were uploaded and no live services were restarted. Need restore healthy SSH banner/login first, then deploy `strategy-c` and `portal`.
+- Verification: Paramiko deployment failed before authentication with `Error reading SSH protocol banner`. Native SSH also timed out during banner exchange. A short TCP probe returned `tcp_22_connected`, so port 22 is reachable but sshd did not return the SSH banner in time.
+- Live impact / deployment: No live impact; deployment did not reach upload stage.
+- Files / release / commit: This ledger entry records the failed operational attempt; code remains at `051f7d5`.

@@ -413,3 +413,4 @@
 - 已改为低风险口径修复：C/v14 未来只把通过真实入场分数门槛的 `1h` 候选写成 `SIGNAL`；`15m` 仍作为确认层，不再污染入口“入场候选”。系统心跳保留 `raw_signals_found` 和 `entry_signals_found`，便于后续看上游噪声与真实候选之间的漏斗。
 - 总入口策略决策表列名从“信号”改为“入场候选”；对 C/v14 历史 SQLite 数据按 `1h + 实际阈值 + score<=80` 重算候选数，并显示原始候选数，避免继续误判。
 - `config/v14.toml` 已从旧的错误/过时门槛同步到实际代码门槛：`confirm_min_score=35`、`score_min=25`、`score_threshold_1h=55`、`score_threshold_15m=65`。本次不放宽 C/v14 实盘开仓规则。
+- 2026-05-26 22:08 CST 用户重启 SSH 后已完成腾讯部署：`crypto-scanner-v14.service`、`crypto-portal-refresh.service`、`crypto-system-alerts.service` 均 active/running。入口页已显示 C/v14 `入场候选 148 / 原始 84524`，证明旧信号数主要是原始候选和 15m 确认口径放大。后续应观察新漏斗，而不是只看旧“信号”总数。

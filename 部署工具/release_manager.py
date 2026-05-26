@@ -369,10 +369,31 @@ def deploy(args: argparse.Namespace) -> int:
 
         py_files = [f"{target.root}/{item['remote']}" for item in manifest["files"] if item["remote"].endswith(".py")]
         if py_files:
-            run(client, f"cd {shell_quote(target.root)} && {shell_quote(target.python)} -m py_compile " + " ".join(shell_quote(p) for p in py_files), timeout=120)
+            compile_script = (
+                "import pathlib, sys\n"
+                "failed=[]\n"
+                "for p in sys.argv[1:]:\n"
+                "    try:\n"
+                "        src=pathlib.Path(p).read_text(encoding='utf-8')\n"
+                "        compile(src, p, 'exec')\n"
+                "    except Exception as exc:\n"
+                "        failed.append(f'{p}: {exc}')\n"
+                "if failed:\n"
+                "    print('\\n'.join(failed), file=sys.stderr)\n"
+                "    raise SystemExit(1)\n"
+            )
+            run(
+                client,
+                f"cd {shell_quote(target.root)} && {shell_quote(target.python)} -c {shell_quote(compile_script)} "
+                + " ".join(shell_quote(p) for p in py_files),
+                timeout=120,
+            )
 
         for command in spec["post"]:
-            run(client, command.format(root=target.root, python=target.python), timeout=120)
+            formatted = command.format(root=target.root, python=target.python)
+            if not formatted.lstrip().startswith("cd "):
+                formatted = f"cd {shell_quote(target.root)} && {formatted}"
+            run(client, formatted, timeout=120)
 
         if spec["services"] and not args.no_restart:
             run(client, "sudo systemctl restart " + " ".join(shell_quote(s) for s in spec["services"]), timeout=120)

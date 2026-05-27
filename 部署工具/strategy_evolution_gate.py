@@ -264,6 +264,62 @@ def priority_from(status: str) -> str:
     return "P3"
 
 
+# Fee/slippage adjustment constants
+FEE_SLIPPAGE_ADJUSTMENT_PCT = 0.15  # 0.15% total cost per round-trip
+MIN_SAMPLE_TRADES = 30
+MIN_SAMPLE_FOR_P0 = 50
+MIN_SAMPLE_FOR_P1 = 30
+
+# Rollback trigger thresholds
+ROLLBACK_OPEN_FAILED_THRESHOLD = 5
+ROLLBACK_PF_DECAY_RATIO = 0.8  # new PF < old PF * 0.8
+ROLLBACK_HARD_STOP_RATIO = 1.5  # new hard-stop rate > old * 1.5
+ROLLBACK_ACCOUNT_LOSS_USDT = 200  # 7-day account loss
+
+
+def adjust_pnl_for_fees(pnl: float, sample_trades: int, notional_per_trade: float = 400.0) -> float:
+    """Adjust PnL by deducting estimated fee/slippage."""
+    total_notional = notional_per_trade * sample_trades
+    fee_cost = total_notional * FEE_SLIPPAGE_ADJUSTMENT_PCT / 100
+    return pnl - fee_cost
+
+
+def check_rollback_triggers(
+    results: list[dict[str, Any]],
+    account_risk: dict[str, Any],
+) -> list[str]:
+    """Check if rollback triggers are activated."""
+    triggers = []
+    if not results:
+        return triggers
+    latest = results[-1]
+
+    # Check sample sufficiency
+    sample = to_int(latest.get("sample_trades"))
+    if sample < MIN_SAMPLE_TRADES:
+        triggers.append(f"样本不足 {sample}/{MIN_SAMPLE_TRADES}，不升至P0/P1")
+
+    # Check if shadow PnL is worse than original
+    original = to_float(latest.get("original_pnl"))
+    shadow = to_float(latest.get("shadow_pnl"))
+    if original > 0 and shadow < original * ROLLBACK_PF_DECAY_RATIO:
+        triggers.append(f"影子PnL {shadow:.2f} < 原版 {original:.2f} × {ROLLBACK_PF_DECAY_RATIO}")
+
+    # Check hard-stop increase
+    hs_before = to_int(latest.get("hard_stop_before"))
+    hs_after = to_int(latest.get("hard_stop_after"))
+    if hs_before > 0 and hs_after > hs_before * ROLLBACK_HARD_STOP_RATIO:
+        triggers.append(f"硬顶触发率增加 {hs_before}→{hs_after}")
+
+    # Check account risk
+    if account_risk.get("sizing_violation_count"):
+        triggers.append(f"尺寸违规 {account_risk.get('sizing_violation_count')}")
+    if account_risk.get("risk_count"):
+        triggers.append(f"硬顶风险 {account_risk.get('risk_count')}")
+
+    return triggers
+
+
 def classify_decision(
     candidate: dict[str, Any],
     results: list[dict[str, Any]],
@@ -277,6 +333,10 @@ def classify_decision(
     exp_status, exp_notes = experiment_verdict(latest) if latest else ("missing", ["无影子实验结果"])
     promotion_status = str((review or {}).get("promotion_status") or latest.get("promotion_status") or candidate.get("status") or "")
 
+    # Rollback triggers
+    rollback_triggers = check_rollback_triggers(results, account_risk)
+    blockers.extend(rollback_triggers)
+
     if account_risk.get("sizing_violation_count"):
         blockers.append(f"账户存在尺寸违规 {account_risk.get('sizing_violation_count')}")
     if account_risk.get("risk_count"):
@@ -285,13 +345,30 @@ def classify_decision(
         blockers.extend(exp_notes[:2])
         return "rejected", "reject_or_rework", blockers
 
+    # Fee-adjusted PnL check
+    sample = to_int(latest.get("sample_trades"))
+    original_pnl = to_float(latest.get("original_pnl"))
+    shadow_pnl = to_float(latest.get("shadow_pnl"))
+    adjusted_shadow = adjust_pnl_for_fees(shadow_pnl, sample)
+
     pass_14 = win["14d"]["status"] == "pass"
     pass_30 = win["30d"]["status"] == "pass"
     pass_7 = win["7d"]["status"] == "pass"
+
+    # P0: strong multi-window evidence + enough samples + fee-adjusted positive
     if pass_14 and pass_30 and cf_status in {"support", "neutral"} and not blockers:
-        return "verified_upgrade_ready", "review_for_expansion", blockers
+        if sample >= MIN_SAMPLE_FOR_P0 and adjusted_shadow > 0:
+            return "verified_upgrade_ready", "review_for_expansion", blockers
+        elif sample < MIN_SAMPLE_FOR_P0:
+            blockers.append(f"P0需要≥{MIN_SAMPLE_FOR_P0}样本，当前{sample}")
+
+    # P1: promising for decision-maker review
     if pass_7 and pass_14 and cf_status != "oppose" and not blockers:
-        return "ready_for_review", "review_for_small_live", blockers
+        if sample >= MIN_SAMPLE_FOR_P1:
+            return "ready_for_review", "review_for_small_live", blockers
+        else:
+            blockers.append(f"P1需要≥{MIN_SAMPLE_FOR_P1}样本，当前{sample}")
+
     if "approved_for_small_live" in promotion_status:
         blockers.extend(exp_notes[:2])
         return "small_live_monitoring", "keep_small_live_monitoring", blockers

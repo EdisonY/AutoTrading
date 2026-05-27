@@ -2,6 +2,14 @@
 
 This is the durable reason-and-outcome ledger for every material design, code, configuration, deployment, rollback, optimization, or live operational change.
 
+## 2026-05-27 20:30 CST - Phase 8 promotion gate hardening
+- Trigger / reason: Execute Phase 8 of FUTURE_EXECUTION_PLAN.md.
+- Completed: Hardened `strategy_evolution_gate.py` `classify_decision()`: (1) Added `adjust_pnl_for_fees()` — deducts 0.15% round-trip cost from shadow PnL; (2) Added `check_rollback_triggers()` — checks sample sufficiency, PF decay, hard-stop increase, account risk; (3) P0 now requires ≥50 samples + fee-adjusted positive PnL; (4) P1 requires ≥30 samples; (5) Rollback triggers added as blockers. Constants: FEE_SLIPPAGE_ADJUSTMENT_PCT=0.15%, MIN_SAMPLE_FOR_P0=50, MIN_SAMPLE_FOR_P1=30, ROLLBACK_PF_DECAY_RATIO=0.8, ROLLBACK_HARD_STOP_RATIO=1.5.
+- Not completed / remaining: Regime segmentation (trend/chop/high-vol/low-liquidity) not implemented. Rollback trigger automation not deployed.
+- Verification: `py_compile` passed. Aliyun upload OK.
+- Live impact / deployment: Gate logic hardened, no live strategy change.
+- Files / release / commit: `部署工具/strategy_evolution_gate.py`, `CHANGELOG.md`.
+
 ## 2026-05-27 20:20 CST - Phase 7 recovery position management
 - Trigger / reason: Execute Phase 7 of FUTURE_EXECUTION_PLAN.md.
 - Completed: Enhanced `strategy_truth_ledger.py` with: (1) detailed recovery position audit per strategy (symbol, side, entry/mark price, PnL, margin, leverage); (2) `evaluate_recovery_exit_policies()` shadow-tests 5 candidate exit policies (4h/8h/24h time exit, 2% trailing, opposite signal); (3) recovery exit policies included in JSON output and MD report. Uploaded to Aliyun.

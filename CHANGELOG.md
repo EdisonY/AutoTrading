@@ -23,6 +23,14 @@ This is the durable reason-and-outcome ledger for every material design, code, c
 - Files / release / commit:
 ```
 
+## 2026-05-27 19:05 CST - Phase 6 sentinel quality review
+- Trigger / reason: Execute Phase 6 of FUTURE_EXECUTION_PLAN.md — measure sentinel signal contribution.
+- Completed: Added `部署工具/sentinel_quality_review.py`. Reads SQLite events with sentinel fields, classifies strategy response (opened/skipped/filtered/no_signal/error), computes per-reason and per-strategy stats, lists top 20 movers. Outputs `runtime/sentinel_quality_latest.json` and `reports/sentinel_quality_latest.md`. Uploaded to Aliyun and integrated into 2-hour analysis pipeline.
+- Not completed / remaining: Forward-return calculation (15/30/60/120m) not yet implemented (needs K-line data). Coverage audit needs market snapshot comparison. Sentinel score bonus shadow experiment not started.
+- Verification: Local `py_compile` passed. Local test: 17,982 sentinel decisions, 16,111 scanned, 14 opened, open rate 0.1%.
+- Live impact / deployment: No live strategy change. Analysis on Aliyun only.
+- Files / release / commit: `部署工具/sentinel_quality_review.py`, `CHANGELOG.md`; Git commit to contain this entry.
+
 ## 2026-05-27 18:50 CST - Phase 2 command-center strategy quality board
 - Trigger / reason: Execute Phase 2 of FUTURE_EXECUTION_PLAN.md — integrate truth ledger into portal dashboard so decision-makers see "who is really making money" on the first screen.
 - Completed: Extended `部署工具/portal_dashboard.py` with: (1) `strategy_truth_summary()` function reads `runtime/strategy_truth_latest.json`; (2) `build_data()` includes `strategy_truth` data; (3) `build_findings()` generates P1 alerts for negative-expectancy strategies (PF<1) and P2 notes for positive-expectancy strategies (PF>=2) and recovery positions; (4) HTML template includes new "策略质量看板" section showing per-strategy closed trades, win rate, net PnL, PF, payoff ratio, hard-stop count, recovery count, and recovery unrealized PnL. Uploaded to Aliyun.

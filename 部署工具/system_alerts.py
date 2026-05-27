@@ -41,14 +41,10 @@ SERVICES = [
     "crypto-scanner-v14.service",
     "crypto-scanner-v16.service",
     "crypto-market-mover-sentinel.service",
-    "crypto-portal-refresh.service",
 ]
 
 TIMERS = [
     "crypto-data-maintenance.timer",
-    "crypto-market-review.timer",
-    "crypto-counterfactual-open-skips.timer",
-    "crypto-strategy-evolution-gate.timer",
 ]
 
 WATCH_SHARDS = [
@@ -208,27 +204,8 @@ def collect_alerts() -> dict[str, Any]:
         if path.exists() and path.stat().st_size > 50 * 1024 * 1024:
             alerts.append({"level": "warn", "title": "文本日志过大", "body": f"{path.relative_to(ROOT)} 已 {path.stat().st_size / 1024**2:.1f}MB"})
 
-    review_result = systemctl_value("crypto-market-review.service", "Result")
-    if review_result and review_result not in {"success", ""}:
-        alerts.append({"level": "bad", "title": "每日复盘服务失败", "body": f"crypto-market-review.service Result={review_result}"})
-
-    counterfactual_result = systemctl_value("crypto-counterfactual-open-skips.service", "Result")
-    if counterfactual_result and counterfactual_result not in {"success", ""}:
-        alerts.append({"level": "bad", "title": "OPEN_SKIPPED 反事实评估失败", "body": f"crypto-counterfactual-open-skips.service Result={counterfactual_result}"})
-
-    evolution_result = systemctl_value("crypto-strategy-evolution-gate.service", "Result")
-    if evolution_result and evolution_result not in {"success", ""}:
-        alerts.append({"level": "bad", "title": "策略进化门禁失败", "body": f"crypto-strategy-evolution-gate.service Result={evolution_result}"})
-    if STRATEGY_EVOLUTION_LATEST.exists():
-        try:
-            payload = json.loads(STRATEGY_EVOLUTION_LATEST.read_text(encoding="utf-8", errors="replace"))
-            generated_at = parse_dt(payload.get("generated_at"))
-            if not generated_at or (now - generated_at).total_seconds() > 4 * 3600:
-                alerts.append({"level": "warn", "title": "策略进化门禁偏旧", "body": f"最新门禁 {generated_at or '无'}"})
-        except Exception as exc:
-            alerts.append({"level": "warn", "title": "策略进化门禁读取失败", "body": str(exc)})
-    else:
-        alerts.append({"level": "warn", "title": "策略进化门禁缺失", "body": str(STRATEGY_EVOLUTION_LATEST)})
+    # NOTE: portal-refresh, counterfactual, evolution-gate, market-review checks
+    # have been migrated to Aliyun analysis node. See FUTURE_EXECUTION_PLAN.md Phase 0.5.
 
     if MARKET_CACHE.exists():
         try:
@@ -274,22 +251,7 @@ def collect_alerts() -> dict[str, Any]:
     else:
         alerts.append({"level": "warn", "title": "持久关注台账缺失", "body": str(ATTENTION_LATEST)})
 
-    freshness_inputs = [p for p in (MARKET_CACHE, ACCOUNT_LATEST, PORTAL_REFRESH_STATUS, STRATEGY_EVOLUTION_LATEST, ATTENTION_LATEST) if p.exists()]
-    if PORTAL_HTML.exists() and freshness_inputs:
-        portal_mtime = PORTAL_HTML.stat().st_mtime
-        newest_input = max(p.stat().st_mtime for p in freshness_inputs)
-        if newest_input - portal_mtime > 120:
-            alerts.append({"level": "bad", "title": "总入口页面偏旧", "body": f"入口页落后最新数据 {newest_input - portal_mtime:.0f} 秒"})
-    elif not PORTAL_HTML.exists():
-        alerts.append({"level": "bad", "title": "总入口页面缺失", "body": str(PORTAL_HTML)})
-
-    if PORTAL_REFRESH_STATUS.exists():
-        try:
-            status = json.loads(PORTAL_REFRESH_STATUS.read_text(encoding="utf-8", errors="replace"))
-            if status.get("status") != "ok":
-                alerts.append({"level": "bad", "title": "入口页刷新失败", "body": str(status.get("error") or status.get("stderr_tail") or "")[:220]})
-        except Exception as exc:
-            alerts.append({"level": "warn", "title": "入口刷新状态读取失败", "body": str(exc)})
+    # NOTE: portal freshness checks migrated to Aliyun analysis node.
 
     if EVENT_STORE_DB.exists():
         try:

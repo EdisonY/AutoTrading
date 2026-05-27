@@ -23,6 +23,14 @@ This is the durable reason-and-outcome ledger for every material design, code, c
 - Files / release / commit:
 ```
 
+## 2026-05-27 16:45 CST - Dual-server architecture optimization and expanded execution plan
+- Trigger / reason: User requested optimizing the two-server (Tencent + Aliyun) architecture to reduce Tencent resource pressure, and expanding the execution plan with resource/API constraints, VPB evaluation, sentinel coverage audit, testnet-to-live transition, and rollback triggers.
+- Completed: Rewrote `记忆文档/FUTURE_EXECUTION_PLAN.md` as a dual-server architecture plan. Key changes: (1) Tencent retains only 6 API-dependent services; Aliyun takes all analysis/report/experiment/gate tasks as Timer jobs; (2) Added reverse sync from Aliyun to Tencent for generated reports; (3) Added resource constraints: memory <50MB per new process, storage red line at 15GB free, Binance API weight budget <600/min (50% safety line); (4) Added Phase 0.5 for architecture migration, Phase 9 for testnet-to-live transition; (5) Added VPB contribution experiment in Phase 3; (6) Added sentinel coverage audit in Phase 6; (7) Added concrete rollback triggers in Phase 8. Updated `PROJECT_STATE.md` to reference the new plan.
+- Not completed / remaining: No code changes made. Phase 0.5 architecture migration, Phase 1 truth ledger, and all subsequent phases remain unimplemented. Aliyun resource check (CPU/memory/disk) pending.
+- Verification: Documentation files updated locally. No live service or strategy behavior changed.
+- Live impact / deployment: None; planning/documentation only.
+- Files / release / commit: `记忆文档/FUTURE_EXECUTION_PLAN.md`, `PROJECT_STATE.md`, `CHANGELOG.md`; Git commit to contain this entry.
+
 ## 2026-05-27 15:35 CST - Persist future strategy-quality execution plan
 - Trigger / reason: User asked whether the detailed plan can solve all current problems, requested more concrete technical milestones, and asked to write it into the future execution plan.
 - Completed: Added `记忆文档/FUTURE_EXECUTION_PLAN.md` as a durable handoff plan. It clarifies which current system problems the plan can solve and which future market/exchange problems it cannot guarantee. It breaks execution into technical phases: safety baseline, unified strategy truth ledger, command-center quality board, A/v11 evidence program, B/v16 payoff improvement, C/v14 rebuild/retire program, sentinel contribution review, recovery-position management, and promotion-gate hardening. Updated `PROJECT_STATE.md` and `记忆文档/MEMORY.md` so future agents discover and follow the plan.

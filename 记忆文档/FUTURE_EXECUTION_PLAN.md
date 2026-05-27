@@ -1,300 +1,464 @@
-# AutoTrading Future Execution Plan
+# AutoTrading 双服务器架构优化 + 长期执行计划
 
-Last updated: 2026-05-27 Asia/Shanghai
+## 背景
 
-This document is the durable execution plan for the next strategy-quality phase. It is meant for future agents and future machines. It should be read after `PROJECT_STATE.md` and before changing strategy thresholds or live trading behavior.
+当前系统存在三个核心问题：
+1. 腾讯云承担了交易+分析双重角色，内存/存储压力持续增长
+2. 阿里云资源闲置，仅做每日凌晨同步+影子实验
+3. 策略真相台账缺失，无法区分主动策略PnL与恢复仓PnL
 
-## Can This Plan Solve All Current Problems?
+**目标**：将两台服务器重新分工——腾讯云只保留必须调用币安API的功能，阿里云承担所有分析/报告/实验/门禁任务。
 
-It can cover the known system-level problems that are currently blocking good decisions:
+---
 
-- mixed PnL accounting between active strategy trades, recovery/adopted positions, current floating PnL, shadow experiments, and counterfactual simulations;
-- weak evidence discipline before changing live strategy behavior;
-- unclear ranking of A/v11, B/v16, and C/v14 by real active-strategy quality;
-- C/v14 raw-signal noise and poor signal-to-open conversion;
-- insufficient measurement of sentinel contribution;
-- stage-guard and filter changes being evaluated as hard accept/reject instead of with risk-adjusted evidence;
-- command-center summaries not yet showing all decision-maker-grade root causes in one compact place.
+## 双服务器架构重新分工
 
-It cannot guarantee that every future market regime, exchange error, or alpha decay problem is solved. The goal is to make the system expose the truth quickly, prevent blind parameter changes, and only promote strategy changes after multi-window evidence.
+### 腾讯云（实盘节点）— 只保留交易核心
 
-## Current Working Assumptions
+| 服务 | 类型 | 职责 | API调用 |
+|------|------|------|---------|
+| `crypto-scanner.service` | 常驻 | A/v11 策略扫描 | K线+下单 |
+| `crypto-scanner-v16.service` | 常驻 | B/v16 策略扫描 | K线+下单+实盘CVD |
+| `crypto-scanner-v14.service` | 常驻 | C/v14 策略扫描 | K线+下单 |
+| `crypto-market-mover-sentinel.service` | 常驻 | 市场异动哨兵 | 24h ticker |
+| `crypto-account-snapshot.service` | 常驻 | 账户快照 | 余额+持仓 |
+| `crypto-market-data-cache.service` | 常驻 | 统一行情缓存 | exchangeInfo+ticker |
 
-- `B/v16` is the most credible current active-strategy alpha candidate, but its payoff ratio is thin and must be improved before expansion.
-- `A/v11` has useful high-payoff behavior and current floating gains, but its active-strategy expectancy remains uncertain after removing recovery/adopted-position effects. `EXP-20260523-v11-replacement-quality` remains P2 small-live monitoring, not full rollout.
-- `C/v14` should be treated as a research/rebuild candidate until it proves active positive expectancy. Existing four-factor scoring should not be expanded just because raw signal volume is high.
-- Sentinel is valuable as a discovery layer, but it must be measured through forward returns and strategy conversion before it becomes a live score bonus.
-- Recovery/adopted positions are not strategy alpha. They need a separate ledger and separate exit-policy research.
+**总计**：6个常驻服务，全部必须调用币安API。
 
-## Phase 0 - Safety Baseline And Freeze Rules
+### 阿里云（分析节点）— 承担所有离线计算
 
-Goal: prevent accidental live-risk changes while the evidence layer is being rebuilt.
+| 任务 | 类型 | 职责 | 需要API? |
+|------|------|------|----------|
+| 日志同步 | Timer | 从腾讯拉取SQLite/JSONL/报告 | 否 |
+| 策略真相台账 | Timer/新增 | 分离主动策略PnL vs 恢复仓PnL | 否 |
+| 命令中心生成 | Timer | portal_dashboard.py | 否 |
+| 每日复盘 | Timer | daily_market_review.py | 否 |
+| 信号质量报告 | Timer | signal_quality_review.py | 否 |
+| 反事实评估 | Timer/新增 | counterfactual_open_skips.py | 否 |
+| 策略进化门禁 | Timer | strategy_evolution_gate.py | 否 |
+| 哨兵贡献评估 | Timer/新增 | sentinel_quality_review.py | 否 |
+| 研究记忆构建 | Timer | research_memory_builder.py | 否 |
+| 影子实验 | Timer | experiment_runner.py | 否 |
+| 系统告警(分析侧) | Timer/新增 | 检查数据新鲜度+报告质量 | 否 |
 
-Technical nodes:
+**总计**：1个同步Timer + 10个分析Timer，无常驻进程，无API调用。
 
-- Add a plan checklist item to `PROJECT_STATE.md` and keep this document as the canonical future plan.
-- Before any live strategy threshold or stop-loss change, run `python 部署工具\pull_live_context.py`.
-- Keep all material changes behind `CHANGELOG.md` and `git_change_guard.py`.
-- Do not change A/B/C live thresholds from this plan alone. Convert each proposal into a shadow experiment or small-live approval first.
+### 反向同步：阿里云 → 腾讯云
 
-Acceptance:
+阿里云生成的报告需要同步回腾讯云供命令中心展示：
+- `reports/strategy_truth_latest.json/md`
+- `reports/portal_latest.html`
+- `reports/strategy_evolution_latest.json/md/html`
+- `reports/counterfactual_open_skips_latest.json/md/html`
+- `reports/sentinel_quality_latest.json/md`
+- `reports/market_review_latest.md/html`
+- `runtime/strategy_evolution_latest.json`
+- `research_memory/attention/open_items.json`
 
-- Future agents can identify this document from `PROJECT_STATE.md`.
-- No strategy threshold, stop-loss, position-limit, or sentinel-score change is made without a ledger entry and verification.
+实现方式：新增 `部署工具/sync_aliyun_reports_to_tencent.py`，在阿里云分析任务完成后执行反向同步。
 
-## Phase 1 - Unified Strategy Truth Ledger
+---
 
-Goal: create one authoritative daily/rolling truth table that separates active strategy quality from recovery positions and current floating PnL.
+## 资源与API约束
 
-Planned implementation:
+### Binance API Weight 预算
 
-- Add `部署工具/strategy_truth_ledger.py`.
-- Read from Tencent SQLite `runtime/event_store.sqlite3`, `account_snapshots`, and existing generated reports.
-- Produce:
-  - `runtime/strategy_truth_latest.json`;
-  - `reports/strategy_truth_latest.md`;
-  - optional SQLite tables:
-    - `strategy_daily_facts`;
-    - `position_lifecycle_facts`;
-    - `recovery_position_facts`;
-    - `strategy_quality_rollups`.
+当前估算（需实测验证）：
+- 哨兵：每15秒拉一次24h ticker，约 1 weight × 4/min = ~4 weight/min
+- 行情缓存：每15秒拉exchangeInfo+ticker，约 40 weight × 4/min = ~160 weight/min
+- 三策略扫描：每轮约100币×2周期×1根K线 = ~200 weight/轮，约每2-3分钟一轮 = ~70-100 weight/min
+- 账户快照：每30秒查3账户余额+持仓 = ~6 weight × 2/min = ~12 weight/min
 
-Key fields:
+**总计约 250-280 weight/min**，Binance限制1200 weight/min，当前使用约23%。
 
-- strategy, account, symbol, side, entry time, exit time, holding minutes;
-- active strategy trade vs recovery/adopted position;
-- realized PnL, unrealized PnL, fees/slippage estimate, margin, leverage;
-- win rate, PF, average win, average loss, payoff ratio;
-- hard-stop count, max adverse excursion, max favorable excursion;
-- open reason, close reason, filter layer, sentinel fields;
-- evidence window: 1d, 3d, 7d, 14d, 30d.
+**约束**：新增功能不得使总weight超过600 weight/min（50%安全线）。
 
-Technical details:
+### 内存约束
 
-- Classify active trades from `OPEN` events generated by A/B/C scanners.
-- Classify recovery/adopted positions when a position appears in account snapshots without a matching recent `OPEN` event, or when local scanner state marks exchange position restoration.
-- Store both realized and current floating PnL, but never add them without a visible label.
-- Use SQLite aggregation first; JSONL only as fallback.
+| 节点 | 当前可用 | 常驻进程RSS | 安全线 |
+|------|---------|------------|--------|
+| 腾讯云 | ~1.4GiB | ~150MB(三策略+哨兵+快照+缓存) | 新增进程RSS < 50MB |
+| 阿里云 | 待确认 | ~0(无常驻) | Timer进程临时占用，完成后释放 |
 
-Acceptance:
+**约束**：腾讯云不新增常驻服务。阿里云Timer进程为临时占用，不构成内存压力。
 
-- For A/v11, B/v16, and C/v14, the report shows active-strategy PnL and recovery-position PnL separately.
-- The command center can show "who is really making money" without mixing current floating gains with old recovery gains.
-- Any future statement such as "only B/v16 is profitable" must specify the exact ledger口径.
+### 存储约束
 
-## Phase 2 - Command-Center Decision Summary Upgrade
+| 节点 | 总量 | 已用 | 剩余 | 红线 |
+|------|------|------|------|------|
+| 腾讯云 | 50GB | ~12% | ~41GB | <15GB触发紧急归档 |
+| 阿里云 | 待确认 | 待确认 | 待确认 | 同样设15GB红线 |
 
-Goal: make `reports/index.html` answer the decision-maker's first-screen questions.
+**约束**：新增SQLite表必须有归档策略。分析产出写入阿里云，不增加腾讯云存储。
 
-Planned implementation:
+---
 
-- Extend `部署工具/portal_dashboard.py` to read `strategy_truth_latest.json`.
-- Add a compact "strategy quality board":
-  - active PnL excluding recovery;
-  - recovery PnL;
-  - current floating PnL;
-  - PF, win rate, payoff ratio;
-  - open failures after preflight hardening;
-  - top wrong-kill filters from counterfactuals;
-  - current evolution-gate priority.
+## 执行阶段
 
-Technical details:
+### Phase 0 - 安全基线与冻结规则
 
-- Do not reintroduce tutorial blocks, glossary blocks, or health tables the user asked to remove.
-- Keep the first page decision-oriented: PnL, risk, failures, upgrade candidates, and operational health.
-- Link to detail pages only after the summary states the conclusion.
+**目标**：防止在证据层重建期间意外改变实盘风险。
 
-Acceptance:
+- [ ] 在 `PROJECT_STATE.md` 中添加本计划引用
+- [ ] 任何实盘阈值/止损改动前必须先运行 `pull_live_context.py`
+- [ ] 所有改动必须经过 `CHANGELOG.md` + `git_change_guard.py`
+- [ ] 不从本计划直接改A/B/C实盘阈值，先转为shadow实验或小仓审批
 
-- From the entry page alone, the user can see:
-  - which strategy is contributing active realized PnL;
-  - which account has current floating PnL;
-  - whether recovery positions are distorting results;
-  - whether any fresh `OPEN_FAILED` remains after the Binance preflight hardening;
-  - whether a strategy upgrade is P0/P1/P2/reject.
+**验收**：未来agent可从 `PROJECT_STATE.md` 发现本文件。无ledger entry不得改策略。
 
-## Phase 3 - A/v11 Evidence Program
+---
 
-Goal: decide whether A/v11 should remain, be narrowed, or be expanded through replacement-quality.
+### Phase 0.5 - 双服务器架构迁移
 
-Planned experiments:
+**目标**：将分析任务从腾讯云迁移到阿里云，释放腾讯云资源。
 
-- `A-v11-entry-threshold-15m-115-120`:
-  - compare current 15m entry threshold against 115 and 120;
-  - measure trade count, PF, missed profit, hard-stop rate.
-- `A-v11-trailing-pullback-0p8-1p0-atr`:
-  - compare current trailing pullback with 0.8 and 1.0 ATR;
-  - measure early noise exits, MFE capture, and average loss expansion.
-- `A-v11-replacement-quality-guarded-expand`:
-  - continue from current P2 small-live monitoring;
-  - evaluate `EVICT_CLOSE`, `OPEN_RETRY_AFTER_EVICT`, missed-profit, and replacement regret.
+#### 0.5.1 确认阿里云资源
 
-Technical nodes:
+- [ ] SSH到阿里云，检查CPU/内存/磁盘/Python环境
+- [ ] 确认阿里云Python版本和依赖（numpy, pandas等）
+- [ ] 确认阿里云到腾讯云的SSH连通性
 
-- Extend `experiment_runner.py` or add an A/v11 trial config under `experiments/`.
-- Feed results into `strategy_evolution_gate.py`.
-- Keep same-symbol no-stacking and 100 USDT margin discipline hard-blocked.
+#### 0.5.2 升级阿里云同步链路
 
-Acceptance:
+当前 `shadow_sync_from_tencent.py` 同步内容：
+- JSONL日志（scanner_data, logs等）
+- 文本日志（stdout.log）
+- 报告文件（market_snapshot_latest.json）
 
-- No full rollout unless 3/7/14/30 day windows show positive active-strategy delta, no unacceptable hard-stop increase, and enough samples.
-- Replacement-quality stays guarded until the gate moves it above P2.
+需要新增同步：
+- [ ] `runtime/event_store.sqlite3`（核心，用于离线分析）
+- [ ] `runtime/account_snapshot_latest.json`
+- [ ] `runtime/market_data_cache.json`
+- [ ] `runtime/strategy_evolution_latest.json`（如果腾讯云还有旧版）
+- [ ] `research_memory/` 整个目录
 
-## Phase 4 - B/v16 Main-Alpha Improvement Program
+实现：扩展 `shadow_sync_from_tencent.py` 的 `REPORT_FILES` 和新增目录同步。
 
-Goal: improve B/v16 payoff ratio without destroying its current signal edge.
+#### 0.5.3 新增反向同步（阿里云 → 腾讯云）
 
-Planned experiments:
+- [ ] 新增 `部署工具/sync_aliyun_reports_to_tencent.py`
+- [ ] 同步阿里云生成的报告到腾讯云 `reports/` 目录
+- [ ] 在阿里云分析任务完成后自动执行
 
-- `B-v16-atr-stop-bands`:
-  - high volatility symbols: tighter stop, e.g. 1.5 ATR;
-  - normal volatility symbols: current or 2.0 ATR;
-  - low volatility symbols: test wider 2.5 ATR.
-- `B-v16-confirmation-continuous-score`:
-  - replace binary 15m confirmation with continuous scoring:
-    - strong confirmation adds score;
-    - weak/no confirmation adds little or nothing;
-    - reverse confirmation subtracts score.
-- `B-v16-overheat-score-cap`:
-  - test whether scores above 85/90 have lower forward return because of reversal risk.
-- `B-v16-low-score-exception-shadow`:
-  - evaluate low-score opens only in shadow; do not lower live threshold from small samples.
+#### 0.5.4 迁移腾讯云Timer到阿里云
 
-Technical nodes:
+从腾讯云移除（改为阿里云执行）：
+- [ ] `crypto-portal-refresh.service` → 阿里云Timer生成后反向同步
+- [ ] `crypto-counterfactual-open-skips.timer` → 阿里云Timer
+- [ ] `crypto-market-review.timer` → 阿里云Timer（已有类似）
+- [ ] `crypto-strategy-evolution-gate.timer` → 阿里云Timer（已有类似）
 
-- Add per-trade CVD/OFI/funding/rsi/confirmation fields into strategy truth ledger.
-- Add fee/slippage estimate to all B/v16 shadow comparisons.
-- Ensure max-position/leverage and Binance preflight failures are separated from alpha failures.
+腾讯云保留：
+- [ ] 6个常驻交易服务（scanner×3 + sentinel + account-snapshot + market-data-cache）
+- [ ] `crypto-data-maintenance.timer`（清理腾讯本地数据）
+- [ ] `crypto-system-alerts.timer`（检查腾讯本地服务状态）
 
-Acceptance:
+#### 0.5.5 阿里云新增分析Timer
 
-- B/v16 expansion requires PF improvement, hard-stop reduction, and stable performance across at least 7/14/30 day windows.
-- A lower threshold cannot be promoted from fewer than 30 independent samples.
+新增 `crypto-analysis-pipeline.timer`（或拆分为多个Timer）：
 
-## Phase 5 - C/v14 Rebuild Or Retire Program
+```
+# 阿里云分析流水线（每日凌晨执行，或每2小时轻量执行）
+1. shadow_sync_from_tencent.py --days 3          # 拉取最新数据
+2. strategy_truth_ledger.py                        # Phase 1 真相台账
+3. counterfactual_open_skips.py                    # 反事实评估
+4. sentinel_quality_review.py                      # Phase 6 哨兵评估
+5. strategy_evolution_gate.py                      # 进化门禁
+6. portal_dashboard.py --out-dir reports            # 命令中心生成
+7. sync_aliyun_reports_to_tencent.py               # 反向同步到腾讯
+```
 
-Goal: stop treating raw volume of C/v14 signals as evidence; either rebuild it into a focused model or retire it from active allocation.
+**验收**：
+- 腾讯云常驻服务全部active，内存使用下降
+- 阿里云Timer按时执行，报告正确生成
+- 反向同步成功，腾讯云 `reports/index.html` 包含阿里云生成的内容
+- 阿里云分析结果与之前腾讯云生成的结果一致
 
-Planned experiments:
+---
 
-- `C-v14-strict-candidate-compression`:
-  - only 1h candidates above real entry gates enter the candidate ledger;
-  - test thresholds such as long 65/70 and short 75/80 in shadow only.
-- `C-v14-two-factor-trend-momentum`:
-  - core factors: EMA/ADX trend plus RSI/MACD momentum;
-  - volume/structure become modifiers, not independent score pillars.
-- `C-v14-filter-ablation`:
-  - isolate sector limit, BTC trend filter, tail guard, 15m confirmation, cooldown;
-  - measure which filters protect PnL and which only suppress all entries.
+### Phase 1 - 统一策略真相台账
 
-Technical nodes:
+**目标**：创建权威的每日/滚动真相表，分离主动策略质量与恢复仓PnL。
 
-- Use the corrected entry-candidate口径, not old raw signal counts.
-- Build C/v14 trials as paper/shadow first; do not loosen live C/v14 based on raw missed-move anecdotes.
+**运行位置**：阿里云
 
-Acceptance:
+**实现**：
+- [ ] 新增 `部署工具/strategy_truth_ledger.py`
+- [ ] 读取同步到阿里云的SQLite `event_store.sqlite3`、`account_snapshots`
+- [ ] 产出：
+  - `runtime/strategy_truth_latest.json`
+  - `reports/strategy_truth_latest.md`
+  - SQLite表（写入阿里云本地）：
+    - `strategy_daily_facts` — 每策略每日聚合
+    - `position_lifecycle_facts` — 每笔持仓生命周期
+    - `recovery_position_facts` — 恢复仓独立记录
+    - `strategy_quality_rollups` — 多窗口滚动指标
 
-- If C/v14 cannot show positive active-strategy expectancy after 14/30 day windows, mark it as research-only or reduce its live role.
+**关键字段**：
+- strategy, account, symbol, side, entry_time, exit_time, holding_minutes
+- is_active_trade (bool) — 从OPEN事件分类
+- realized_pnl, unrealized_pnl, fee_estimate, margin, leverage
+- win_rate, pf, avg_win, avg_loss, payoff_ratio
+- hard_stop_count, mfe, mae
+- open_reason, close_reason, filter_layer, sentinel_fields
+- evidence_window: 1d, 3d, 7d, 14d, 30d
 
-## Phase 6 - Sentinel Contribution And Big-Move Capture
+**分类逻辑**：
+- 主动策略交易：从A/B/C scanner的 `OPEN` 事件匹配
+- 恢复/接管仓位：账户快照中出现但无近期 `OPEN` 事件匹配的持仓
 
-Goal: turn sentinel from a scan-list expander into a measured signal-quality input.
+**验收**：
+- A/v11, B/v16, C/v14 各自显示主动策略PnL和恢复仓PnL
+- 命令中心可直接看到"谁在真赚钱"
 
-Planned implementation:
+---
 
-- Add `部署工具/sentinel_quality_review.py`.
-- Produce:
-  - `runtime/sentinel_quality_latest.json`;
-  - `reports/sentinel_quality_latest.md`.
-- Optional SQLite table:
-  - `sentinel_forward_returns`.
+### Phase 2 - 命令中心决策摘要升级
 
-Key fields:
+**目标**：让 `reports/index.html` 回答决策者的第一屏问题。
 
-- sentinel reason: gainer list, loser list, volume spike, velocity spike;
-- rank, 24h change, short-horizon velocity, quote volume, first-seen time, repeated-seen count;
-- forward returns at 15/30/60/120 minutes;
-- strategy response: opened, filtered, rejected, no signal;
-- whether the eventual move would have been profitable after fee/slippage.
+**运行位置**：阿里云生成 → 反向同步到腾讯云
 
-Experiment:
+**实现**：
+- [ ] 扩展 `portal_dashboard.py` 读取 `strategy_truth_latest.json`
+- [ ] 新增紧凑"策略质量看板"：
+  - 主动策略PnL（剔除恢复仓）
+  - 恢复仓PnL
+  - 当前浮盈亏
+  - PF、胜率、盈亏比
+  - 预检失败统计
+  - 反事实错杀排行
+  - 进化门禁优先级
+- [ ] 不重新引入用户要求删除的教学/术语/健康表
 
-- `sentinel-score-bonus-shadow`:
-  - test +5/+10/+15 score bonus for top-ranked movers;
-  - test only for specific sentinel types that have positive forward-return evidence.
+**验收**：
+- 从入口页直接看到：哪个策略贡献主动PnL、哪个账户有浮盈、恢复仓是否扭曲结果、是否有新OPEN_FAILED、策略升级是P0/P1/P2/reject
 
-Acceptance:
+---
 
-- No live sentinel score bonus until forward returns are positive by type and strategy, with enough samples.
-- Command center shows which big movers were missed and why: not scanned, scanned/no signal, strategy rejected, risk rejected, or execution rejected.
+### Phase 3 - A/v11 证据计划
 
-## Phase 7 - Recovery Position Management
+**目标**：决定A/v11应该保留、收窄还是通过replacement-quality扩展。
 
-Goal: separate and manage recovery/adopted positions without confusing them with strategy alpha.
+**运行位置**：阿里云shadow实验
 
-Planned implementation:
+**计划实验**：
+- [ ] `A-v11-entry-threshold-15m-115-120`：对比15m阈值105 vs 115 vs 120
+- [ ] `A-v11-trailing-pullback-0p8-1p0-atr`：对比pullback 0.6 vs 0.8 vs 1.0 ATR
+- [ ] `A-v11-vpb-contribution`：评估VPB量价突破策略的独立贡献
+- [ ] `A-v11-replacement-quality-guarded-expand`：继续P2小仓观察
 
-- Add recovery position tagging in `strategy_truth_ledger.py`.
-- Add a recovery-only review section:
-  - position age;
-  - current PnL;
-  - MFE/MAE after adoption;
-  - exit reason if closed;
-  - whether the strategy would have opened the same position.
+**约束**：
+- 同币种禁止叠仓和100USDT保证金纪律保持硬性阻断
+- 无3/7/14/30天多窗口正向证据不得全量放开
+- replacement-quality在门禁升至P2以上前保持受限
 
-Candidate exit policies for shadow testing:
+---
 
-- age-based exit, e.g. 4h/8h/24h;
-- trailing stop after adoption;
-- close only when original strategy gives opposite signal;
-- current live strategy exit rules.
+### Phase 4 - B/v16 主力Alpha优化
 
-Acceptance:
+**目标**：在不破坏当前信号优势的前提下提升B/v16盈亏比。
 
-- Recovery positions are never counted as active strategy alpha.
-- No automatic recovery-position exit rule is deployed without shadow evidence, because naive time exits can cut large winners.
+**运行位置**：阿里云shadow实验
 
-## Phase 8 - Promotion Gate Hardening
+**计划实验**：
+- [ ] `B-v16-atr-stop-bands`：分档止损（高波1.5ATR/正常2.0/低波2.5）
+- [ ] `B-v16-confirmation-continuous-score`：15m确认从二元改为连续评分
+- [ ] `B-v16-overheat-score-cap`：测试>85/90分是否因反转风险导致低收益
+- [ ] `B-v16-low-score-exception-shadow`：低分开仓仅shadow评估
 
-Goal: make the strategy-evolution gate strict enough for real decision-making.
+**约束**：
+- 所有比较必须包含手续费/滑点估算
+- 低于阈值不能从<30独立样本中晋级
 
-Planned implementation:
+---
 
-- Extend `部署工具/strategy_evolution_gate.py` with:
-  - minimum sample checks by strategy and change type;
-  - 3/7/14/30 day window agreement;
-  - fee/slippage adjustment;
-  - regime segmentation: trend day, chop day, high-volatility day, low-liquidity tail symbols;
-  - current account-risk checks;
-  - rollback trigger definition.
+### Phase 5 - C/v14 重建或退役
 
-Promotion rules:
+**目标**：停止把C/v14原始信号量当作证据；要么重建为聚焦模型，要么退役。
 
-- P0: strong multi-window evidence, enough samples, risk acceptable, clear rollback rule, human approval still required for full live.
-- P1: promising and ready for decision-maker review.
-- P2: observation or small-live only.
-- P3: research only.
-- Reject: do not promote unless reworked.
+**运行位置**：阿里云shadow实验
 
-Acceptance:
+**计划实验**：
+- [ ] `C-v14-strict-candidate-compression`：只让通过真实入场门槛的1h候选进入日志
+- [ ] `C-v14-two-factor-trend-momentum`：核心因子=趋势+动量，量价/结构改为加分项
+- [ ] `C-v14-filter-ablation`：逐个隔离赛道限制/BTC趋势/尾部过滤/15m确认/冷却，测量哪些过滤保护PnL、哪些只压制所有入场
 
-- No candidate reaches P0/P1 from confirmation-only shadow output with zero real or paper PnL.
-- Every P0/P1 item displayed on the command center includes what changed, why it is better, what can go wrong, and how to roll back.
+**约束**：
+- 使用修正后的入场候选口径，不用旧原始信号计数
+- 先做paper/shadow，不因错失大行情的逸事就放宽实盘
+- 14/30天窗口后仍无正期望 → 标记为research-only或减少实盘角色
 
-## Execution Order
+---
 
-1. Build Phase 1 truth ledger.
-2. Add Phase 2 command-center summary from the truth ledger.
-3. Add Phase 6 sentinel-quality review, because big-move capture is a decision-maker priority.
-4. Add A/v11 and B/v16 shadow experiment configs.
-5. Add C/v14 rebuild/retire experiments.
-6. Add recovery-position policy review.
-7. Harden the promotion gate and portal P0/P1 wording.
+### Phase 6 - 哨兵贡献与大行情捕捉
 
-## Stop Conditions
+**目标**：将哨兵从扫描列表扩展器转变为可度量的信号质量输入。
 
-- If live `OPEN_FAILED` reappears after Binance preflight hardening, pause strategy changes and diagnose by Binance code first.
-- If account hard-stop risk or sizing violations reappear, pause live expansion.
-- If SQLite event freshness or account snapshot freshness fails, do not make current-state conclusions from stale reports.
-- If an experiment has fewer than 30 independent samples, do not promote it above P2.
+**运行位置**：阿里云
 
+**实现**：
+- [ ] 新增 `部署工具/sentinel_quality_review.py`
+- [ ] 产出：
+  - `runtime/sentinel_quality_latest.json`
+  - `reports/sentinel_quality_latest.md`
+  - SQLite表：`sentinel_forward_returns`
+
+**关键字段**：
+- sentinel_reason: gainer/loser/volume_spike/velocity_spike
+- rank, 24h_change, velocity, quote_volume, first_seen, repeated_count
+- forward_returns: 15m/30m/60m/120m
+- strategy_response: opened/filtered/rejected/no_signal
+- profitable_after_fee: bool
+
+**实验**：
+- [ ] `sentinel-score-bonus-shadow`：测试+5/+10/+15加分，仅限有正向收益证据的哨兵类型
+
+**约束**：
+- 无正向前向收益+足够样本 → 不上线哨兵加分
+- 哨兵覆盖度审计：统计过去30天涨幅>20%的币种，检查多少在扫描范围内
+
+**验收**：
+- 命令中心显示哪些大行情被错失及原因：未扫描/扫描无信号/策略拒绝/风控拒绝/执行拒绝
+
+---
+
+### Phase 7 - 恢复仓管理
+
+**目标**：分离和管理恢复仓，不与策略alpha混淆。
+
+**运行位置**：阿里云
+
+**实现**：
+- [ ] 在 `strategy_truth_ledger.py` 中添加恢复仓标签
+- [ ] 新增恢复仓独立审查：
+  - 持仓年龄、当前PnL、接管后MFE/MAE
+  - 平仓原因、策略是否会开同样仓位
+
+**候选退出策略（shadow测试）**：
+- [ ] 时间退出：4h/8h/24h
+- [ ] 接管后浮动止损
+- [ ] 仅在原策略给出反向信号时平仓
+- [ ] 当前实盘退出规则（基线）
+
+**约束**：
+- 恢复仓永不计入主动策略alpha
+- 无shadow证据不部署自动退出规则（朴素时间退出可能截断大赢家）
+
+---
+
+### Phase 8 - 晋级门禁硬化
+
+**目标**：让策略进化门禁严格到可用于真实决策。
+
+**运行位置**：阿里云
+
+**实现**：
+- [ ] 扩展 `strategy_evolution_gate.py`：
+  - 按策略和变更类型的最小样本检查
+  - 3/7/14/30天窗口一致性
+  - 手续费/滑点调整
+  - 行情状态分层：趋势日/震荡日/高波动日/低流动性尾部币
+  - 当前账户风险检查
+  - 回滚触发定义
+
+**晋级规则**：
+- P0：强多窗口证据 + 足够样本 + 风险可接受 + 明确回滚规则 + 仍需人工审批
+- P1：有前景，等待决策者审阅
+- P2：仅观察或小仓
+- P3：仅研究
+- Reject：不晋级，除非重做
+
+**回滚触发条件**：
+- [ ] 新版本上线24h内 `OPEN_FAILED > 5` → 自动回滚
+- [ ] 新版本上线7天内 PF < 旧版本 PF × 0.8 → 人工审核
+- [ ] 新版本硬顶触发率 > 旧版本 × 1.5 → 暂停+人工审核
+- [ ] 账户7天总亏损 > 200 USDT → 暂停所有策略改动
+
+**约束**：
+- 确认类shadow输出无真实/纸面PnL → 不可达P0/P1
+- 每个P0/P1项必须包含：改了什么、为什么更好、什么会出错、如何回滚
+
+---
+
+### Phase 9 - 实盘过渡验证（新增）
+
+**目标**：Testnet验证的策略需要在实盘环境验证后才能全面推广。
+
+**前提**：Phase 1-8 产出的最优策略配置。
+
+**实现**：
+- [ ] 实盘小仓（如50 USDT/笔）运行7天
+- [ ] 记录Testnet vs 实盘差异：
+  - 滑点差异（实盘小币可能0.1-0.3%）
+  - 成交率差异
+  - PF衰减系数
+  - API延迟差异
+- [ ] 如果实盘PF < Testnet PF × 0.7，暂停并分析原因
+
+**约束**：
+- 实盘API调用weight会增加（更多确认查询），需提前计算预算
+- 实盘切换需要额外的环境配置（API key、IP白名单等）
+
+---
+
+## 执行顺序
+
+```
+Phase 0   安全基线                    ← 立即
+Phase 0.5 双服务器架构迁移            ← 立即（基础设施）
+Phase 1   策略真相台账                ← 0.5完成后
+Phase 2   命令中心升级                ← 1完成后
+Phase 6   哨兵贡献评估                ← 1完成后（与2并行）
+Phase 3   A/v11 证据计划              ← 2完成后
+Phase 4   B/v16 盈亏比优化            ← 2完成后（与3并行）
+Phase 5   C/v14 重建/退役             ← 2完成后（与3/4并行）
+Phase 7   恢复仓管理                  ← 1完成后（与3/4/5并行）
+Phase 8   晋级门禁硬化                ← 3/4/5完成后
+Phase 9   实盘过渡验证                ← 8完成后
+```
+
+---
+
+## 停止条件
+
+- 实盘 `OPEN_FAILED` 在Binance预检硬化后重现 → 暂停策略改动，按Binance错误码诊断
+- 账户硬顶风险或尺寸违规重现 → 暂停实盘扩展
+- SQLite事件新鲜度或账户快照新鲜度失败 → 不从过期报告做当前状态判断
+- 实验样本 < 30 → 不升至P2以上
+- 腾讯云可用内存 < 500MB 或可用磁盘 < 15GB → 触发紧急归档，暂停新功能
+- Binance API weight使用率 > 50% → 暂停新增API调用功能
+
+---
+
+## 关键文件清单
+
+### 需要修改的现有文件
+- `部署工具/shadow_sync_from_tencent.py` — 扩展同步内容
+- `部署工具/deploy_shadow_aliyun.py` — 新增分析Timer部署
+- `部署工具/portal_dashboard.py` — 读取真相台账
+- `部署工具/strategy_evolution_gate.py` — 硬化晋级规则
+- `PROJECT_STATE.md` — 更新架构描述
+- `记忆文档/FUTURE_EXECUTION_PLAN.md` — 更新为本计划
+- `记忆文档/MEMORY.md` — 记录架构迁移决策
+- `CHANGELOG.md` — 记录所有变更
+
+### 需要新增的文件
+- `部署工具/strategy_truth_ledger.py` — Phase 1
+- `部署工具/sentinel_quality_review.py` — Phase 6
+- `部署工具/sync_aliyun_reports_to_tencent.py` — Phase 0.5
+- `部署工具/aliyun_analysis_pipeline.sh` — 阿里云分析流水线
+
+---
+
+## 验证清单
+
+每个Phase完成后：
+1. `py_compile` 通过
+2. `git_change_guard.py` 通过
+3. 阿里云Timer执行成功
+4. 反向同步成功
+5. 命令中心正确显示新内容
+6. 腾讯云服务保持active
+7. 内存/存储/API weight在安全线内

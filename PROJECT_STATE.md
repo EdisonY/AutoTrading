@@ -17,6 +17,7 @@ This file is the long-lived project memory for multi-location development. Daily
 - `B/v16`: CVD/OFI order-flow strategy. Small-stage guard was temporarily removed per user instruction; latest server event check on 2026-05-26 showed active scanning and new opens today, not a two-day stall.
 - `C/v14`: four-factor scoring strategy with same-symbol no-stacking protection. Signal reporting now distinguishes raw analysis candidates from real 1h entry candidates; no entry loosen was made in that observability fix.
 - Sentinel: market mover detector feeds unusual movers into strategies; strategy scans now record which layer opened, filtered, rejected, or had no signal.
+- Shared execution layer: A/B/C use `core/binance_order_rules.py` and `core/execution_engine.py` for Binance exchange-rule preflight, MARKET_LOT_SIZE/minNotional/maxQty rounding, TradFi-Perps blocking, percent-price checks, and `-1007` status-unknown position confirmation. Deterministic preflight rejections should be logged as `OPEN_SKIPPED`, not `OPEN_FAILED`.
 
 ## Done
 
@@ -62,6 +63,7 @@ This file is the long-lived project memory for multi-location development. Daily
 - User acknowledgement workflow is script-driven through `部署工具/acknowledge_attention_items.py`; a portal button/UI for acknowledgements is still not implemented.
 - Strategy evolution still needs stronger promotion rigor before auto-upgrade: walk-forward windows, paper fill simulation, fee/slippage modeling, regime segmentation, and post-change rollback rules.
 - After the 2026-05-27 decommission, do not recreate Polymarket code, reports, service units, or command-center cards unless the user explicitly reopens that project.
+- After the 2026-05-27 order-failure hardening, monitor fresh `OPEN_FAILED` events by exact Binance code. Rule-driven rejections should appear as `OPEN_SKIPPED/execution_preflight`; any remaining `OPEN_FAILED` means a real API/exchange/account condition still needs diagnosis.
 - GitHub CI is not configured yet.
 - The Git change ledger is enforced locally by `git_change_guard.py`; remote CI enforcement is not configured yet.
 - Deployment tooling exists, but production deploys still require explicit operator judgement; secrets and server-side environment files remain outside Git.

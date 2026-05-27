@@ -1850,10 +1850,21 @@ class Scanner:
         qty = self.execution.calc_quantity(inst_id, price, risk_usdt, self.leverage)
         if qty <= 0:
             logger.warning(f"  ⚠️ [{tf}] {inst_id} 计算数量为0，跳过")
+            preflight = {}
+            if hasattr(self.client, "validate_order_quantity"):
+                raw_qty = (risk_usdt * self.leverage / price) if price else 0.0
+                preflight = self.client.validate_order_quantity(inst_id, raw_qty, price, risk_usdt, self.leverage)
             log_event({
-                "time": now_str, "event": "OPEN_FAILED", "symbol": inst_id,
-                "side": side, "reason": "qty=0", "timeframe": tf,
-                "decision_stage": "execution",
+                "time": now_str, "event": "OPEN_SKIPPED", "symbol": inst_id,
+                "side": side, "skip_reason": preflight.get("reason") or "qty=0",
+                "reason": preflight.get("reason") or "qty=0",
+                "code": preflight.get("code") or "qty=0",
+                "score": abs_score,
+                "risk_usdt": risk_usdt,
+                "preflight": preflight,
+                "timeframe": tf,
+                "risk_category": "execution_preflight",
+                "decision_stage": "execution_preflight",
                 "filter_layer": "execution",
                 **sentinel_fields(inst_id),
             })
@@ -1871,10 +1882,33 @@ class Scanner:
             confirm_position=False,
         ))
         if not exec_result.success:
+            if exec_result.preflight_rejected:
+                logger.info(f"  [{tf}] {inst_id} 执行预检跳过: {exec_result.reason}")
+                log_event({
+                    "time": now_str, "event": "OPEN_SKIPPED", "symbol": inst_id,
+                    "side": side, "skip_reason": exec_result.reason,
+                    "reason": exec_result.reason,
+                    "code": exec_result.code,
+                    "msg": exec_result.message,
+                    "score": abs_score,
+                    "risk_usdt": risk_usdt,
+                    "preflight": exec_result.preflight_detail,
+                    "timeframe": tf,
+                    "risk_category": "execution_preflight",
+                    "decision_stage": "execution_preflight",
+                    "filter_layer": "execution",
+                    **sentinel_fields(inst_id),
+                })
+                return
             logger.error(f"  ❌ [{tf}] {inst_id} 开仓失败: {exec_result.reason}")
             log_event({
                 "time": now_str, "event": "OPEN_FAILED", "symbol": inst_id,
-                "side": side, "reason": exec_result.reason, "timeframe": tf,
+                "side": side, "reason": exec_result.reason,
+                "code": exec_result.code,
+                "msg": exec_result.message,
+                "score": abs_score,
+                "risk_usdt": risk_usdt,
+                "timeframe": tf,
                 "decision_stage": "execution",
                 "filter_layer": "execution",
                 **sentinel_fields(inst_id),

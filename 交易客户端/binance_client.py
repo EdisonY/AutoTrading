@@ -15,6 +15,16 @@ import logging
 import os
 from typing import Optional
 
+from core.binance_order_rules import (
+    SymbolRules,
+    build_client_order_id,
+    format_decimal,
+    is_tradfi_perp_symbol,
+    rules_from_symbol,
+    validate_market_price,
+    validate_open_quantity,
+)
+
 logger = logging.getLogger("binance_client")
 
 # ═══════════════════════════════════════════════════════════════
@@ -157,12 +167,17 @@ def get_markets() -> dict:
                 step_size = 1.0
                 min_qty = 0.0
                 max_qty = 0.0
+                min_notional = 0.0
+                tick_size = 0.0
                 for f in s.get("filters", []):
                     if f.get("filterType") == "LOT_SIZE":
                         step_size = float(f.get("stepSize", 1.0))
                         min_qty = float(f.get("minQty", 0.0))
                         max_qty = float(f.get("maxQty", 0.0))
-                        break
+                    elif f.get("filterType") == "PRICE_FILTER":
+                        tick_size = float(f.get("tickSize", 0.0))
+                    elif f.get("filterType") in {"MIN_NOTIONAL", "NOTIONAL"}:
+                        min_notional = float(f.get("notional") or f.get("minNotional") or 0.0)
 
                 markets[symbol] = {
                     "symbol": symbol,
@@ -173,8 +188,11 @@ def get_markets() -> dict:
                     "qtyPrecision": s.get("quantityPrecision", 8),
                     "minQty": min_qty,
                     "maxQty": max_qty,
-                    "tickSize": float(s.get("tickSize", 0)),
+                    "tickSize": tick_size,
                     "stepSize": step_size,
+                    "minNotional": min_notional,
+                    "status": s.get("status", ""),
+                    "contractType": s.get("contractType", ""),
                     "active": True,
                     "info": s,
                 }
@@ -288,27 +306,67 @@ class BinanceClient:
         注意：get_ct_val 返回的是 stepSize 而非真正的合约面值，
         不要在这里使用 ctVal，否则会导致数量计算错误（如把0.1的stepSize当乘数）。
         """
-        market = self._markets.get(symbol, {})
-        step = float(market.get("stepSize", 1))
-        min_qty = float(market.get("minQty", 0))
+        raw_qty = (usdt_amount * leverage) / price
+        check = self.validate_order_quantity(symbol, raw_qty, price, usdt_amount, leverage)
+        return check["quantity"] if check["ok"] else 0.0
 
-        # 基础币数量 = USDT × 杠杆 / 当前价格
-        qty = (usdt_amount * leverage) / price
+    def get_symbol_rules(self, symbol: str) -> SymbolRules | None:
+        market = self._markets.get(symbol)
+        if not market:
+            global _markets_cache
+            _markets_cache = None
+            self._markets = get_markets()
+            market = self._markets.get(symbol)
+        if not market:
+            return None
+        return rules_from_symbol(market.get("info") or {
+            "symbol": symbol,
+            "status": market.get("status") or "TRADING",
+            "contractType": market.get("contractType") or "PERPETUAL",
+            "baseAsset": market.get("base") or "",
+            "quantityPrecision": market.get("qtyPrecision", 8),
+            "pricePrecision": market.get("pricePrecision", 8),
+            "filters": [
+                {
+                    "filterType": "LOT_SIZE",
+                    "stepSize": market.get("stepSize", 1),
+                    "minQty": market.get("minQty", 0),
+                    "maxQty": market.get("maxQty", 0),
+                },
+                {
+                    "filterType": "PRICE_FILTER",
+                    "tickSize": market.get("tickSize", 0),
+                },
+                {
+                    "filterType": "MIN_NOTIONAL",
+                    "notional": market.get("minNotional", 0),
+                },
+            ],
+        })
 
-        # 向下取整到 stepSize 的整数倍
-        if step and step > 0:
-            qty = float(int(qty / step) * step)
+    def validate_order_quantity(self, symbol: str, quantity: float, price: float, risk_usdt: float, leverage: int) -> dict:
+        check = validate_open_quantity(self.get_symbol_rules(symbol), quantity, price, risk_usdt, leverage)
+        return {
+            "ok": check.ok,
+            "quantity": check.quantity,
+            "reason": check.reason,
+            "code": check.code,
+            "notional": check.notional,
+            "min_notional": check.min_notional,
+            "max_qty": check.max_qty,
+            "min_qty": check.min_qty,
+            "step_size": check.step_size,
+        }
 
-        # 确保不小于最小下单量
-        if min_qty > 0:
-            qty = max(min_qty, qty)
+    def validate_market_order_price(self, symbol: str, side: str) -> dict:
+        check = validate_market_price(BASE_URL, self.get_symbol_rules(symbol), symbol, side)
+        return {"ok": check.ok, "reason": check.reason, "code": check.code, "counterparty_price": check.notional}
 
-        # 保留合理精度（去掉浮点误差）
-        if step > 0:
-            precision = max(0, -int(f"{step:e}".split('e')[1])) if 'e' in f"{step:e}" else 0
-            qty = round(qty, precision)
-
-        return qty
+    def format_quantity(self, symbol: str, quantity: float) -> str:
+        rules = self.get_symbol_rules(symbol)
+        step = (rules.market_step_size or rules.step_size) if rules else 1.0
+        precision = rules.quantity_precision if rules else 8
+        return format_decimal(quantity, step, precision)
 
     def is_tradable(self, symbol: str) -> dict:
         """检查合约是否可交易"""
@@ -322,6 +380,9 @@ class BinanceClient:
 
         if not market:
             return {"tradable": False, "reason": "合约不存在"}
+
+        if is_tradfi_perp_symbol(symbol, market.get("base", "")):
+            return {"tradable": False, "reason": "TradFi-Perps agreement symbol blocked"}
 
         if not market.get("active"):
             return {"tradable": False, "reason": "合约已下线"}
@@ -350,7 +411,8 @@ class BinanceClient:
                 "symbol": symbol,
                 "side": side.upper(),
                 "type": "MARKET",
-                "quantity": str(sz),
+                "quantity": self.format_quantity(symbol, sz),
+                "newOrderRespType": "FULL",
             }
             # 双向持仓模式需传 positionSide
             if pos_side:
@@ -363,7 +425,7 @@ class BinanceClient:
 
             if str(main_data.get("code", "")) not in ("200", "0", ""):
                 logger.error(f"主下单失败: {main_data}")
-                return {"code": "-1", "msg": str(main_data)}
+                return main_data
 
             main_ord_id = main_data.get("orderId", "?")
             logger.info(f"主单成功: orderId={main_ord_id}")
@@ -393,7 +455,7 @@ class BinanceClient:
             tp=tp,
             sl=sl,
             pos_side="long",
-            cl_ord_id=f"olong_{symbol}_{int(time.time())}"
+            cl_ord_id=build_client_order_id("olong", symbol, "long")
         )
         self.invalidate_account_snapshot()
         return result
@@ -415,7 +477,7 @@ class BinanceClient:
             tp=tp,
             sl=sl,
             pos_side="short",
-            cl_ord_id=f"oshort_{symbol}_{int(time.time())}"
+            cl_ord_id=build_client_order_id("oshort", symbol, "short")
         )
         self.invalidate_account_snapshot()
         return result

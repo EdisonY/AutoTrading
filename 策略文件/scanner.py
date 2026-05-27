@@ -1956,9 +1956,14 @@ class Scanner:
             exchange_qty = self.execution.calc_quantity(inst_id, price, risk_usdt, self.leverage)
             expected_notional_usdt = exchange_qty * price
             expected_margin_usdt = expected_notional_usdt / self.leverage
+            min_notional_floor = 0.0
+            if hasattr(self.client, "get_symbol_rules"):
+                rules = self.client.get_symbol_rules(inst_id)
+                min_notional_floor = float(getattr(rules, "min_notional", 0.0) or 0.0) if rules else 0.0
             min_margin_usdt = risk_usdt * (1 - ORDER_MARGIN_TOLERANCE_PCT)
             max_margin_usdt = risk_usdt * (1 + ORDER_MARGIN_TOLERANCE_PCT)
-            if not min_margin_usdt <= expected_margin_usdt <= max_margin_usdt:
+            min_notional_adjustment = min_notional_floor > risk_usdt * self.leverage and expected_notional_usdt <= min_notional_floor * 1.02
+            if not min_notional_adjustment and not min_margin_usdt <= expected_margin_usdt <= max_margin_usdt:
                 logger.warning(
                     f"  ⚠️ {inst_id}({tf}) 保证金校验失败: qty={exchange_qty:g}, "
                     f"预计保证金={expected_margin_usdt:.2f} USDT, 目标={risk_usdt:.2f} USDT"
@@ -1974,6 +1979,7 @@ class Scanner:
                     "target_margin_usdt": risk_usdt,
                     "expected_margin_usdt": round(expected_margin_usdt, 4),
                     "expected_notional_usdt": round(expected_notional_usdt, 4),
+                    "min_notional_usdt": round(min_notional_floor, 4),
                     "quantity": exchange_qty,
                     "margin_tolerance_pct": ORDER_MARGIN_TOLERANCE_PCT * 100,
                     **sentinel_fields(inst_id),
@@ -2055,6 +2061,35 @@ class Scanner:
                 exchange_success = True
                 order_id = exec_result.order_id
                 logger.info(f"  下单成功: orderId={order_id} qty={exchange_qty}")
+            elif exec_result.preflight_rejected:
+                err_code = exec_result.code or "preflight_rejected"
+                err_msg = exec_result.message or exec_result.reason
+                logger.info(f"  执行预检跳过: code={err_code} msg={err_msg}")
+                event = {
+                    "time": now_str, "event": "OPEN_SKIPPED", "symbol": inst_id,
+                    "side": side, "price": price, "sl": sl, "tp": tp,
+                    "score": net_score, "reasons": reasons,
+                    "atr": sig["atr"], "leverage": self.leverage,
+                    "divergence": sig["divergence_primary"]["description"],
+                    "st_dir": "多" if sig["st_direction"] == 1 else "空",
+                    "st_flip": sig["st_flipped"],
+                    "timeframe": tf,
+                    "resonance": resonance,
+                    "err_code": err_code,
+                    "err_msg": err_msg,
+                    "skip_reason": f"执行预检拒绝({err_code}): {err_msg[:80]}",
+                    "reason": f"执行预检拒绝({err_code}): {err_msg[:80]}",
+                    "preflight": exec_result.preflight_detail,
+                    "risk_category": "execution_preflight",
+                    "decision_stage": "execution_preflight",
+                    "filter_layer": "execution",
+                    **sentinel_fields(inst_id),
+                }
+                log_event(event)
+                now_dt = datetime.now(CST)
+                self.cooldowns[tf][inst_id] = now_dt + timedelta(minutes=5)
+                logger.info(f"  ⏳ {inst_id}({tf}) 预检跳过，冷却5分钟")
+                return
             elif exec_result.code == "-1001":
                 # 字典式错误响应（如 Binance Testnet）
                 err_code = exec_result.code or "?"
@@ -2171,6 +2206,7 @@ class Scanner:
             "target_margin_usdt": risk_usdt,
             "expected_margin_usdt": round(exchange_qty * price / self.leverage, 4),
             "expected_notional_usdt": round(exchange_qty * price, 4),
+            "min_notional_adjusted": min_notional_adjustment,
             "exchange_success": exchange_success,
             "decision_stage": "open",
             "filter_layer": "execution",

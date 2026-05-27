@@ -16,6 +16,17 @@ import logging
 import os
 from typing import Optional
 
+from core.binance_order_rules import (
+    SymbolRules,
+    build_client_order_id,
+    format_decimal,
+    is_tradfi_perp_symbol,
+    parse_symbols,
+    rules_from_symbol,
+    validate_market_price,
+    validate_open_quantity,
+)
+
 logger = logging.getLogger("binance_client_v2")
 
 # ═══════════════════════════════════════════════════════════════
@@ -113,6 +124,13 @@ def _get_step_size(symbol: str) -> tuple:
     _symbol_precision_cache[symbol] = (step, min_qty, tick, time.time())
     return step, min_qty
 
+def _get_symbol_rules(symbol: str) -> SymbolRules | None:
+    info = _get_exchange_info_cached()
+    for s in parse_symbols(info):
+        if s.get("symbol") == symbol:
+            return rules_from_symbol(s)
+    return None
+
 def _get_tick_size(symbol: str) -> float:
     """获取指定币种的tickSize（价格精度）。先查缓存，没有则填充"""
     if symbol in _symbol_precision_cache:
@@ -125,11 +143,7 @@ def _get_tick_size(symbol: str) -> float:
 
 def _format_quantity(qty: float, step: float) -> str:
     """将数量格式化为符合stepSize的字符串，去掉多余小数"""
-    if step >= 1:
-        return str(int(round(qty / step) * step))
-    decimals = max(0, -int(round(__import__('math').log10(step))))
-    formatted = f"{qty:.{decimals}f}"
-    return formatted.rstrip('0').rstrip('.')
+    return format_decimal(qty, step, 8)
 
 def _format_price(price: float, symbol: str) -> str:
     """将价格格式化为符合tickSize的字符串"""
@@ -259,40 +273,69 @@ class BinanceClientV2:
         if price <= 0:
             return 0
         try:
-            step, min_qty = _get_step_size(symbol)
-            qty = (usdt * leverage) / price
-            qty = round(int(qty / step) * step, 10)
-            if qty < min_qty:
-                logger.warning(f"calc_size: {symbol} qty={qty} < minQty={min_qty}，返回0")
+            raw_qty = (usdt * leverage) / price
+            check = self.validate_order_quantity(symbol, raw_qty, price, usdt, leverage)
+            if not check["ok"]:
+                logger.warning(f"calc_size: {symbol} {check['code']} {check['reason']}")
                 return 0
-            logger.debug(f"calc_size: {symbol} price={price} usdt={usdt} lev={leverage} -> qty={qty} (step={step})")
-            return qty
+            logger.debug(f"calc_size: {symbol} price={price} usdt={usdt} lev={leverage} -> qty={check['quantity']}")
+            return check["quantity"]
         except Exception as e:
             logger.debug(f"calc_size失败: {e}")
             qty_fb = (usdt * leverage) / price
             return qty_fb
 
+    def get_symbol_rules(self, symbol: str) -> SymbolRules | None:
+        return _get_symbol_rules(symbol)
+
+    def validate_order_quantity(self, symbol: str, quantity: float, price: float, risk_usdt: float, leverage: int) -> dict:
+        check = validate_open_quantity(self.get_symbol_rules(symbol), quantity, price, risk_usdt, leverage)
+        return {
+            "ok": check.ok,
+            "quantity": check.quantity,
+            "reason": check.reason,
+            "code": check.code,
+            "notional": check.notional,
+            "min_notional": check.min_notional,
+            "max_qty": check.max_qty,
+            "min_qty": check.min_qty,
+            "step_size": check.step_size,
+        }
+
+    def validate_market_order_price(self, symbol: str, side: str) -> dict:
+        check = validate_market_price(BASE_URL, self.get_symbol_rules(symbol), symbol, side)
+        return {"ok": check.ok, "reason": check.reason, "code": check.code, "counterparty_price": check.notional}
+
+    def format_quantity(self, symbol: str, quantity: float) -> str:
+        rules = self.get_symbol_rules(symbol)
+        step = (rules.market_step_size or rules.step_size) if rules else 1.0
+        return format_decimal(quantity, step, rules.quantity_precision if rules else 8)
+
     def open_long(self, symbol: str, quantity: float, leverage: int, tp: float, sl: float) -> dict:
+        self.set_leverage(symbol, leverage)
         params = {
             "symbol": symbol,
             "side": "BUY",
             "positionSide": "LONG",
             "type": "MARKET",
-            "quantity": _format_quantity(quantity, _get_step_size(symbol)[0]),
+            "quantity": self.format_quantity(symbol, quantity),
             "newOrderRespType": "FULL",
+            "newClientOrderId": build_client_order_id("bopen", symbol, "long"),
         }
         result = _request("POST", "/fapi/v1/order", params)
         self.invalidate_account_snapshot()
         return result
 
     def open_short(self, symbol: str, quantity: float, leverage: int, tp: float, sl: float) -> dict:
+        self.set_leverage(symbol, leverage)
         params = {
             "symbol": symbol,
             "side": "SELL",
             "positionSide": "SHORT",
             "type": "MARKET",
-            "quantity": _format_quantity(quantity, _get_step_size(symbol)[0]),
+            "quantity": self.format_quantity(symbol, quantity),
             "newOrderRespType": "FULL",
+            "newClientOrderId": build_client_order_id("bopen", symbol, "short"),
         }
         result = _request("POST", "/fapi/v1/order", params)
         self.invalidate_account_snapshot()
@@ -376,6 +419,8 @@ class BinanceClientV2:
                 if s.get("symbol") == symbol:
                     status = s.get("status", "")
                     contract = s.get("contractType", "")
+                    if is_tradfi_perp_symbol(symbol, s.get("baseAsset", "")):
+                        return {"tradable": False, "reason": "TradFi-Perps agreement symbol blocked"}
                     if status == "TRADING" and contract == "PERPETUAL":
                         return {"tradable": True, "reason": ""}
                     return {"tradable": False, "reason": f"status={status}, contract={contract}"}

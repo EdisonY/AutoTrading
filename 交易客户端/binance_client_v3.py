@@ -16,6 +16,17 @@ import logging
 import os
 from typing import Optional
 
+from core.binance_order_rules import (
+    SymbolRules,
+    build_client_order_id,
+    format_decimal,
+    is_tradfi_perp_symbol,
+    parse_symbols,
+    rules_from_symbol,
+    validate_market_price,
+    validate_open_quantity,
+)
+
 logger = logging.getLogger("binance_client_v3")
 
 # ═══════════════════════════════════════════════════════════════
@@ -24,6 +35,8 @@ logger = logging.getLogger("binance_client_v3")
 API_KEY = os.environ.get("BINANCE_C_API_KEY", "")
 API_SECRET = os.environ.get("BINANCE_C_API_SECRET", "")
 BASE_URL = "https://testnet.binancefuture.com"
+_exchange_info_cache = None
+_exchange_info_cache_time = 0.0
 
 
 def _sign(params: dict) -> str:
@@ -66,6 +79,25 @@ def _request(method: str, path: str, params: dict = None) -> dict:
     except Exception as e:
         logger.error(f"请求异常: {e}")
         return {"code": "-1", "msg": str(e)}
+
+
+def _get_exchange_info_cached() -> dict:
+    global _exchange_info_cache, _exchange_info_cache_time
+    now = time.time()
+    if _exchange_info_cache is not None and (now - _exchange_info_cache_time) < 60:
+        return _exchange_info_cache
+    info = _request("GET", "/fapi/v1/exchangeInfo")
+    _exchange_info_cache = info
+    _exchange_info_cache_time = now
+    return info
+
+
+def _get_symbol_rules(symbol: str) -> SymbolRules | None:
+    info = _get_exchange_info_cached()
+    for s in parse_symbols(info):
+        if s.get("symbol") == symbol:
+            return rules_from_symbol(s)
+    return None
 
 
 class BinanceClientV3:
@@ -137,22 +169,13 @@ class BinanceClientV3:
     def calc_size(self, symbol: str, price: float, usdt: float, leverage: int) -> float:
         """计算合约数量。公式：qty = (usdt * leverage) / price，按 stepSize 向下取整。"""
         try:
-            info = _request("GET", "/fapi/v1/exchangeInfo")
-            for s in info.get("data", info.get("symbols", [])):
-                if s.get("symbol") == symbol:
-                    for f in s.get("filters", []):
-                        if f["filterType"] == "LOT_SIZE":
-                            step = float(f["stepSize"])
-                            min_qty = float(f["minQty"])
-                            qty = (usdt * leverage) / price
-                            qty = int(qty / step) * step
-                            qty = round(qty, 10)
-                            if qty < min_qty:
-                                logger.warning(f"calc_size: {symbol} qty={qty} < minQty={min_qty}，返回0")
-                                return 0
-                            logger.debug(f"calc_size: {symbol} price={price} usdt={usdt} lev={leverage} → qty={qty}")
-                            return qty
-                    break
+            raw_qty = (usdt * leverage) / price
+            check = self.validate_order_quantity(symbol, raw_qty, price, usdt, leverage)
+            if not check["ok"]:
+                logger.warning(f"calc_size: {symbol} {check['code']} {check['reason']}")
+                return 0
+            logger.debug(f"calc_size: {symbol} price={price} usdt={usdt} lev={leverage} -> qty={check['quantity']}")
+            return check["quantity"]
         except Exception as e:
             logger.debug(f"calc_size获取合约信息失败: {e}")
 
@@ -160,15 +183,43 @@ class BinanceClientV3:
         logger.debug(f"calc_size fallback: {symbol} → qty={qty_fb:.4f}")
         return qty_fb
 
+    def get_symbol_rules(self, symbol: str) -> SymbolRules | None:
+        return _get_symbol_rules(symbol)
+
+    def validate_order_quantity(self, symbol: str, quantity: float, price: float, risk_usdt: float, leverage: int) -> dict:
+        check = validate_open_quantity(self.get_symbol_rules(symbol), quantity, price, risk_usdt, leverage)
+        return {
+            "ok": check.ok,
+            "quantity": check.quantity,
+            "reason": check.reason,
+            "code": check.code,
+            "notional": check.notional,
+            "min_notional": check.min_notional,
+            "max_qty": check.max_qty,
+            "min_qty": check.min_qty,
+            "step_size": check.step_size,
+        }
+
+    def validate_market_order_price(self, symbol: str, side: str) -> dict:
+        check = validate_market_price(BASE_URL, self.get_symbol_rules(symbol), symbol, side)
+        return {"ok": check.ok, "reason": check.reason, "code": check.code, "counterparty_price": check.notional}
+
+    def format_quantity(self, symbol: str, quantity: float) -> str:
+        rules = self.get_symbol_rules(symbol)
+        step = (rules.market_step_size or rules.step_size) if rules else 1.0
+        return format_decimal(quantity, step, rules.quantity_precision if rules else 8)
+
     def open_long(self, symbol: str, quantity: float, leverage: int, tp: float, sl: float) -> dict:
         """开多单（市价入场）"""
+        self.set_leverage(symbol, leverage)
         params = {
             "symbol": symbol,
             "side": "BUY",
             "positionSide": "LONG",
             "type": "MARKET",
-            "quantity": f"{quantity:.8f}".rstrip('0').rstrip('.') if isinstance(quantity, float) else quantity,
+            "quantity": self.format_quantity(symbol, quantity),
             "newOrderRespType": "FULL",
+            "newClientOrderId": build_client_order_id("copen", symbol, "long"),
         }
         result = _request("POST", "/fapi/v1/order", params)
         self.invalidate_account_snapshot()
@@ -176,13 +227,15 @@ class BinanceClientV3:
 
     def open_short(self, symbol: str, quantity: float, leverage: int, tp: float, sl: float) -> dict:
         """开空单（市价入场）"""
+        self.set_leverage(symbol, leverage)
         params = {
             "symbol": symbol,
             "side": "SELL",
             "positionSide": "SHORT",
             "type": "MARKET",
-            "quantity": f"{quantity:.8f}".rstrip('0').rstrip('.') if isinstance(quantity, float) else quantity,
+            "quantity": self.format_quantity(symbol, quantity),
             "newOrderRespType": "FULL",
+            "newClientOrderId": build_client_order_id("copen", symbol, "short"),
         }
         result = _request("POST", "/fapi/v1/order", params)
         self.invalidate_account_snapshot()
@@ -234,6 +287,8 @@ class BinanceClientV3:
                 if s.get("symbol") == symbol:
                     status = s.get("status", "")
                     contract = s.get("contractType", "")
+                    if is_tradfi_perp_symbol(symbol, s.get("baseAsset", "")):
+                        return {"tradable": False, "reason": "TradFi-Perps agreement symbol blocked"}
                     if status == "TRADING" and contract == "PERPETUAL":
                         return {"tradable": True, "reason": ""}
                     return {"tradable": False, "reason": f"status={status}, contract={contract}"}

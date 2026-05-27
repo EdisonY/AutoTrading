@@ -1061,6 +1061,26 @@ class ScannerV16:
             r = exec_result.raw if isinstance(exec_result.raw, dict) else {}
 
             if not exec_result.success:
+                if exec_result.preflight_rejected:
+                    detail = exec_result.preflight_detail
+                    logger.info(f"  执行预检跳过: {sym} {exec_result.reason}")
+                    log_event({
+                        "time": str(datetime.now(CST)), "event": "OPEN_SKIPPED", "symbol": sym,
+                        "side": side, "price": price, "score": score, "timeframe": tf,
+                        "skip_reason": exec_result.reason,
+                        "reason": exec_result.reason,
+                        "code": exec_result.code,
+                        "msg": exec_result.message,
+                        "preflight": detail,
+                        "risk_category": "execution_preflight",
+                        "decision_stage": "execution_preflight",
+                        "filter_layer": "execution",
+                        "trade_size_usdt": TRADE_SIZE,
+                        "small_live_stage_guard": STAGE_GUARD_SMALL_LIVE_ENABLED,
+                        **sentinel_fields(sym),
+                    })
+                    self.cooldowns[tf][sym] = max(self.cooldowns[tf].get(sym, 0), 5)
+                    return False
                 logger.warning(f"  开仓失败: {exec_result.reason}")
                 log_event({
                     "time": str(datetime.now(CST)), "event": "OPEN_FAILED", "symbol": sym,

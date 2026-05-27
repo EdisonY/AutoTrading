@@ -439,3 +439,10 @@
 - 总入口策略决策表列名从“信号”改为“入场候选”；对 C/v14 历史 SQLite 数据按 `1h + 实际阈值 + score<=80` 重算候选数，并显示原始候选数，避免继续误判。
 - `config/v14.toml` 已从旧的错误/过时门槛同步到实际代码门槛：`confirm_min_score=35`、`score_min=25`、`score_threshold_1h=55`、`score_threshold_15m=65`。本次不放宽 C/v14 实盘开仓规则。
 - 2026-05-26 22:08 CST 用户重启 SSH 后已完成腾讯部署：`crypto-scanner-v14.service`、`crypto-portal-refresh.service`、`crypto-system-alerts.service` 均 active/running。入口页已显示 C/v14 `入场候选 148 / 原始 84524`，证明旧信号数主要是原始候选和 15m 确认口径放大。后续应观察新漏斗，而不是只看旧“信号”总数。
+
+## 2026-05-27 下单失败全面修复第一版
+- 用户要求对近期下单失败做全面修复，不再长时间卡住。腾讯 SQLite 近 48 小时排查显示失败主要来自交易所规则/账户约束：A/v11 的 `-4164 notional_too_small`、`-4005 quantity_over_max`、`-4411 TradFi-Perps agreement required`，B/v16 的 DYM `-4005`、部分币 `-2027 max_position_or_leverage`、FIO `-4131 percent_price_filter`，C/v14 的 `PARTIUSDT -1007 status unknown`。
+- 已形成统一口径：能在本地用 exchangeInfo/盘口/标记价格提前判断的拒单，属于执行预检拦截，必须记为 `OPEN_SKIPPED` 与 `decision_stage=execution_preflight`；只有真实打到交易所仍失败、或无法确认成交状态，才保留 `OPEN_FAILED`。
+- 新增 `core/binance_order_rules.py`：集中解析 Binance USDM `exchangeInfo`，处理 MARKET_LOT_SIZE、minNotional、maxQty、TradFi-Perps 黑名单、percent-price 价格带、client order id 和数量格式。三账户客户端都接入该规则，减少 A/B/C 各自散落的数量计算错误。
+- `core/execution_engine.py` 增加统一预检和 `-1007/status unknown` 成交确认：遇到状态未知时刷新账户持仓并最多轮询 3 次；如果看到对应 symbol/方向已有仓位，按成功处理，避免“实际成交但日志失败”的假失败。单向持仓 `positionSide=BOTH` 也纳入确认。
+- 该修复不等于放宽策略开仓。它主要提升下单前合规性、日志归因准确性和超时成交确认；剩余真实失败仍要按 Binance code 单独复查。

@@ -23,6 +23,14 @@ This is the durable reason-and-outcome ledger for every material design, code, c
 - Files / release / commit:
 ```
 
+## 2026-05-27 18:50 CST - Phase 2 command-center strategy quality board
+- Trigger / reason: Execute Phase 2 of FUTURE_EXECUTION_PLAN.md — integrate truth ledger into portal dashboard so decision-makers see "who is really making money" on the first screen.
+- Completed: Extended `部署工具/portal_dashboard.py` with: (1) `strategy_truth_summary()` function reads `runtime/strategy_truth_latest.json`; (2) `build_data()` includes `strategy_truth` data; (3) `build_findings()` generates P1 alerts for negative-expectancy strategies (PF<1) and P2 notes for positive-expectancy strategies (PF>=2) and recovery positions; (4) HTML template includes new "策略质量看板" section showing per-strategy closed trades, win rate, net PnL, PF, payoff ratio, hard-stop count, recovery count, and recovery unrealized PnL. Uploaded to Aliyun.
+- Not completed / remaining: Phase 6 (sentinel quality review) not started. Portal generation on Aliyun needs verification after next timer run.
+- Verification: Local `py_compile` passed. Local portal generation succeeded. Generated HTML contains "策略质量看板" section with data from truth ledger (19 minutes old).
+- Live impact / deployment: No live strategy change. Portal dashboard updated on Aliyun; will be synced to Tencent via reverse sync.
+- Files / release / commit: `部署工具/portal_dashboard.py`, `CHANGELOG.md`; Git commit to contain this entry.
+
 ## 2026-05-27 18:30 CST - Phase 1 strategy truth ledger implementation
 - Trigger / reason: Execute Phase 1 of FUTURE_EXECUTION_PLAN.md — create authoritative truth table separating active strategy PnL from recovery positions.
 - Completed: Added `部署工具/strategy_truth_ledger.py`. Reads SQLite `event_store.sqlite3` OPEN/CLOSE/FORCED_CLOSE events and `account_snapshots`. Matches open-close pairs, identifies recovery positions (in snapshots but no matching OPEN event), computes per-strategy stats (win rate, PF, payoff ratio, hard-stop count, recovery count). Outputs `runtime/strategy_truth_latest.json` and `reports/strategy_truth_latest.md`. Uploaded to Aliyun and integrated into both analysis pipelines (daily full + 2-hour refresh).

@@ -9,6 +9,7 @@
 - 执行顺序：0→0.5→1→2→6→3/4/5→7→8→9。
 - Phase 0.5 已完成：腾讯精简为7服务+1timer，阿里云2个timer（每日全量+每2小时轻量），反向同步已上线。
 - Phase 1 已完成：`strategy_truth_ledger.py` 分离主动策略PnL与恢复仓PnL。本地测试结果：A/v11净亏PF=0.01，B/v16净赚PF=5.9，C/v14无数据。
+- Phase 2 已完成：`portal_dashboard.py` 新增"策略质量看板"，直接展示各策略主动PnL、恢复仓PnL、PF、胜率、盈亏比。
 
 ## 2026-05-27 Polymarket 下线 + 内存/C-v14 复核
 - 用户明确要求删除所有 Polymarket 相关文件代码并停掉相关服务。已停止/禁用/移除腾讯 `polymarket-monitor.service`，删除 `/opt/polymarket-lab`，并删除本地 `polymarket_lab` 代码与两套部署脚本。

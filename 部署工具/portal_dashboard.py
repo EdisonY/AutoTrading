@@ -35,6 +35,8 @@ STRATEGY_EVOLUTION_JSON = ROOT / "runtime" / "strategy_evolution_latest.json"
 STRATEGY_EVOLUTION_HTML = REPORTS_DIR / "strategy_evolution_latest.html"
 ATTENTION_JSON = ROOT / "research_memory" / "attention" / "open_items.json"
 ATTENTION_HTML = REPORTS_DIR / "decision_attention_latest.html"
+STRATEGY_TRUTH_JSON = ROOT / "runtime" / "strategy_truth_latest.json"
+STRATEGY_TRUTH_MD = REPORTS_DIR / "strategy_truth_latest.md"
 CST = timezone(timedelta(hours=8))
 
 
@@ -357,6 +359,32 @@ def attention_summary(path: Path | None) -> dict[str, Any]:
         "summary": payload.get("summary") or empty["summary"],
         "items": visible,
         "top": visible[0] if visible else {},
+    }
+
+
+def strategy_truth_summary(path: Path | None) -> dict[str, Any]:
+    """Read strategy truth ledger and extract key metrics."""
+    empty = {
+        "available": False,
+        "path": STRATEGY_TRUTH_MD,
+        "age": "无台账",
+        "fresh": False,
+        "summary": {},
+        "strategy_stats": {},
+        "recovery_stats": {},
+    }
+    payload = read_json(path) if path else None
+    if not isinstance(payload, dict):
+        return empty
+    generated_at = parse_dt(payload.get("generated_at"))
+    return {
+        "available": True,
+        "path": STRATEGY_TRUTH_MD,
+        "age": age_text(generated_at),
+        "fresh": bool(generated_at and (datetime.now(CST) - generated_at).total_seconds() < 4 * 3600),
+        "summary": payload.get("summary") or {},
+        "strategy_stats": payload.get("strategy_stats") or {},
+        "recovery_stats": payload.get("recovery_stats") or {},
     }
 
 
@@ -1125,6 +1153,38 @@ def build_findings(data: dict[str, Any]) -> list[dict[str, str]]:
                 "body": f"{attention_top.get('evidence') or '-'}；建议：{attention_top.get('recommended_action') or '-'}",
             }
         )
+    truth = data.get("strategy_truth") or {}
+    if truth.get("available"):
+        for strategy in ["A/v11", "B/v16", "C/v14"]:
+            stats = (truth.get("strategy_stats") or {}).get(strategy, {})
+            rec = (truth.get("recovery_stats") or {}).get(strategy, {})
+            closed = int(stats.get("closed_trades") or 0)
+            if closed == 0 and int(rec.get("count") or 0) == 0:
+                continue
+            pf = stats.get("profit_factor", 0)
+            pf_val = float(pf) if pf != "inf" else 999
+            net_pnl = float(stats.get("net_pnl_usd") or 0)
+            rec_count = int(rec.get("count") or 0)
+            rec_upnl = float(rec.get("total_unrealized_pnl") or 0)
+            if pf_val < 1 and closed >= 5:
+                findings.append({
+                    "level": "warn",
+                    "title": f"P1 {strategy} 主动策略负期望 PF={pf}",
+                    "body": f"已平仓 {closed} 笔，净PnL {net_pnl:+.2f}，胜率 {stats.get('win_rate', 0)}%；恢复仓 {rec_count} 个浮盈 {rec_upnl:+.2f}。真相台账显示主动策略 alpha 不足。",
+                })
+            elif pf_val >= 2 and closed >= 10:
+                findings.append({
+                    "level": "ok",
+                    "title": f"P2 {strategy} 主动策略正期望 PF={pf}",
+                    "body": f"已平仓 {closed} 笔，净PnL {net_pnl:+.2f}，胜率 {stats.get('win_rate', 0)}%；恢复仓 {rec_count} 个浮盈 {rec_upnl:+.2f}。",
+                })
+            if rec_count > 0:
+                findings.append({
+                    "level": "ok",
+                    "title": f"P2 {strategy} 恢复仓 {rec_count} 个",
+                    "body": f"恢复仓浮盈 {rec_upnl:+.2f} USDT，不计入主动策略 alpha。",
+                })
+
     evo_top = evolution.get("top") or {}
     if evolution.get("available") and evo_top:
         priority = str(evo_top.get("priority") or "P3")
@@ -1321,6 +1381,8 @@ def build_data() -> dict[str, Any]:
     data["strategy_evolution_html"] = STRATEGY_EVOLUTION_HTML
     data["attention"] = attention_summary(ATTENTION_JSON)
     data["attention_html"] = ATTENTION_HTML
+    data["strategy_truth"] = strategy_truth_summary(STRATEGY_TRUTH_JSON)
+    data["strategy_truth_html"] = STRATEGY_TRUTH_MD
     data["function_status"] = function_status_cards(data)
     data["findings"] = build_findings(data)
     return data
@@ -1428,6 +1490,28 @@ def render_html(out_dir: Path) -> str:
 """.strip()
         for card in data.get("function_status", [])
     )
+
+    # Strategy quality board from truth ledger
+    truth = data.get("strategy_truth") or {}
+    truth_summary = truth.get("summary") or {}
+    truth_stats = truth.get("strategy_stats") or {}
+    truth_recovery = truth.get("recovery_stats") or {}
+    quality_rows = "".join(
+        f"""
+<tr>
+  <td>{h(strategy)}</td>
+  <td>{h((truth_stats.get(strategy) or {{}}).get('closed_trades', 0))}</td>
+  <td>{h((truth_stats.get(strategy) or {{}}).get('win_rate', 0))}%</td>
+  <td class="num {'pos' if float((truth_stats.get(strategy) or {{}}).get('net_pnl_usd', 0)) >= 0 else 'neg'}">{float((truth_stats.get(strategy) or {{}}).get('net_pnl_usd', 0)):+.2f}</td>
+  <td>{h((truth_stats.get(strategy) or {{}}).get('profit_factor', 0))}</td>
+  <td>{h((truth_stats.get(strategy) or {{}}).get('payoff_ratio', 0))}</td>
+  <td>{h((truth_stats.get(strategy) or {{}}).get('hard_stop_count', 0))}</td>
+  <td>{h((truth_recovery.get(strategy) or {{}}).get('count', 0))}</td>
+  <td class="num {'pos' if float((truth_recovery.get(strategy) or {{}}).get('total_unrealized_pnl', 0)) >= 0 else 'neg'}">{float((truth_recovery.get(strategy) or {{}}).get('total_unrealized_pnl', 0)):+.2f}</td>
+</tr>
+""".strip()
+        for strategy in ["A/v11", "B/v16", "C/v14"]
+    ) or '<tr><td colspan="9">暂无真相台账数据</td></tr>'
 
     account_rows = "".join(
         f"""
@@ -1759,6 +1843,16 @@ th {{ background:#f1f5f9; color:#334155; }}
       <thead><tr><th>账号/策略</th><th>浮盈亏</th><th>持仓</th><th>方向</th><th>wallet</th><th>available</th><th>名义仓位</th><th>硬顶风险</th><th>尺寸违规</th><th>快照</th></tr></thead>
       <tbody>{account_rows}</tbody>
     </table>
+  </section>
+
+  <section class="section panel">
+    <h2>策略质量看板</h2>
+    <p class="note">真相台账：主动策略 PnL（剔除恢复仓）vs 恢复仓 PnL。数据来源 {h(truth.get('age', '无台账'))}。</p>
+    <table>
+      <thead><tr><th>策略</th><th>已平仓</th><th>胜率</th><th>净PnL</th><th>PF</th><th>盈亏比</th><th>硬顶</th><th>恢复仓</th><th>恢复仓浮盈</th></tr></thead>
+      <tbody>{quality_rows}</tbody>
+    </table>
+    <p class="note">主动策略累计 PnL: <b class="{'pos' if float(truth_summary.get('total_active_pnl_usd', 0)) >= 0 else 'neg'}">{float(truth_summary.get('total_active_pnl_usd', 0)):+.2f}</b> USDT；恢复仓未实现 PnL: <b class="{'pos' if float(truth_summary.get('total_recovery_unrealized_pnl_usdt', 0)) >= 0 else 'neg'}">{float(truth_summary.get('total_recovery_unrealized_pnl_usdt', 0)):+.2f}</b> USDT。</p>
   </section>
 
   <section class="section panel">

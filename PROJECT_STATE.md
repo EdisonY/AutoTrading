@@ -62,9 +62,10 @@ This file is the long-lived project memory for multi-location development. Daily
 ## Not Done / Next
 
 - User acknowledgement workflow is script-driven through `部署工具/acknowledge_attention_items.py`; a portal button/UI for acknowledgements is still not implemented.
-- Execute `记忆文档/FUTURE_EXECUTION_PLAN.md` in order: dual-server architecture migration (Phase 0.5 ✅), strategy truth ledger (Phase 1 ✅), command-center quality board (Phase 2), sentinel quality review (Phase 6), A/B/C shadow experiments (Phase 3/4/5), recovery-position policy review (Phase 7), promotion gate hardening (Phase 8), and testnet-to-live transition (Phase 9).
+- Execute `记忆文档/FUTURE_EXECUTION_PLAN.md` in order: dual-server architecture migration (Phase 0.5 ✅), strategy truth ledger (Phase 1 ✅), command-center quality board (Phase 2 ✅), sentinel quality review (Phase 6), A/B/C shadow experiments (Phase 3/4/5), recovery-position policy review (Phase 7), promotion gate hardening (Phase 8), and testnet-to-live transition (Phase 9).
 - Architecture optimization: Tencent keeps only 6 API-dependent services; Aliyun takes all analysis/report/experiment/gate tasks as Timer jobs with reverse report sync.
-- Phase 1 truth ledger deployed: `strategy_truth_ledger.py` runs on Aliyun, separates active strategy PnL from recovery positions, outputs `runtime/strategy_truth_latest.json` and `reports/strategy_truth_latest.md`.
+- Phase 1 truth ledger deployed: `strategy_truth_ledger.py` runs on Aliyun, separates active strategy PnL from recovery positions.
+- Phase 2 portal upgraded: `portal_dashboard.py` now shows "策略质量看板" with active-strategy PnL, recovery PnL, PF, win rate, payoff ratio from truth ledger.
 - Strategy evolution still needs stronger promotion rigor before auto-upgrade: walk-forward windows, paper fill simulation, fee/slippage modeling, regime segmentation, and post-change rollback rules.
 - After the 2026-05-27 decommission, do not recreate Polymarket code, reports, service units, or command-center cards unless the user explicitly reopens that project.
 - After the 2026-05-27 order-failure hardening, monitor fresh `OPEN_FAILED` events by exact Binance code. Rule-driven rejections should appear as `OPEN_SKIPPED/execution_preflight`; any remaining `OPEN_FAILED` means a real API/exchange/account condition still needs diagnosis.

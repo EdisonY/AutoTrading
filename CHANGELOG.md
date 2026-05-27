@@ -2,6 +2,14 @@
 
 This is the durable reason-and-outcome ledger for every material design, code, configuration, deployment, rollback, optimization, or live operational change.
 
+## 2026-05-27 20:40 CST - Phase 9 live transition checklist
+- Trigger / reason: Execute Phase 9 of FUTURE_EXECUTION_PLAN.md.
+- Completed: Added `部署工具/live_transition_checklist.py`. Evaluates readiness for Testnet→live transition by checking: PF≥1.2, win rate≥40%, ≥100 trades in 30d, hard-stop rate≤10%, gate status P0/P1, zero recovery positions. Includes transition rules (fee/slippage 0.15%, expected PF decay 0.7-0.9x on live) and rollback triggers. Outputs `runtime/live_transition_latest.json` and `reports/live_transition_latest.md`. Uploaded to Aliyun.
+- Not completed / remaining: Current results: A/v11 NOT READY (2/6), B/v16 NOT READY (4/6), C/v14 NOT READY (2/6). No strategy meets all criteria yet. Live transition requires explicit user approval.
+- Verification: `py_compile` passed. Test run: overall_ready=False, B/v16 closest at 4/6 checks passed.
+- Live impact / deployment: None. Checklist only, no live transition.
+- Files / release / commit: `部署工具/live_transition_checklist.py`, `CHANGELOG.md`.
+
 ## 2026-05-27 20:30 CST - Phase 8 promotion gate hardening
 - Trigger / reason: Execute Phase 8 of FUTURE_EXECUTION_PLAN.md.
 - Completed: Hardened `strategy_evolution_gate.py` `classify_decision()`: (1) Added `adjust_pnl_for_fees()` — deducts 0.15% round-trip cost from shadow PnL; (2) Added `check_rollback_triggers()` — checks sample sufficiency, PF decay, hard-stop increase, account risk; (3) P0 now requires ≥50 samples + fee-adjusted positive PnL; (4) P1 requires ≥30 samples; (5) Rollback triggers added as blockers. Constants: FEE_SLIPPAGE_ADJUSTMENT_PCT=0.15%, MIN_SAMPLE_FOR_P0=50, MIN_SAMPLE_FOR_P1=30, ROLLBACK_PF_DECAY_RATIO=0.8, ROLLBACK_HARD_STOP_RATIO=1.5.

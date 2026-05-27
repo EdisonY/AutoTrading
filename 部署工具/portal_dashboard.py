@@ -1643,10 +1643,11 @@ def render_html(out_dir: Path) -> str:
   <td>{h(r.get('title'))}</td>
   <td>{h(compact_text(r.get('evidence') or '-', 130))}</td>
   <td>{h(compact_text(r.get('recommended_action') or '-', 130))}</td>
+  <td><button class="ack-btn" data-id="{h(r.get('item_id'))}" onclick="ackItem(this)">确认</button></td>
 </tr>
 """.strip()
         for r in (attention.get("items") or [])[:8]
-    ) or '<tr><td colspan="6">暂无持久关注事项</td></tr>'
+    ) or '<tr><td colspan="7">暂无持久关注事项</td></tr>'
 
     findings_html = "".join(
         f"""
@@ -1799,6 +1800,9 @@ th {{ background:#f1f5f9; color:#334155; }}
 .pill.warn {{ color:#92400e; background:var(--soft-amber); }}
 @media (max-width:1180px) {{ .routes {{ grid-template-columns:repeat(2,1fr); }} .metrics,.findings,.status-grid {{ grid-template-columns:repeat(2,1fr); }} .summary {{ grid-template-columns:1fr; }} }}
 @media (max-width:700px) {{ .shell {{ padding:14px; }} .hero,.routes,.metrics,.findings,.status-grid {{ grid-template-columns:1fr; }} .time {{ margin-top:8px; }} }}
+.ack-btn {{ padding:4px 10px; border:none; border-radius:4px; background:#6366f1; color:#fff; font-size:12px; cursor:pointer; }}
+.ack-btn:hover {{ background:#4f46e5; }}
+.ack-btn:disabled {{ background:#94a3b8; cursor:default; }}
 </style>
 </head>
 <body>
@@ -1822,7 +1826,7 @@ th {{ background:#f1f5f9; color:#334155; }}
     <h2>持久关注台账</h2>
     <p class="note">这不是日报摘要。只要没有被你确认关闭，事项会保留在 `research_memory/attention/open_items.json`，即使每日复盘滚动也不会丢。当前 open {int(attention_summary_data.get('open') or 0)}，已消失待复核 {int(attention_summary_data.get('cleared_pending_review') or 0)}；更新 {h(attention.get('age', '无台账'))}。</p>
     <table>
-      <thead><tr><th>优先级</th><th>状态</th><th>分类</th><th>标题</th><th>证据</th><th>建议</th></tr></thead>
+      <thead><tr><th>优先级</th><th>状态</th><th>分类</th><th>标题</th><th>证据</th><th>建议</th><th>操作</th></tr></thead>
       <tbody>{attention_rows}</tbody>
     </table>
   </section>
@@ -1929,6 +1933,40 @@ th {{ background:#f1f5f9; color:#334155; }}
   </section>
 
 </main>
+<script>
+const API_BASE = 'http://39.105.156.210:8090';
+async function ackItem(btn) {{
+  const itemId = btn.dataset.id;
+  if (!itemId) return;
+  btn.disabled = true;
+  btn.textContent = '处理中...';
+  try {{
+    const resp = await fetch(API_BASE + '/api/attention/ack', {{
+      method: 'POST',
+      headers: {{'Content-Type': 'application/json'}},
+      body: JSON.stringify({{item_id: itemId, user: 'portal'}})
+    }});
+    const data = await resp.json();
+    if (data.ok) {{
+      btn.textContent = '已确认';
+      btn.style.background = '#16a34a';
+      const row = btn.closest('tr');
+      if (row) {{
+        const statusCell = row.children[1];
+        if (statusCell) statusCell.textContent = 'acknowledged';
+      }}
+    }} else {{
+      btn.textContent = '失败';
+      btn.style.background = '#dc2626';
+      console.error('Ack failed:', data.error);
+    }}
+  }} catch (e) {{
+    btn.textContent = '网络错误';
+    btn.style.background = '#dc2626';
+    console.error('Network error:', e);
+  }}
+}}
+</script>
 </body>
 </html>"""
 

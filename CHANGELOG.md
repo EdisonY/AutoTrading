@@ -2,6 +2,14 @@
 
 This is the durable reason-and-outcome ledger for every material design, code, configuration, deployment, rollback, optimization, or live operational change.
 
+## 2026-05-27 21:45 CST - Attention API server and portal confirmation buttons
+- Trigger / reason: User requested server-side API for attention item confirmation instead of script-only workflow.
+- Completed: (1) Added `部署工具/attention_api_server.py` — lightweight HTTP API using Python built-in http.server, endpoints: GET /api/attention, POST /api/attention/ack, POST /api/attention/resolve, GET /api/health. Supports both SQLite and JSON fallback. (2) Deployed as `crypto-attention-api.service` on Aliyun port 8090. (3) Updated `portal_dashboard.py` — added "确认" button in attention table, JavaScript calls API via AJAX. (4) Synced attention JSON to Aliyun.
+- Not completed / remaining: Aliyun security group may need port 8090 opened for external access. Portal needs to be regenerated on Aliyun to show buttons.
+- Verification: `py_compile` passed. API service active/running. curl test returns items correctly.
+- Live impact / deployment: New API service on Aliyun. Portal UI enhanced with confirmation buttons.
+- Files / release / commit: `部署工具/attention_api_server.py`, `部署工具/deploy_attention_api.sh`, `部署工具/portal_dashboard.py`, `CHANGELOG.md`.
+
 ## 2026-05-27 20:40 CST - Phase 9 live transition checklist
 - Trigger / reason: Execute Phase 9 of FUTURE_EXECUTION_PLAN.md.
 - Completed: Added `部署工具/live_transition_checklist.py`. Evaluates readiness for Testnet→live transition by checking: PF≥1.2, win rate≥40%, ≥100 trades in 30d, hard-stop rate≤10%, gate status P0/P1, zero recovery positions. Includes transition rules (fee/slippage 0.15%, expected PF decay 0.7-0.9x on live) and rollback triggers. Outputs `runtime/live_transition_latest.json` and `reports/live_transition_latest.md`. Uploaded to Aliyun.

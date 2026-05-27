@@ -35,10 +35,6 @@ STRATEGY_EVOLUTION_JSON = ROOT / "runtime" / "strategy_evolution_latest.json"
 STRATEGY_EVOLUTION_HTML = REPORTS_DIR / "strategy_evolution_latest.html"
 ATTENTION_JSON = ROOT / "research_memory" / "attention" / "open_items.json"
 ATTENTION_HTML = REPORTS_DIR / "decision_attention_latest.html"
-POLYMARKET_REPORT_DIRS = [
-    ROOT / "polymarket_lab" / "reports",
-    Path("/opt/polymarket-lab/reports"),
-]
 CST = timezone(timedelta(hours=8))
 
 
@@ -361,75 +357,6 @@ def attention_summary(path: Path | None) -> dict[str, Any]:
         "summary": payload.get("summary") or empty["summary"],
         "items": visible,
         "top": visible[0] if visible else {},
-    }
-
-
-def polymarket_report_path(name: str) -> Path | None:
-    candidates = [folder / name for folder in POLYMARKET_REPORT_DIRS if (folder / name).exists()]
-    return max(candidates, key=lambda p: p.stat().st_mtime) if candidates else None
-
-
-def polymarket_summary() -> dict[str, Any]:
-    latest_json = polymarket_report_path("polymarket_probe_latest.json")
-    latest_html = polymarket_report_path("polymarket_probe_latest.html")
-    summary_jsonl = polymarket_report_path("polymarket_monitor_summary.jsonl")
-    empty = {
-        "available": False,
-        "path": latest_html,
-        "age": "无报告",
-        "fresh": False,
-        "ok": False,
-        "tail_rounds": 0,
-        "tail_success": 0,
-        "tail_markets": 0,
-        "tail_opportunities": 0,
-        "tail_errors": 0,
-        "markets_checked": 0,
-        "opportunity_count": 0,
-        "book_errors": 0,
-        "best_gap_pct": None,
-        "best_question": "-",
-        "conclusion": "Polymarket 报告未生成。",
-    }
-    payload = read_json(latest_json) if latest_json else None
-    if not isinstance(payload, dict):
-        return empty
-    generated_at = parse_dt(payload.get("generated_at"))
-    health = payload.get("health") if isinstance(payload.get("health"), dict) else {}
-    tail = read_jsonl_tail(summary_jsonl, 500) if summary_jsonl else []
-    near_misses = payload.get("near_misses") if isinstance(payload.get("near_misses"), list) else []
-    best_near = min(
-        near_misses,
-        key=lambda row: float(row.get("gap_to_profit_pct") or 999),
-        default={},
-    )
-    tail_opportunities = 0
-    tail_errors = 0
-    for row in tail:
-        tail_opportunities += int(row.get("opportunity_count") or 0)
-        tail_errors += int(row.get("book_errors") or row.get("error_count") or 0)
-    return {
-        "available": True,
-        "path": latest_html or latest_json,
-        "json_path": latest_json,
-        "summary_path": summary_jsonl,
-        "age": age_text(generated_at),
-        "fresh": bool(generated_at and (datetime.now(CST) - generated_at).total_seconds() < 30 * 60),
-        "ok": bool(health.get("ok", True) and int(payload.get("book_errors") or 0) == 0),
-        "latency_ms": float(health.get("latency_ms") or 0),
-        "tail_rounds": len(tail),
-        "tail_success": sum(1 for row in tail if row.get("ok") is True or str(row.get("status") or "").lower() == "ok"),
-        "tail_markets": sum(int(row.get("markets_checked") or row.get("market_count") or 0) for row in tail),
-        "tail_opportunities": tail_opportunities,
-        "tail_errors": tail_errors,
-        "markets_checked": int(payload.get("markets_checked") or 0),
-        "markets_discovered": int(payload.get("markets_discovered") or 0),
-        "liquidity_checked_usd": float(payload.get("liquidity_checked_usd") or 0),
-        "opportunity_count": int(payload.get("opportunity_count") or 0),
-        "book_errors": int(payload.get("book_errors") or 0),
-        "best_gap_pct": best_near.get("gap_to_profit_pct"),
-        "best_question": best_near.get("question") or "-",
-        "conclusion": payload.get("conclusion") or "-",
     }
 
 
@@ -1075,7 +1002,6 @@ def function_status_cards(data: dict[str, Any]) -> list[dict[str, str]]:
     attention = data.get("attention") or {}
     attention_summary_data = attention.get("summary") or {}
     attention_counts = attention_summary_data.get("counts") or {}
-    polymarket = data.get("polymarket") or {}
     cards = [
         {
             "level": "bad" if int(attention_counts.get("P0") or 0) else "warn" if int(attention_counts.get("P1") or 0) else "ok" if attention.get("available") else "warn",
@@ -1128,21 +1054,6 @@ def function_status_cards(data: dict[str, Any]) -> list[dict[str, str]]:
                 f"统一门禁更新 {evolution.get('age')}；P2观察 {int(evo_counts.get('P2') or 0)}，拒绝 {int(evo_counts.get('REJECT') or 0)}。"
                 if evolution.get("available")
                 else "尚未生成统一进化门禁报告。"
-            ),
-        },
-        {
-            "level": "bad" if int(polymarket.get("opportunity_count") or 0) or int(polymarket.get("tail_opportunities") or 0) else "ok" if polymarket.get("fresh") and polymarket.get("ok") else "warn",
-            "name": "Polymarket研究",
-            "value": (
-                f"机会 {int(polymarket.get('opportunity_count') or 0)}"
-                if polymarket.get("available")
-                else "无报告"
-            ),
-            "body": (
-                f"更新 {polymarket.get('age')}；近 {int(polymarket.get('tail_rounds') or 0)} 轮查 {int(polymarket.get('tail_markets') or 0)} 个盘口，"
-                f"累计机会 {int(polymarket.get('tail_opportunities') or 0)}。"
-                if polymarket.get("available")
-                else "独立 Polymarket 只读扫描尚未接入报告。"
             ),
         },
         {
@@ -1201,7 +1112,6 @@ def build_findings(data: dict[str, Any]) -> list[dict[str, str]]:
     counterfactual = data.get("counterfactual") or {}
     evolution = data.get("strategy_evolution") or {}
     attention = data.get("attention") or {}
-    polymarket = data.get("polymarket") or {}
     total_pnl = float(sig.get("total_pnl") or 0)
     live_pnl = sum(float(r.get("pnl") or 0) for r in decision)
     account_upnl = float(realtime_account.get("unrealized_pnl_usdt") or 0)
@@ -1240,32 +1150,6 @@ def build_findings(data: dict[str, Any]) -> list[dict[str, str]]:
                 "body": f"持仓 {int(realtime_account.get('open_positions') or 0)}，快照 {realtime_account.get('age')}，硬顶风险 {int(realtime_account.get('risk_count') or 0)}，尺寸违规 {sizing_count}。",
             }
         )
-    if polymarket.get("available"):
-        poly_opps = int(polymarket.get("opportunity_count") or 0)
-        tail_opps = int(polymarket.get("tail_opportunities") or 0)
-        if poly_opps or tail_opps or not polymarket.get("fresh") or not polymarket.get("ok"):
-            findings.append(
-                {
-                    "level": "bad" if poly_opps or tail_opps else "warn",
-                    "title": f"P1 Polymarket 只读研究：机会 {poly_opps} / 近轮 {tail_opps}",
-                    "body": (
-                        f"本轮查 {int(polymarket.get('markets_checked') or 0)} 个 orderbook，"
-                        f"最近差距 {polymarket.get('best_gap_pct') if polymarket.get('best_gap_pct') is not None else '-'}%；"
-                        f"更新 {polymarket.get('age')}。"
-                    ),
-                }
-            )
-        else:
-            findings.append(
-                {
-                    "level": "ok",
-                    "title": "P2 Polymarket 监控正常但暂无毛套利",
-                    "body": (
-                        f"近 {int(polymarket.get('tail_rounds') or 0)} 轮检查 {int(polymarket.get('tail_markets') or 0)} 个盘口，"
-                        f"机会 0；最近 near miss 约 {polymarket.get('best_gap_pct') if polymarket.get('best_gap_pct') is not None else '-'}%。"
-                    ),
-                }
-            )
     if alerts.get("available") and int(alerts.get("alert_count") or 0):
         first_alert = (alerts.get("alerts") or [{}])[0]
         findings.append(
@@ -1437,7 +1321,6 @@ def build_data() -> dict[str, Any]:
     data["strategy_evolution_html"] = STRATEGY_EVOLUTION_HTML
     data["attention"] = attention_summary(ATTENTION_JSON)
     data["attention_html"] = ATTENTION_HTML
-    data["polymarket"] = polymarket_summary()
     data["function_status"] = function_status_cards(data)
     data["findings"] = build_findings(data)
     return data
@@ -1480,7 +1363,6 @@ def render_html(out_dir: Path) -> str:
     attention = data.get("attention") or {}
     attention_summary_data = attention.get("summary") or {}
     attention_counts = attention_summary_data.get("counts") or {}
-    polymarket = data.get("polymarket") or {}
     issues_count = sum(1 for f in data.get("findings", []) if f.get("level") in {"bad", "warn"})
     metrics = [
         ("昨日复盘PnL", f"{data['signal_summary']['total_pnl']:+.2f}", "最新完整复盘周期"),
@@ -1682,20 +1564,6 @@ def render_html(out_dir: Path) -> str:
         for r in (attention.get("items") or [])[:8]
     ) or '<tr><td colspan="6">暂无持久关注事项</td></tr>'
 
-    polymarket_best_gap = polymarket.get("best_gap_pct")
-    polymarket_rows = f"""
-<tr>
-  <td>{h(polymarket.get('age', '无报告'))}</td>
-  <td>{h('正常' if polymarket.get('ok') else '需检查')}</td>
-  <td>{int(polymarket.get('markets_checked') or 0)}</td>
-  <td>{int(polymarket.get('opportunity_count') or 0)}</td>
-  <td>{int(polymarket.get('tail_rounds') or 0)} / {int(polymarket.get('tail_markets') or 0)}</td>
-  <td>{int(polymarket.get('tail_opportunities') or 0)}</td>
-  <td>{h(polymarket_best_gap if polymarket_best_gap is not None else '-')}</td>
-  <td>{h(compact_text(polymarket.get('best_question') or '-', 120))}</td>
-</tr>
-""".strip() if polymarket.get("available") else '<tr><td colspan="8">暂无 Polymarket 报告</td></tr>'
-
     findings_html = "".join(
         f"""
 <article class="finding {h(item['level'])}">
@@ -1754,14 +1622,6 @@ def render_html(out_dir: Path) -> str:
             data["attention_html"],
             "看关注台账",
             "red",
-        ),
-        route_card(
-            "Polymarket",
-            "独立只读研究",
-            "看 Polymarket 套利扫描、近轮机会数、盘口错误和 near miss。",
-            polymarket.get("path"),
-            "看Polymarket",
-            "blue",
         ),
         route_card(
             "想改策略前",
@@ -1889,15 +1749,6 @@ th {{ background:#f1f5f9; color:#334155; }}
     <table>
       <thead><tr><th>优先级</th><th>状态</th><th>策略</th><th>候选</th><th>证据分</th><th>风险分</th><th>建议动作</th><th>关键阻塞</th></tr></thead>
       <tbody>{evolution_rows}</tbody>
-    </table>
-  </section>
-
-  <section class="section panel">
-    <h2>Polymarket 独立研究摘要</h2>
-    <p class="note">只读扫描，不直接交易。本轮结论：{h(polymarket.get('conclusion', '无报告'))}</p>
-    <table>
-      <thead><tr><th>更新</th><th>健康</th><th>本轮盘口</th><th>本轮机会</th><th>近轮/盘口</th><th>近轮机会</th><th>最近差距%</th><th>代表市场</th></tr></thead>
-      <tbody>{polymarket_rows}</tbody>
     </table>
   </section>
 

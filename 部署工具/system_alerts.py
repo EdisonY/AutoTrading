@@ -42,7 +42,6 @@ SERVICES = [
     "crypto-scanner-v16.service",
     "crypto-market-mover-sentinel.service",
     "crypto-portal-refresh.service",
-    "polymarket-monitor.service",
 ]
 
 TIMERS = [

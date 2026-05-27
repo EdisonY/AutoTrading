@@ -15,7 +15,6 @@ PROHIBITED_PREFIXES = (
     "server_logs_tencent/",
     "复盘报告/",
     "回测数据/",
-    "polymarket_lab/reports/",
 )
 PROHIBITED_SUFFIXES = (".sqlite", ".sqlite3", ".db", ".env", ".pem", ".key")
 MATERIAL_PREFIXES = (
@@ -24,7 +23,6 @@ MATERIAL_PREFIXES = (
     "core/",
     "config/",
     "部署工具/",
-    "polymarket_lab/",
     "cloud/",
 )
 MATERIAL_ROOT_FILES = {"requirements.txt", ".gitignore", ".gitattributes"}

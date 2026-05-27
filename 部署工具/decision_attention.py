@@ -32,10 +32,6 @@ ATTENTION_HTML = REPORTS_DIR / "decision_attention_latest.html"
 ALERTS_JSON = RUNTIME_DIR / "alerts_latest.json"
 STRATEGY_EVOLUTION_JSON = RUNTIME_DIR / "strategy_evolution_latest.json"
 EVENT_STORE_DB = RUNTIME_DIR / "event_store.sqlite3"
-POLYMARKET_REPORT_DIRS = [
-    ROOT / "polymarket_lab" / "reports",
-    Path("/opt/polymarket-lab/reports"),
-]
 CST = timezone(timedelta(hours=8))
 PRIORITY_ORDER = {"P0": 0, "P1": 1, "P2": 2, "P3": 3}
 
@@ -258,11 +254,6 @@ def is_acknowledged(item: dict[str, Any], acknowledgements: dict[str, dict[str, 
     return not expected or expected == item_fingerprint(item)
 
 
-def polymarket_report_path(name: str) -> Path | None:
-    candidates = [folder / name for folder in POLYMARKET_REPORT_DIRS if (folder / name).exists()]
-    return max(candidates, key=lambda p: p.stat().st_mtime) if candidates else None
-
-
 def detect_alert_items() -> list[dict[str, Any]]:
     payload = read_json(ALERTS_JSON)
     if not isinstance(payload, dict):
@@ -318,106 +309,6 @@ def detect_strategy_evolution_items() -> list[dict[str, Any]]:
                 source=str(STRATEGY_EVOLUTION_JSON),
             )
         )
-    return out
-
-
-def detect_polymarket_items() -> list[dict[str, Any]]:
-    latest_path = polymarket_report_path("polymarket_probe_latest.json")
-    summary_path = polymarket_report_path("polymarket_monitor_summary.jsonl")
-    if not latest_path:
-        return [
-            make_item(
-                item_id="polymarket:report-missing",
-                priority="P1",
-                category="Polymarket",
-                title="Polymarket 最新扫描报告缺失",
-                evidence="未找到 polymarket_probe_latest.json。",
-                recommended_action="确认 polymarket-monitor.service 是否仍在腾讯节点运行，并同步报告到总入口。",
-                source="polymarket_lab/reports",
-            )
-        ]
-    payload = read_json(latest_path)
-    if not isinstance(payload, dict):
-        return [
-            make_item(
-                item_id="polymarket:report-invalid",
-                priority="P1",
-                category="Polymarket",
-                title="Polymarket 最新扫描报告不可读",
-                evidence=str(latest_path),
-                recommended_action="检查报告生成脚本和 JSON 输出。",
-                source=str(latest_path),
-            )
-        ]
-    generated_at = parse_dt(payload.get("generated_at"))
-    health = payload.get("health") if isinstance(payload.get("health"), dict) else {}
-    opportunities = int(payload.get("opportunity_count") or 0)
-    book_errors = int(payload.get("book_errors") or 0)
-    out = []
-    if not generated_at or (now_cst() - generated_at).total_seconds() > 30 * 60:
-        out.append(
-            make_item(
-                item_id="polymarket:stale",
-                priority="P1",
-                category="Polymarket",
-                title="Polymarket 监控报告偏旧",
-                evidence=f"最新报告 {age_text(generated_at)}；文件 {latest_path}",
-                recommended_action="重启或检查 polymarket-monitor.service，确认网络出口和 API 可达。",
-                source=str(latest_path),
-            )
-        )
-    if health and not health.get("ok"):
-        out.append(
-            make_item(
-                item_id="polymarket:api-health",
-                priority="P1",
-                category="Polymarket",
-                title="Polymarket API 健康检查失败",
-                evidence=str(health.get("error") or health),
-                recommended_action="检查腾讯/阿里云出口、Gamma API 可达性和限频。",
-                source=str(latest_path),
-            )
-        )
-    if book_errors:
-        out.append(
-            make_item(
-                item_id="polymarket:book-errors",
-                priority="P2",
-                category="Polymarket",
-                title="Polymarket orderbook 拉取有错误",
-                evidence=f"本轮 book_errors={book_errors}",
-                recommended_action="观察是否持续；若连续多轮出现，降低并发或增加重试退避。",
-                source=str(latest_path),
-            )
-        )
-    if opportunities:
-        best = (payload.get("best_opportunities") or [{}])[0]
-        out.append(
-            make_item(
-                item_id="polymarket:opportunity",
-                priority="P0",
-                category="Polymarket",
-                title=f"Polymarket 发现 {opportunities} 个毛套利机会",
-                evidence=f"{best.get('question') or '-'}；edge={best.get('gross_edge_pct') or best.get('edge_pct') or '-'}",
-                recommended_action="先人工复核盘口深度、手续费、gas/结算、下单延迟和成交可得性，不直接实盘。",
-                source=str(latest_path),
-            )
-        )
-    if summary_path:
-        rows = read_jsonl_tail(summary_path, 200)
-        tail_opp = sum(int(r.get("opportunity_count") or 0) for r in rows)
-        if tail_opp:
-            out.append(
-                make_item(
-                    item_id="polymarket:tail-opportunities",
-                    priority="P0",
-                    category="Polymarket",
-                    title=f"Polymarket 近 {len(rows)} 轮出现 {tail_opp} 次机会",
-                    evidence=f"汇总文件 {summary_path}",
-                    recommended_action="统计机会持续时间、可成交金额和净收益，进入只读到纸面撮合验证。",
-                    source=str(summary_path),
-                )
-            )
     return out
 
 
@@ -606,7 +497,6 @@ def build_payload() -> dict[str, Any]:
     detected: list[dict[str, Any]] = []
     detected.extend(detect_alert_items())
     detected.extend(detect_strategy_evolution_items())
-    detected.extend(detect_polymarket_items())
     detected.extend(detect_open_staleness_items())
     items = merge_items(load_existing(), detected)
     persist_attention_items(items)

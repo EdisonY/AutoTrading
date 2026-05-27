@@ -32,7 +32,6 @@ TENCENT_USER = os.environ.get("TENCENT_USER", "ubuntu")
 TENCENT_PASS = os.environ.get("TENCENT_SSH_PASSWORD")
 TENCENT_KEY = os.environ.get("TENCENT_SSH_KEY")
 LIVE_ROOT = "/opt/crypto-auto-trader"
-POLYMARKET_ROOT = "/opt/polymarket-lab"
 CST = timezone(timedelta(hours=8))
 
 MAIN_FILES = [
@@ -58,17 +57,9 @@ MAIN_FILES = [
     ("research_memory/attention/open_items.json", "runtime/live_attention_latest.json", True),
 ]
 
-POLYMARKET_FILES = [
-    ("reports/polymarket_probe_latest.json", "polymarket_lab/reports/polymarket_probe_latest.json", True),
-    ("reports/polymarket_probe_latest.html", "polymarket_lab/reports/polymarket_probe_latest.html", False),
-    ("reports/polymarket_probe_latest.md", "polymarket_lab/reports/polymarket_probe_latest.md", False),
-    ("reports/polymarket_monitor_summary.jsonl", "polymarket_lab/reports/polymarket_monitor_summary.jsonl", False),
-]
-
 LARGE_LOCAL_FILES = {
     "reports/market_review_latest.html",
     "reports/market_review_latest.md",
-    "polymarket_lab/reports/polymarket_monitor_summary.jsonl",
 }
 
 REMOTE_SUMMARY_SCRIPT = r"""
@@ -79,7 +70,6 @@ import subprocess
 from datetime import datetime
 
 root = pathlib.Path("/opt/crypto-auto-trader")
-poly_root = pathlib.Path("/opt/polymarket-lab")
 
 def read_json(path):
     try:
@@ -116,8 +106,6 @@ account = read_json(root / "runtime" / "account_snapshot_latest.json")
 alerts = read_json(root / "runtime" / "alerts_latest.json")
 attention = read_json(root / "research_memory" / "attention" / "open_items.json")
 evolution = read_json(root / "runtime" / "strategy_evolution_latest.json")
-poly = read_json(poly_root / "reports" / "polymarket_probe_latest.json")
-
 services = {
     name: unit_state(name)
     for name in (
@@ -128,7 +116,6 @@ services = {
         "crypto-account-snapshot.service",
         "crypto-portal-refresh.service",
         "crypto-system-alerts.service",
-        "polymarket-monitor.service",
     )
 }
 
@@ -146,14 +133,6 @@ print(json.dumps({
     "attention_summary": attention.get("summary", {}),
     "attention_items": attention.get("items", [])[:8],
     "evolution_summary": evolution.get("summary", {}),
-    "polymarket_summary": {
-        "generated_at": poly.get("generated_at"),
-        "health": (poly.get("health") or {}).get("ok"),
-        "markets_checked": poly.get("markets_checked"),
-        "opportunity_count": poly.get("opportunity_count"),
-        "book_errors": poly.get("book_errors"),
-        "near_misses": (poly.get("near_misses") or [])[:3],
-    },
 }, ensure_ascii=False))
 """
 
@@ -324,7 +303,6 @@ def localize_html_links(paths: list[Path]) -> None:
     replacements = [
         ("file:///opt/crypto-auto-trader/reports/", (ROOT / "reports").resolve().as_uri() + "/"),
         ("file:///opt/crypto-auto-trader/%E5%A4%8D%E7%9B%98%E6%8A%A5%E5%91%8A/", (ROOT / "复盘报告").resolve().as_uri() + "/"),
-        ("file:///opt/polymarket-lab/reports/", (ROOT / "polymarket_lab" / "reports").resolve().as_uri() + "/"),
     ]
     for path in paths:
         if not path.exists() or path.suffix.lower() != ".html":
@@ -338,7 +316,6 @@ def localize_html_links(paths: list[Path]) -> None:
 def pull_context(timeout: int) -> dict[str, Any]:
     entries = [
         *((LIVE_ROOT, remote, local, required) for remote, local, required in MAIN_FILES),
-        *((POLYMARKET_ROOT, remote, local, required) for remote, local, required in POLYMARKET_FILES),
     ]
     use_openssh = TENCENT_PASS is None and shutil.which("ssh") is not None
     if use_openssh:
@@ -376,8 +353,6 @@ def pull_context(timeout: int) -> dict[str, Any]:
             try:
                 for remote, local, required in MAIN_FILES:
                     pulled.append(pull_file(sftp, LIVE_ROOT, remote, local, required))
-                for remote, local, required in POLYMARKET_FILES:
-                    pulled.append(pull_file(sftp, POLYMARKET_ROOT, remote, local, required))
             finally:
                 sftp.close()
             raw_summary = remote_command(
@@ -392,7 +367,7 @@ def pull_context(timeout: int) -> dict[str, Any]:
     payload = {
         "pulled_at": datetime.now(CST).isoformat(),
         "host": TENCENT_HOST,
-        "remote_roots": {"live": LIVE_ROOT, "polymarket": POLYMARKET_ROOT},
+        "remote_roots": {"live": LIVE_ROOT},
         "files": pulled,
         "live_summary": summary,
     }

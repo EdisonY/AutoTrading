@@ -1,6 +1,6 @@
 # AutoTrading
 
-AutoTrading is a live crypto strategy system with three Binance futures strategies, a market-mover sentinel, a command-center report, a strategy-evolution gate, and an independent read-only Polymarket lab.
+AutoTrading is a live crypto strategy system with three Binance futures strategies, a market-mover sentinel, a command-center report, and a strategy-evolution gate.
 
 This repository is designed for multi-machine development. It contains code, configs, deployment scripts, compact research memory, and project state. It intentionally does not contain live secrets or bulky runtime artifacts.
 
@@ -22,7 +22,6 @@ When opening this project on a new computer, read these files in order:
 - `core/` - shared event store, risk, research, experiment, sentinel, and paper-broker utilities.
 - `部署工具/` - report generation, deployment, sync, alerts, strategy evolution, and maintenance scripts.
 - `config/` - strategy config files safe to version.
-- `polymarket_lab/` - independent read-only Polymarket research system.
 - `research_memory/` - compact research memory, approvals, hypotheses, lessons, promotions, and durable attention ledger.
 - `experiments/` - experiment registry and compact family metadata. Large generated results are ignored.
 - `记忆文档/` - human-readable long-term memory.
@@ -64,7 +63,6 @@ Current known layout:
 
 - Tencent live node: `/opt/crypto-auto-trader`
 - Aliyun shadow/review node: `/opt/crypto-shadow-lab`
-- Tencent Polymarket lab: `/opt/polymarket-lab`
 
 Important live services include:
 
@@ -76,7 +74,6 @@ Important live services include:
 - `crypto-portal-refresh.service`
 - `crypto-system-alerts.service`
 - `crypto-strategy-evolution-gate.timer`
-- `polymarket-monitor.service`
 
 Server access, API keys, and environment files are not stored in Git. A new machine needs SSH access and the server-side environment setup before it can operate live systems.
 
@@ -89,7 +86,6 @@ The following are intentionally excluded from Git:
 - `reports/` and `复盘报告/` - generated HTML/Markdown reports.
 - `server_logs_tencent/` - local mirror of live server logs.
 - `回测数据/` and server `backtest_data/` - bulky backtest artifacts.
-- `polymarket_lab/reports/` - generated Polymarket probes.
 - `.env`, API keys, SSH keys, certificates, SQLite DBs, and any credential file.
 
 These files are not very sensitive in the same way API keys are, but they can include account, order, position, PnL, and strategy-behavior details. They also grow quickly and change constantly. Keep them on servers or local ignored folders, not in Git.
@@ -103,10 +99,8 @@ As of 2026-05-26 13:22 Asia/Shanghai, the data exists on servers:
 | Tencent `/opt/crypto-auto-trader` | `reports` | 14M |
 | Tencent `/opt/crypto-auto-trader` | `scanner_data*` | 129M total |
 | Tencent `/opt/crypto-auto-trader` | `backtest_data` | 166M |
-| Tencent `/opt/polymarket-lab` | `reports` | 46M |
 | Aliyun `/opt/crypto-shadow-lab` | `server_logs_tencent` | 459M |
 | Aliyun `/opt/crypto-shadow-lab` | `reports` | 692K |
-| Aliyun `/opt/polymarket-lab` | `reports` | 3.8M |
 
 ## Current Live Context
 
@@ -116,7 +110,7 @@ Git is not the source of truth for current positions, current PnL, live signals,
 python 部署工具\pull_live_context.py
 ```
 
-This pulls a compact, ignored local mirror of the current command center, account snapshot, alerts, strategy evolution gate, durable attention ledger, and Polymarket summary. The main machine-readable output is `runtime/live_context_summary_latest.json`.
+This pulls a compact, ignored local mirror of the current command center, account snapshot, alerts, strategy evolution gate, and durable attention ledger. The main machine-readable output is `runtime/live_context_summary_latest.json`.
 
 For detailed recent logs, add:
 
@@ -158,7 +152,6 @@ The command center should surface:
 - sentinel health and signal flow;
 - OPEN_SKIPPED counterfactuals;
 - strategy-evolution gate decisions;
-- Polymarket read-only research summary;
 - persistent attention items.
 
 ## Strategy Evolution Rule
@@ -195,7 +188,7 @@ git push
 Before every push, check ignored runtime data did not accidentally enter staging:
 
 ```powershell
-git ls-files | Select-String -Pattern 'runtime/|logs/|reports/|server_logs_tencent/|复盘报告/|回测数据/|polymarket_lab/reports/|__pycache__|\.sqlite|\.db|\.env|id_rsa|\.pem|\.key'
+git ls-files | Select-String -Pattern 'runtime/|logs/|reports/|server_logs_tencent/|复盘报告/|回测数据/|__pycache__|\.sqlite|\.db|\.env|id_rsa|\.pem|\.key'
 ```
 
 This command should return no tracked files.

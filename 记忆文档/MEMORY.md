@@ -1,5 +1,11 @@
 # MEMORY.md - 长期记忆
 
+## 2026-05-27 Polymarket 下线 + 内存/C-v14 复核
+- 用户明确要求删除所有 Polymarket 相关文件代码并停掉相关服务。已停止/禁用/移除腾讯 `polymarket-monitor.service`，删除 `/opt/polymarket-lab`，并删除本地 `polymarket_lab` 代码与两套部署脚本。
+- 总入口、系统告警、实时上下文拉取、持久关注台账都已移除 Polymarket 当前模块。历史记忆保留曾经做过的 Polymarket 研究结论，但后续 agent 不应把它当成当前活跃系统，除非用户明确重新开启。
+- 下线后服务器内存复核：MemAvailable 约 1.4GiB，SwapTotal 2GiB、SwapUsed 约 210MiB，近 12 小时 kernel journal 未见新的 OOM。常驻交易服务的单进程 RSS 约 40-49MB，内存压力不来自三策略本身。
+- C/v14 现状：昨日 2026-05-26 复盘显示 `入场候选 124 / 原始信号 38930 / 开仓 3 / 跳过 101`。这说明旧“信号太多”主要是原始分析噪声，但真实入场候选到开仓约 2.4%，仍偏保守；主要卡点仍是策略层 `can_trade=False`、分数阈值、15m 确认和同币种/仓位风控。此次未直接放宽实盘条件。
+
 ## 2026-05-27 A/v11 替换策略小范围观察 + P级事项数据库化
 - 用户确认：继续推进 `A/v11 EXP-20260523-v11-replacement-quality`，但只按“扩展审核/小范围增强”走，不全量放开；其它 P0 全部归档。
 - 已把 A/v11 满仓替换参数收窄到实验验证口径：`STRONG_SIGNAL_THRESHOLD=112`、`EVICT_SCORE_GAP=25`、盈利 `>=2%` 仓位硬保护、策略版本 `small_live_v11_replacement_quality_v1`。不增加总仓位、不取消同币种禁止叠仓、不降低入场阈值。

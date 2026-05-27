@@ -40,7 +40,6 @@ server_logs_tencent/
 reports/
 复盘报告/
 回测数据/
-polymarket_lab/reports/
 experiments/results/
 research_memory/cases/
 research_memory/snapshots/
@@ -50,4 +49,3 @@ research_memory/snapshots/
 Thumbs.db
 .idea/
 .vscode/
-

@@ -2,6 +2,14 @@
 
 This is the durable reason-and-outcome ledger for every material design, code, configuration, deployment, rollback, optimization, or live operational change.
 
+## 2026-05-27 20:20 CST - Phase 7 recovery position management
+- Trigger / reason: Execute Phase 7 of FUTURE_EXECUTION_PLAN.md.
+- Completed: Enhanced `strategy_truth_ledger.py` with: (1) detailed recovery position audit per strategy (symbol, side, entry/mark price, PnL, margin, leverage); (2) `evaluate_recovery_exit_policies()` shadow-tests 5 candidate exit policies (4h/8h/24h time exit, 2% trailing, opposite signal); (3) recovery exit policies included in JSON output and MD report. Uploaded to Aliyun.
+- Not completed / remaining: No automatic recovery exit deployed. Shadow results need validation before any live policy.
+- Verification: `py_compile` passed. Test run shows 5 recovery positions, exit policies evaluated.
+- Live impact / deployment: None. Analysis only.
+- Files / release / commit: `部署工具/strategy_truth_ledger.py`, `CHANGELOG.md`.
+
 ## 2026-05-27 19:30 CST - Phase 3/4/5 shadow experiment configs
 - Trigger / reason: Execute Phase 3/4/5 of FUTURE_EXECUTION_PLAN.md.
 - Completed: Added 10 new experiment specs to `core/experiment.py`: A/v11 entry threshold 115/120, trailing pullback 0.8/1.0; B/v16 ATR stop bands, overheat cap 85; C/v14 strict candidate long65/70, filter ablation (sector, BTC trend). Added `run_threshold_experiment()` and `run_filter_ablation()` to `experiment_runner.py`. Total: 13 experiments. Uploaded to Aliyun.

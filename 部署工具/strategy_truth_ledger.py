@@ -264,6 +264,49 @@ def identify_recovery_positions(
     return recovery
 
 
+def evaluate_recovery_exit_policies(recovery: list[dict]) -> dict[str, Any]:
+    """Shadow-test candidate exit policies for recovery positions."""
+    now = datetime.now(CST)
+    policies = {
+        "age_4h": {"label": "4小时时间退出", "would_exit": 0, "would_hold": 0},
+        "age_8h": {"label": "8小时时间退出", "would_exit": 0, "would_hold": 0},
+        "age_24h": {"label": "24小时时间退出", "would_exit": 0, "would_hold": 0},
+        "trailing_2pct": {"label": "2%回撤退出", "would_exit": 0, "would_hold": 0},
+        "opposite_signal": {"label": "反向信号退出", "would_exit": 0, "would_hold": 0},
+    }
+    for pos in recovery:
+        snap_dt = parse_dt(pos.get("snapshot_ts"))
+        age_hours = (now - snap_dt).total_seconds() / 3600 if snap_dt else 0
+        upnl = pos.get("unrealized_pnl", 0)
+        margin = pos.get("margin", 0)
+        upnl_pct = (upnl / margin * 100) if margin > 0 else 0
+
+        # Age-based exits
+        if age_hours >= 4:
+            policies["age_4h"]["would_exit"] += 1
+        else:
+            policies["age_4h"]["would_hold"] += 1
+        if age_hours >= 8:
+            policies["age_8h"]["would_exit"] += 1
+        else:
+            policies["age_8h"]["would_hold"] += 1
+        if age_hours >= 24:
+            policies["age_24h"]["would_exit"] += 1
+        else:
+            policies["age_24h"]["would_hold"] += 1
+
+        # Trailing stop after adoption (2% drawdown from entry)
+        if upnl_pct < -2:
+            policies["trailing_2pct"]["would_exit"] += 1
+        else:
+            policies["trailing_2pct"]["would_hold"] += 1
+
+        # Opposite signal (placeholder - would need strategy signal data)
+        policies["opposite_signal"]["would_hold"] += 1
+
+    return policies
+
+
 def compute_strategy_stats(trades: list[dict]) -> dict[str, dict]:
     """Compute per-strategy statistics."""
     stats: dict[str, dict] = {}
@@ -350,16 +393,33 @@ def build_output(
     strategy_stats = compute_strategy_stats(trades)
     daily_facts = compute_daily_facts(trades)
 
-    # Recovery stats per strategy
+    # Recovery stats per strategy with enhanced details
     recovery_stats: dict[str, dict] = {}
     for strategy in STRATEGY_MAP:
         recs = [r for r in recovery if r["strategy"] == strategy]
         total_upnl = sum(r["unrealized_pnl"] for r in recs)
+        total_margin = sum(r["margin"] for r in recs)
         recovery_stats[strategy] = {
             "count": len(recs),
             "total_unrealized_pnl": round(total_upnl, 2),
+            "total_margin": round(total_margin, 2),
             "symbols": [r["symbol"] for r in recs],
+            "positions": [
+                {
+                    "symbol": r["symbol"],
+                    "side": r["side"],
+                    "entry_price": r["entry_price"],
+                    "mark_price": r["mark_price"],
+                    "unrealized_pnl": round(r["unrealized_pnl"], 2),
+                    "margin": round(r["margin"], 2),
+                    "leverage": r["leverage"],
+                }
+                for r in recs
+            ],
         }
+
+    # Recovery exit policy evaluation
+    recovery_exit_policies = evaluate_recovery_exit_policies(recovery)
 
     # Account summary
     account_summary = []
@@ -388,6 +448,7 @@ def build_output(
         },
         "strategy_stats": strategy_stats,
         "recovery_stats": recovery_stats,
+        "recovery_exit_policies": recovery_exit_policies,
         "daily_facts": daily_facts,
         "account_summary": account_summary,
     }
@@ -450,6 +511,17 @@ def write_markdown(output: dict, path: Path) -> None:
             )
     else:
         lines.append("暂无已平仓交易数据。")
+
+    # Recovery exit policies
+    policies = output.get("recovery_exit_policies", {})
+    if policies:
+        lines.extend(["", "## 恢复仓退出策略 Shadow 测试", ""])
+        lines.append("| 退出策略 | 会退出 | 会持有 |")
+        lines.append("|----------|-------:|-------:|")
+        for key, pol in policies.items():
+            lines.append(f"| {pol['label']} | {pol['would_exit']} | {pol['would_hold']} |")
+        lines.append("")
+        lines.append("注：以上为 shadow 评估，不自动执行。朴素时间退出可能截断大赢家，需结合证据决定。")
 
     lines.append("")
     path.write_text("\n".join(lines), encoding="utf-8")

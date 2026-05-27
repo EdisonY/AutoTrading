@@ -23,6 +23,14 @@ This is the durable reason-and-outcome ledger for every material design, code, c
 - Files / release / commit:
 ```
 
+## 2026-05-27 15:35 CST - Persist future strategy-quality execution plan
+- Trigger / reason: User asked whether the detailed plan can solve all current problems, requested more concrete technical milestones, and asked to write it into the future execution plan.
+- Completed: Added `记忆文档/FUTURE_EXECUTION_PLAN.md` as a durable handoff plan. It clarifies which current system problems the plan can solve and which future market/exchange problems it cannot guarantee. It breaks execution into technical phases: safety baseline, unified strategy truth ledger, command-center quality board, A/v11 evidence program, B/v16 payoff improvement, C/v14 rebuild/retire program, sentinel contribution review, recovery-position management, and promotion-gate hardening. Updated `PROJECT_STATE.md` and `记忆文档/MEMORY.md` so future agents discover and follow the plan.
+- Not completed / remaining: This change records the plan only. It does not implement the planned scripts, portal sections, SQLite tables, shadow experiments, or promotion-gate extensions yet.
+- Verification: Documentation files were updated locally and are ready for Git guard/commit. No live service or strategy behavior was changed.
+- Live impact / deployment: None; planning/documentation only.
+- Files / release / commit: `记忆文档/FUTURE_EXECUTION_PLAN.md`, `PROJECT_STATE.md`, `记忆文档/MEMORY.md`, `CHANGELOG.md`; Git commit to contain this entry.
+
 ## 2026-05-27 15:12 CST - Harden Binance open-order preflight and failure attribution
 - Trigger / reason: User requested a comprehensive fix for recent open-order failures. Live SQLite inspection found repeated Binance failures from exchange order rules rather than strategy alpha alone: `-4164 notional_too_small`, `-4005 quantity_over_max`, `-4411 TradFi-Perps agreement required`, `-4131 percent_price_filter`, `-2027 max_position_or_leverage`, and `-1007 status unknown`.
 - Completed: Added shared Binance USDM order-rule helpers for exchangeInfo parsing, MARKET_LOT_SIZE/minNotional/maxQty rounding, TradFi-Perps blocking, client order IDs, and percent-price preflight. A/B/C clients now share quantity validation and formatted market quantities. The execution engine performs quantity and market-price preflight before sending orders, preserves nested Binance error codes, and treats `-1007` status-unknown responses as success only after polling account positions. A/B/C scanners now record deterministic execution preflight rejections as `OPEN_SKIPPED` with `decision_stage=execution_preflight`, leaving `OPEN_FAILED` for real exchange/API failures. A/v11 also preserves raw Binance error responses instead of collapsing them to `-1`.

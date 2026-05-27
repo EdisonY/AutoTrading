@@ -46,6 +46,7 @@ This file is the long-lived project memory for multi-location development. Daily
 - `CHANGELOG.md`: mandatory reason/outcome/verification/remaining-work ledger for every material Git or live operational change.
 - `PROJECT_STATE.md`: current state and migration rules. Update this when architecture, deployment, or unresolved priorities change.
 - `记忆文档/MEMORY.md`: chronological memory of decisions and major changes.
+- `记忆文档/FUTURE_EXECUTION_PLAN.md`: detailed future execution plan for strategy truth ledger, command-center quality board, A/B/C experiments, sentinel contribution, recovery-position management, and promotion gate hardening.
 - `runtime/event_store.sqlite3`: canonical attention items and acknowledgements (`attention_items`, `attention_acknowledgements`) plus event/account tables.
 - `research_memory/attention/open_items.json`: exported attention ledger for portal/live sync. Items stay visible until explicitly confirmed or resolved; a daily report rolling over must not remove them.
 - `research_memory/hypotheses`, `research_memory/approvals`, `research_memory/lessons`, and `research_memory/promotions`: compact research memory worth carrying between machines.
@@ -61,6 +62,7 @@ This file is the long-lived project memory for multi-location development. Daily
 ## Not Done / Next
 
 - User acknowledgement workflow is script-driven through `部署工具/acknowledge_attention_items.py`; a portal button/UI for acknowledgements is still not implemented.
+- Execute `记忆文档/FUTURE_EXECUTION_PLAN.md` in order: strategy truth ledger, command-center quality board, sentinel quality review, A/B shadow experiments, C/v14 rebuild/retire experiments, recovery-position policy review, and promotion gate hardening.
 - Strategy evolution still needs stronger promotion rigor before auto-upgrade: walk-forward windows, paper fill simulation, fee/slippage modeling, regime segmentation, and post-change rollback rules.
 - After the 2026-05-27 decommission, do not recreate Polymarket code, reports, service units, or command-center cards unless the user explicitly reopens that project.
 - After the 2026-05-27 order-failure hardening, monitor fresh `OPEN_FAILED` events by exact Binance code. Rule-driven rejections should appear as `OPEN_SKIPPED/execution_preflight`; any remaining `OPEN_FAILED` means a real API/exchange/account condition still needs diagnosis.

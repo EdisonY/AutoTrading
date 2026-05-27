@@ -368,6 +368,57 @@ def run_generic_replacement_quality(spec: ExperimentSpec, data_root: Path, days:
     return result
 
 
+def run_threshold_experiment(spec: ExperimentSpec, data_root: Path, days: list[str]) -> ExperimentResult:
+    """Generic threshold experiment: filter trades by score and measure impact."""
+    files = strategy_file_for(spec.base_strategy, data_root)
+    trades = [t for t in read_jsonl(files["trades"]) if in_dates(t, set(days), ("exit_time", "time")) and "pnl_usd" in t]
+    original_pnl = sum(to_float(t.get("pnl_usd")) for t in trades)
+    threshold_key = next((k for k in ["score_threshold_15m", "score_threshold_1h_long", "score_max"] if k in spec.params), None)
+    threshold_val = float(spec.params[threshold_key]) if threshold_key else 0
+    if not threshold_key:
+        return ExperimentResult(experiment_id=spec.experiment_id, base_strategy=spec.base_strategy,
+            sample_window=f"{days[0]}~{days[-1]}", sample_trades=len(trades),
+            original_pnl=round(original_pnl, 4), shadow_pnl=round(original_pnl, 4),
+            filtered_trades=0, avoided_loss=0, missed_profit=0, candidate_id=spec.candidate_id,
+            source_cases=list(spec.source_cases), change_type=spec.change_type, notes=["无匹配阈值"])
+    filtered, kept = [], []
+    for t in trades:
+        score = abs(trade_score(t))
+        tf = str(t.get("timeframe", ""))
+        if "15m" in threshold_key and "15m" in tf and score < threshold_val:
+            filtered.append(t)
+        elif "1h" in threshold_key and "1h" in tf and score < threshold_val:
+            filtered.append(t)
+        elif "max" in threshold_key and score > threshold_val:
+            filtered.append(t)
+        else:
+            kept.append(t)
+    shadow_pnl = sum(to_float(t.get("pnl_usd")) for t in kept)
+    avoided = abs(sum(to_float(t.get("pnl_usd")) for t in filtered if to_float(t.get("pnl_usd")) < 0))
+    missed = sum(to_float(t.get("pnl_usd")) for t in filtered if to_float(t.get("pnl_usd")) > 0)
+    return ExperimentResult(experiment_id=spec.experiment_id, base_strategy=spec.base_strategy,
+        sample_window=f"{days[0]}~{days[-1]}", sample_trades=len(trades),
+        original_pnl=round(original_pnl, 4), shadow_pnl=round(shadow_pnl, 4),
+        filtered_trades=len(filtered), avoided_loss=round(avoided, 4), missed_profit=round(missed, 4),
+        hard_stop_before=sum(1 for t in trades if is_hard_stop(t)),
+        hard_stop_after=sum(1 for t in kept if is_hard_stop(t)),
+        candidate_id=spec.candidate_id, source_cases=list(spec.source_cases),
+        change_type=spec.change_type, notes=[f"阈值 {threshold_key}>={threshold_val}，过滤 {len(filtered)} 笔"])
+
+
+def run_filter_ablation(spec: ExperimentSpec, data_root: Path, days: list[str]) -> ExperimentResult:
+    """Filter ablation: baseline measurement for filter removal experiments."""
+    files = strategy_file_for(spec.base_strategy, data_root)
+    trades = [t for t in read_jsonl(files["trades"]) if in_dates(t, set(days), ("exit_time", "time")) and "pnl_usd" in t]
+    original_pnl = sum(to_float(t.get("pnl_usd")) for t in trades)
+    return ExperimentResult(experiment_id=spec.experiment_id, base_strategy=spec.base_strategy,
+        sample_window=f"{days[0]}~{days[-1]}", sample_trades=len(trades),
+        original_pnl=round(original_pnl, 4), shadow_pnl=round(original_pnl, 4),
+        filtered_trades=0, avoided_loss=0, missed_profit=0, candidate_id=spec.candidate_id,
+        source_cases=list(spec.source_cases), change_type=spec.change_type,
+        notes=["消融实验基线，需结合反事实评估判断过滤价值"])
+
+
 def load_shadow_experiments(memory_dir: Path) -> list[ExperimentSpec]:
     candidates_path = candidate_files(memory_dir)
     if not candidates_path.exists():
@@ -386,6 +437,12 @@ def evaluate_spec(spec: ExperimentSpec, data_root: Path, days: list[str]) -> Exp
         return enrich_result(run_v16_confirm_soft_pass(spec, data_root, days), spec)
     if spec.experiment_id.endswith("v11-replacement-quality"):
         return enrich_result(run_v11_replacement_quality(spec, data_root, days), spec)
+    if spec.change_type == "threshold":
+        return enrich_result(run_threshold_experiment(spec, data_root, days), spec)
+    if spec.change_type == "stop_loss":
+        return enrich_result(run_threshold_experiment(spec, data_root, days), spec)
+    if spec.change_type == "filter":
+        return enrich_result(run_filter_ablation(spec, data_root, days), spec)
     if spec.change_type == "confirmation_policy":
         return enrich_result(run_v16_confirm_soft_pass(spec, data_root, days), spec)
     if spec.change_type == "market_stage_filter":

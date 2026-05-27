@@ -2,6 +2,14 @@
 
 This is the durable reason-and-outcome ledger for every material design, code, configuration, deployment, rollback, optimization, or live operational change.
 
+## 2026-05-27 19:30 CST - Phase 3/4/5 shadow experiment configs
+- Trigger / reason: Execute Phase 3/4/5 of FUTURE_EXECUTION_PLAN.md.
+- Completed: Added 10 new experiment specs to `core/experiment.py`: A/v11 entry threshold 115/120, trailing pullback 0.8/1.0; B/v16 ATR stop bands, overheat cap 85; C/v14 strict candidate long65/70, filter ablation (sector, BTC trend). Added `run_threshold_experiment()` and `run_filter_ablation()` to `experiment_runner.py`. Total: 13 experiments. Uploaded to Aliyun.
+- Not completed / remaining: Results need 3/7/14/30 day windows. No strategy code changed.
+- Verification: `py_compile` passed. 13 specs loaded. Aliyun upload OK.
+- Live impact / deployment: Shadow experiments only.
+- Files / release / commit: `core/experiment.py`, `部署工具/experiment_runner.py`, `CHANGELOG.md`.
+
 ## Recording Rule
 
 - Update this file in the same commit as any material repository change.

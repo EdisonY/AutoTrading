@@ -11,6 +11,7 @@
 - Phase 1 已完成：`strategy_truth_ledger.py` 分离主动策略PnL与恢复仓PnL。本地测试结果：A/v11净亏PF=0.01，B/v16净赚PF=5.9，C/v14无数据。
 - Phase 2 已完成：`portal_dashboard.py` 新增"策略质量看板"，直接展示各策略主动PnL、恢复仓PnL、PF、胜率、盈亏比。
 - Phase 6 已完成：`sentinel_quality_review.py` 评估哨兵贡献。本地测试：17,982哨兵决策，开仓率0.1%，过滤率68%。涨幅榜10,097次扫描仅8次开仓。前向收益计算待补充。
+- Phase 3/4/5 已完成：新增10个影子实验配置到 `core/experiment.py`。A/v11：15m阈值115/120、浮动止损回撤0.8/1.0。B/v16：分档止损、过热封顶85。C/v14：候选压缩long65/70、过滤消融（赛道/趋势）。实验总数13个。
 
 ## 2026-05-27 Polymarket 下线 + 内存/C-v14 复核
 - 用户明确要求删除所有 Polymarket 相关文件代码并停掉相关服务。已停止/禁用/移除腾讯 `polymarket-monitor.service`，删除 `/opt/polymarket-lab`，并删除本地 `polymarket_lab` 代码与两套部署脚本。

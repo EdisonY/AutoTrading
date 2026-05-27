@@ -7,6 +7,8 @@
 - 资源约束已写入计划：新增进程RSS<50MB、存储红线15GB、API weight<600/min（50%安全线）。
 - 新增Phase 0.5（架构迁移）、Phase 9（实盘过渡验证）、VPB评估实验、哨兵覆盖度审计、回滚触发条件。
 - 执行顺序：0→0.5→1→2→6→3/4/5→7→8→9。
+- Phase 0.5 已完成：腾讯精简为7服务+1timer，阿里云2个timer（每日全量+每2小时轻量），反向同步已上线。
+- Phase 1 已完成：`strategy_truth_ledger.py` 分离主动策略PnL与恢复仓PnL。本地测试结果：A/v11净亏PF=0.01，B/v16净赚PF=5.9，C/v14无数据。
 
 ## 2026-05-27 Polymarket 下线 + 内存/C-v14 复核
 - 用户明确要求删除所有 Polymarket 相关文件代码并停掉相关服务。已停止/禁用/移除腾讯 `polymarket-monitor.service`，删除 `/opt/polymarket-lab`，并删除本地 `polymarket_lab` 代码与两套部署脚本。

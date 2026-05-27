@@ -23,6 +23,14 @@ This is the durable reason-and-outcome ledger for every material design, code, c
 - Files / release / commit:
 ```
 
+## 2026-05-27 18:30 CST - Phase 1 strategy truth ledger implementation
+- Trigger / reason: Execute Phase 1 of FUTURE_EXECUTION_PLAN.md — create authoritative truth table separating active strategy PnL from recovery positions.
+- Completed: Added `部署工具/strategy_truth_ledger.py`. Reads SQLite `event_store.sqlite3` OPEN/CLOSE/FORCED_CLOSE events and `account_snapshots`. Matches open-close pairs, identifies recovery positions (in snapshots but no matching OPEN event), computes per-strategy stats (win rate, PF, payoff ratio, hard-stop count, recovery count). Outputs `runtime/strategy_truth_latest.json` and `reports/strategy_truth_latest.md`. Uploaded to Aliyun and integrated into both analysis pipelines (daily full + 2-hour refresh).
+- Not completed / remaining: Phase 2 (portal integration) not started. Truth ledger reads from synced SQLite on Aliyun; needs verification after first Aliyun timer run with real Tencent data. Fee/slippage estimates are approximate (100USDT × leverage × 0.05% × 2).
+- Verification: Local `py_compile` passed. Local test run produced correct output: A/v11 closed=16 win_rate=12.5% net_pnl=-25.98 PF=0.01 recovery=3; B/v16 closed=24 win_rate=50% net_pnl=+127.72 PF=5.9 recovery=2; C/v14 closed=0 (limited local data). Aliyun script uploaded and integrated into both `run_shadow_review.sh` and `aliyun_analysis_refresh.sh`.
+- Live impact / deployment: No live strategy change. New analysis script runs on Aliyun only.
+- Files / release / commit: `部署工具/strategy_truth_ledger.py`, `CHANGELOG.md`; Git commit to contain this entry.
+
 ## 2026-05-27 17:30 CST - Phase 0.5 dual-server architecture migration execution
 - Trigger / reason: User approved the dual-server plan and requested immediate execution. Aliyun (39.105.156.210) confirmed: 2 CPU, 1.7GiB RAM (1.4GiB available), 40GB disk (34GB free), Python 3.13.12 with numpy/pandas/paramiko/tomli installed. Only 1 timer running (shadow-review daily 02:20).
 - Completed: (1) Slimmed Tencent `system_alerts.py` — removed portal-refresh, counterfactual, evolution-gate, and market-review service/timer checks (migrated to Aliyun). (2) Created `部署工具/sync_aliyun_reports_to_tencent.py` — reverse sync script uploads Aliyun-generated reports to Tencent. (3) Upgraded Aliyun `run_shadow_review.sh` — added Step 9 reverse sync after portal generation. (4) Stopped/disabled on Tencent: `crypto-portal-refresh.service`, `crypto-counterfactual-open-skips.timer`, `crypto-strategy-evolution-gate.timer`, `crypto-market-review.timer`. (5) Deployed Aliyun `crypto-analysis-refresh.timer` — runs every 2 hours: sync data → counterfactual eval → evolution gate → portal refresh → reverse sync to Tencent. (6) Cleaned MEMORY.md from 463 lines to 73 lines — distilled 2026-05-17~2026-05-24 detailed entries into a compact summary section.

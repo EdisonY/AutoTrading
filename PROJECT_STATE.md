@@ -72,7 +72,7 @@ This file is the long-lived project memory for multi-location development. Daily
 - Phase 2 portal upgraded: `portal_dashboard.py` now shows "策略质量看板" with active-strategy PnL, recovery PnL, PF, win rate, payoff ratio from truth ledger.
 - Phase 6 sentinel review deployed: `sentinel_quality_review.py` runs on Aliyun, measures sentinel signal contribution (open rate 0.1%, filter rate 68%). Forward-return and coverage audit pending.
 - Strategy evolution still needs stronger promotion rigor before auto-upgrade: walk-forward windows, paper fill simulation, fee/slippage modeling, regime segmentation, and post-change rollback rules.
-- SQLite growth remains a watch item: the 2026-05-29 Aliyun snapshot passed `quick_check` but had a logical file size around 1.29GB. Follow-up should inspect page/freelist growth and ensure cleanup/VACUUM keeps DB size compact without disrupting live writes.
+- SQLite growth remains under normal monitoring: the 2026-05-29 read-only check showed Tencent DB about 212MB and Aliyun mirror about 215MB, both `quick_check ok` with `freelist_count=0`. No immediate VACUUM/destructive cleanup is needed, but system alerts and data maintenance should continue watching growth.
 - After the 2026-05-27 decommission, do not recreate Polymarket code, reports, service units, or command-center cards unless the user explicitly reopens that project.
 - After the 2026-05-27 order-failure hardening, monitor fresh `OPEN_FAILED` events by exact Binance code. Rule-driven rejections should appear as `OPEN_SKIPPED/execution_preflight`; any remaining `OPEN_FAILED` means a real API/exchange/account condition still needs diagnosis.
 - GitHub CI is not configured yet.

@@ -83,7 +83,7 @@
 - 腾讯入口页服务口径已修正：`crypto-portal-refresh.service` 和已迁移的 counterfactual/evolution/market-review timer 不再作为腾讯故障或 P0 关注项出现。
 - Aliyun 分析链路已补齐：`shadow_sync_from_tencent.py` 使用 SQLite backup API 生成一致 DB 快照并 quick_check；`sentinel_quality_review.py` 已确认读取 `sentinel_scans`；`counterfactual_open_skips.py` 参数已修到当前 CLI；attention ledger 在 portal 生成前重建；truth/sentinel runtime JSON 和 attention JSON 会反向同步回腾讯。
 - 2026-05-29 02:12 CST 最终状态：腾讯 A/B/C、哨兵、账户快照、系统告警均 active；系统告警 0；关注项 P0=0；账户浮盈约 +91.31 USDT，持仓 6。
-- 剩余关注：Aliyun 同步出的 SQLite 快照 quick_check ok，但逻辑大小约 1.29GB，需要后续检查 page/freelist 与 cleanup/VACUUM，防止再次拖慢分析链路。
+- 剩余关注：后续继续通过 system alerts/data maintenance 监控 SQLite 增长。2026-05-29 02:16 CST 已复核 Tencent DB 约 212MB、Aliyun mirror 约 215MB，均 quick_check ok 且 freelist_count=0，当前不需要立即 VACUUM 或破坏性清理。
 
 ### 用户偏好（持续更新）
 - 中文回复，绝对路径，简洁直接

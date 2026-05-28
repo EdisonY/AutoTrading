@@ -1496,22 +1496,25 @@ def render_html(out_dir: Path) -> str:
     truth_summary = truth.get("summary") or {}
     truth_stats = truth.get("strategy_stats") or {}
     truth_recovery = truth.get("recovery_stats") or {}
-    quality_rows = "".join(
-        f"""
-<tr>
-  <td>{h(strategy)}</td>
-  <td>{h((truth_stats.get(strategy) or {{}}).get('closed_trades', 0))}</td>
-  <td>{h((truth_stats.get(strategy) or {{}}).get('win_rate', 0))}%</td>
-  <td class="num {'pos' if float((truth_stats.get(strategy) or {{}}).get('net_pnl_usd', 0)) >= 0 else 'neg'}">{float((truth_stats.get(strategy) or {{}}).get('net_pnl_usd', 0)):+.2f}</td>
-  <td>{h((truth_stats.get(strategy) or {{}}).get('profit_factor', 0))}</td>
-  <td>{h((truth_stats.get(strategy) or {{}}).get('payoff_ratio', 0))}</td>
-  <td>{h((truth_stats.get(strategy) or {{}}).get('hard_stop_count', 0))}</td>
-  <td>{h((truth_recovery.get(strategy) or {{}}).get('count', 0))}</td>
-  <td class="num {'pos' if float((truth_recovery.get(strategy) or {{}}).get('total_unrealized_pnl', 0)) >= 0 else 'neg'}">{float((truth_recovery.get(strategy) or {{}}).get('total_unrealized_pnl', 0)):+.2f}</td>
-</tr>
-""".strip()
-        for strategy in ["A/v11", "B/v16", "C/v14"]
-    ) or '<tr><td colspan="9">暂无真相台账数据</td></tr>'
+    quality_rows_parts = []
+    for strategy in ["A/v11", "B/v16", "C/v14"]:
+        ts = truth_stats.get(strategy) or {}
+        tr = truth_recovery.get(strategy) or {}
+        closed = ts.get("closed_trades", 0)
+        wr = ts.get("win_rate", 0)
+        net_pnl = float(ts.get("net_pnl_usd", 0))
+        pf = ts.get("profit_factor", 0)
+        payoff = ts.get("payoff_ratio", 0)
+        hs = ts.get("hard_stop_count", 0)
+        rec_count = tr.get("count", 0)
+        rec_upnl = float(tr.get("total_unrealized_pnl", 0))
+        quality_rows_parts.append(
+            f'<tr><td>{h(strategy)}</td><td>{closed}</td><td>{wr}%</td>'
+            f'<td class="num {"pos" if net_pnl >= 0 else "neg"}">{net_pnl:+.2f}</td>'
+            f'<td>{pf}</td><td>{payoff}</td><td>{hs}</td><td>{rec_count}</td>'
+            f'<td class="num {"pos" if rec_upnl >= 0 else "neg"}">{rec_upnl:+.2f}</td></tr>'
+        )
+    quality_rows = "".join(quality_rows_parts) or '<tr><td colspan="9">暂无真相台账数据</td></tr>'
 
     account_rows = "".join(
         f"""

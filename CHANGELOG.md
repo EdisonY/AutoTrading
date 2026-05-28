@@ -2,6 +2,14 @@
 
 This is the durable reason-and-outcome ledger for every material design, code, configuration, deployment, rollback, optimization, or live operational change.
 
+## 2026-05-28 14:00 CST - SQLite cleanup script, pipeline fix, portal fix
+- Trigger / reason: event_store.sqlite3 on Tencent grew to 1.7GB, causing analysis pipeline timeout and SSH unavailability. Portal dashboard had Python syntax error (`{{}}` in f-string).
+- Completed: (1) Added `部署工具/cleanup_event_store.py` — safely deletes SENTINEL_SCANNED/EVENT/SIGNAL older than N days, protects all trading events (OPEN/CLOSE/FORCED_CLOSE/OPEN_FAILED/OPEN_SKIPPED), creates backup before deletion, runs VACUUM. (2) Fixed `portal_dashboard.py` `{{}}` syntax error — replaced with proper Python dict construction. (3) Updated `aliyun_analysis_refresh.sh` — removed `set -euo pipefail`, added `timeout 600` for sync step, each step uses `|| echo WARN` instead of failing the pipeline. (4) Analysis scripts uploaded to Tencent for local execution (data-local-compute pattern).
+- Not completed / remaining: Tencent server SSH unreachable (likely OOM from portal_dashboard.py on 1.7GB SQLite). Need to wait for recovery, then run cleanup_event_store.py to shrink DB. A/v11 -1109 is Testnet account issue (keys loaded correctly in process). Analysis pipeline architecture needs to shift: run on Tencent locally, sync only reports to Aliyun.
+- Verification: cleanup_event_store.py dry-run passed locally. portal_dashboard.py compiles and generates locally. Aliyun portal updated to 11:15 CST.
+- Live impact / deployment: No strategy code changed. Infrastructure fixes only.
+- Files / release / commit: `部署工具/cleanup_event_store.py`, `部署工具/portal_dashboard.py`, `部署工具/aliyun_analysis_refresh.sh`, `CHANGELOG.md`.
+
 ## 2026-05-28 10:15 CST - Fix A/v11 OPEN_FAILED -1109 and B/v16 CLOSE pnl audit
 - Trigger / reason: Daily review found 694 A/v11 OPEN_FAILED with -1109 Invalid account, and B/v16 CLOSE events with pnl=None.
 - Completed: (1) Root cause for -1109: all three scanner services missing `EnvironmentFile=/etc/crypto-auto-trader/trading.env`. Added EnvironmentFile to crypto-scanner, crypto-scanner-v14, crypto-scanner-v16 services. Reloaded daemon and restarted all three. (2) Root cause for pnl=None: EventStoreWriter stores pnl in payload_json.raw sub-field, not at top level. Actual data exists (e.g. GRASSUSDT pnl=-1.5034, NEARUSDT pnl=+15.9727 in raw). This is a display/query issue, not data loss.

@@ -2,6 +2,23 @@
 
 This is the durable reason-and-outcome ledger for every material design, code, configuration, deployment, rollback, optimization, or live operational change.
 
+## 2026-05-28 15:30 CST - A/v11 Testnet account recovery
+- Trigger / reason: A/v11 Testnet account returned -1109 Invalid account for all write operations (order, leverage, evict) since 2026-05-27 18:02. Read operations (account balance) still worked.
+- Root cause: Binance Testnet platform issue — account was marked invalid between 17:50-18:02 on 05-27 with no abnormal client behavior. Earliest -1109 appeared in EVICT_FAILED (weak position eviction), not in new order placement. Testnet periodically resets/inactivates accounts.
+- Completed: (1) User registered new Testnet account with 5000 USDT balance. (2) Updated `/etc/crypto-auto-trader/trading.env` with new BINANCE_A_API_KEY and BINANCE_A_API_SECRET. (3) Set dual-side position mode via API. (4) Restarted crypto-scanner service. (5) Verified BTC market buy+sell works. (6) Confirmed no new -1109 errors after restart.
+- Not completed / remaining: Scanner needs to complete first full scan cycle with new account to confirm end-to-end flow.
+- Verification: API test: Account balance=5000, BTC BUY orderId=13291126667, sell successful. Scanner service active.
+- Live impact / deployment: A/v11 now uses new Testnet API key. Existing positions unaffected (positions are on exchange, not local).
+- Files / release / commit: `/etc/crypto-auto-trader/trading.env` (API key update), `CHANGELOG.md`.
+
+## 2026-05-28 14:25 CST - Sentinel scans moved to dedicated table
+- Trigger / reason: User requested sentinel scan records stored in separate table by date, not mixed into events table.
+- Completed: (1) Added `sentinel_scans` table to `core/event_store.py` DDL with date column and per-day indexes. (2) Added `write_sentinel_scan()` method to `EventStoreWriter`. (3) Modified `策略文件/scanner.py` and `策略文件/scanner_v14.py`: added `_log_sentinel_scan_event()` that writes to sentinel_scans table instead of events. (4) Sentinel scans now: still write JSONL (daily shard), still write to SQLite decision log, but NO LONGER write to events table.
+- Not completed / remaining: Deploy to Tencent (pending SSH recovery). `sentinel_quality_review.py` needs update to read from `sentinel_scans` table instead of events. Migration script to move existing SENTINEL_SCANNED from events to sentinel_scans.
+- Verification: `py_compile` passed for core/event_store.py, 策略文件/scanner.py, 策略文件/scanner_v14.py.
+- Live impact / deployment: Not yet deployed. Scanner restart needed after deploy.
+- Files / release / commit: `core/event_store.py`, `策略文件/scanner.py`, `策略文件/scanner_v14.py`, `CHANGELOG.md`.
+
 ## 2026-05-28 14:30 CST - Sentinel scans separated into dedicated table
 - Trigger / reason: event_store.sqlite3 grew to 1.7GB due to SENTINEL_SCANNED events (~97% of rows). User requested sentinel data in separate table with daily partitioning.
 - Completed: (1) Added `sentinel_scans` table to `core/event_store.py` DDL with columns: ts, date (YYYY-MM-DD), strategy, symbol, event_type, reason, category, decision_stage, filter_layer, change_pct, velocity_pct, abs_velocity_pct, quote_volume, scan_result, payload_json. Indexes on date, (strategy,date), (symbol,date). (2) Added `EventStoreWriter.write_sentinel_scan()` method. (3) Modified `scanner.py` and `scanner_v14.py` — sentinel scans now write to `sentinel_scans` table via `_log_sentinel_scan_event()`, no longer pollute `events` table. (4) Modified `sentinel_quality_review.py` — reads from `sentinel_scans` first, falls back to `events` for backward compatibility. (5) Updated `cleanup_event_store.py` — also cleans `sentinel_scans` table by date column.

@@ -47,7 +47,7 @@ This file is the long-lived project memory for multi-location development. Daily
 - `PROJECT_STATE.md`: current state and migration rules. Update this when architecture, deployment, or unresolved priorities change.
 - `记忆文档/MEMORY.md`: chronological memory of decisions and major changes.
 - `记忆文档/FUTURE_EXECUTION_PLAN.md`: detailed future execution plan for strategy truth ledger, command-center quality board, A/B/C experiments, sentinel contribution, recovery-position management, and promotion gate hardening.
-- `runtime/event_store.sqlite3`: canonical attention items and acknowledgements (`attention_items`, `attention_acknowledgements`) plus event/account tables.
+- `runtime/event_store.sqlite3`: canonical event store. Tables: `events` (trading decisions), `sentinel_scans` (sentinel data, date-partitioned), `account_snapshots`, `attention_items`, `attention_acknowledgements`. DB was cleaned from 1.7GB to 85MB on 2026-05-28.
 - `research_memory/attention/open_items.json`: exported attention ledger for portal/live sync. Items stay visible until explicitly confirmed or resolved; a daily report rolling over must not remove them.
 - `research_memory/hypotheses`, `research_memory/approvals`, `research_memory/lessons`, and `research_memory/promotions`: compact research memory worth carrying between machines.
 
@@ -63,8 +63,10 @@ This file is the long-lived project memory for multi-location development. Daily
 
 - User acknowledgement workflow is script-driven through `部署工具/acknowledge_attention_items.py`; a portal button/UI for acknowledgements is still not implemented.
 - Execute `记忆文档/FUTURE_EXECUTION_PLAN.md` in order: dual-server architecture migration (Phase 0.5 ✅), strategy truth ledger (Phase 1 ✅), command-center quality board (Phase 2 ✅), sentinel quality review (Phase 6 ✅), A/B/C shadow experiments (Phase 3/4/5 ✅), recovery-position policy review (Phase 7 ✅), promotion gate hardening (Phase 8 ✅), and testnet-to-live transition (Phase 9 ✅).
-- Architecture optimization: Tencent keeps only 6 API-dependent services; Aliyun takes all analysis/report/experiment/gate tasks as Timer jobs with reverse report sync.
-- Phase 1 truth ledger deployed: `strategy_truth_ledger.py` runs on Aliyun, separates active strategy PnL from recovery positions.
+- Architecture: Tencent runs 7 services (scanner/v11, scanner_v14, scanner_v16, system_alerts, market_data_cache, market_mover_sentinel, account_snapshot) + data_maintenance timer. Aliyun runs analysis-refresh timer (every 2h), shadow-review timer (daily), attention-api service (port 8090).
+- Analysis pipeline runs on Tencent locally (SQLite is 85MB, runs in <1s). Portal and reports generated on Tencent, synced to Aliyun via scp.
+- A/v11 API key updated on 2026-05-28: new Testnet account with 5000 USDT, dual-side position mode enabled. Previous account was invalidated by Binance Testnet platform.
+- Sentinel scans separated into dedicated `sentinel_scans` table with date column (YYYY-MM-DD) for efficient daily queries and cleanup.
 - Phase 2 portal upgraded: `portal_dashboard.py` now shows "策略质量看板" with active-strategy PnL, recovery PnL, PF, win rate, payoff ratio from truth ledger.
 - Phase 6 sentinel review deployed: `sentinel_quality_review.py` runs on Aliyun, measures sentinel signal contribution (open rate 0.1%, filter rate 68%). Forward-return and coverage audit pending.
 - Strategy evolution still needs stronger promotion rigor before auto-upgrade: walk-forward windows, paper fill simulation, fee/slippage modeling, regime segmentation, and post-change rollback rules.

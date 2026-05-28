@@ -67,6 +67,15 @@
 - A/v11 保证金尺寸修复（2026-05-25）：按目标保证金 100USDT 计算数量
 - A/v11 同币种叠仓门控（2026-05-25）：禁止同币种重复开仓
 - C/v14 信号口径修正（2026-05-26）：只记 1h 入场候选为 SIGNAL
+
+### 2026-05-28 运维修复
+- event_store.sqlite3 从 1.7GB 清理到 85MB（删除 SENTINEL_SCANNED/SIGNAL/EVENT 旧数据，VACUUM）
+- 哨兵扫描分离到独立表 `sentinel_scans`（按 date 分区），不再写入 events 表
+- 分析流水线从阿里云迁回腾讯本地运行（SQLite 85MB，全流水线 <1s 完成）
+- A/v11 Testnet 账户被平台封禁（-1109），用户注册新账户，API key 已更新
+- portal_dashboard.py 修复 `{{}}` f-string 语法错误
+- 阿里云流水线 timeout 从默认 90s 增到 900s，sync 步骤加 timeout 600
+- 关注项确认 API 服务部署在阿里云 8090 端口（attention_api_server.py）
 - 哨兵 400 修复（2026-05-24）：testnet 不可用币种过滤
 - Binance 下单预检硬化（2026-05-27）：OPEN_SKIPPED vs OPEN_FAILED 归因
 

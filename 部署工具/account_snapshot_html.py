@@ -29,11 +29,21 @@ if (ROOT / "交易客户端").exists():
     sys.path.insert(0, str(ROOT / "交易客户端"))
 else:
     sys.path.insert(0, str(ROOT))
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from core.position_utils import infer_position_side, leveraged_loss_pct, position_unrealized_pnl, raw_position_side
 
 ACCOUNTS = [
     ("A", "v11", "半木夏", "binance_client", "BinanceClient", 30.0),
     ("B", "v16", "订单流 CVD/OFI", "binance_client_v2", "BinanceClientV2", 10.0),
     ("C", "v14", "四维度评分", "binance_client_v3", "BinanceClientV3", 12.0),
+]
+
+ACCOUNTS = [
+    ("A", "v11", "A/v11 replacement quality", "binance_client", "BinanceClient", 30.0),
+    ("B", "v16", "B/v16 order-flow CVD/OFI", "binance_client_v2", "BinanceClientV2", 10.0),
+    ("C", "v14", "C/v14 four-dimensional scoring", "binance_client_v3", "BinanceClientV3", 12.0),
 ]
 
 
@@ -63,18 +73,21 @@ def parse_balance(bal):
 
 def position_row(p):
     amt = float(p.get("positionAmt", 0) or 0)
-    side = (p.get("positionSide") or ("LONG" if amt > 0 else "SHORT")).upper()
+    side, side_source = infer_position_side(p)
+    original_side = raw_position_side(p)
     entry = float(p.get("entryPrice", 0) or 0)
     mark = float(p.get("markPrice", 0) or 0)
     lev = float(p.get("leverage", 4) or 4)
-    upnl = float(p.get("unRealizedProfit", p.get("unrealizedProfit", 0)) or 0)
-    loss = 0.0
-    if entry > 0 and mark > 0:
-        loss = max(0.0, ((entry - mark) / entry * 100 * lev) if side == "LONG" else ((mark - entry) / entry * 100 * lev))
+    upnl, upnl_source = position_unrealized_pnl(p, side)
+    loss = leveraged_loss_pct(p, side)
     notional = abs(amt) * mark
     return {
         "symbol": p.get("symbol", ""),
         "side": side,
+        "raw_side": original_side,
+        "side_source": side_source,
+        "side_mismatch": bool(original_side and original_side != side),
+        "upnl_source": upnl_source,
         "qty": abs(amt),
         "entry": entry,
         "mark": mark,

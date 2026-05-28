@@ -93,3 +93,9 @@
 - 所有变更必须同步 Git + CHANGELOG.md
 
 ---
+## 2026-05-29 全局运行自检与账户方向口径修复
+- 触发：用户要求整体检查项目、策略运行、服务器运行并自动修复问题。
+- 发现并修复：Aliyun 每日 `crypto-shadow-review.timer` 原脚本只刷新 evolution/portal 的一部分，没有在 portal 前重建 decision attention，导致已验证的 P0 没有及时进入入口关注台账。现已新增并部署完整 `aliyun_shadow_review.sh`：同步腾讯 SQLite -> truth ledger -> sentinel review -> research memory -> signal quality -> experiments -> counterfactual -> evolution gate -> decision attention -> research dashboard -> portal -> 反向同步腾讯。
+- 发现并修复：Binance testnet 个别持仓行 `positionSide` 与真实经济方向冲突，例如 C/v14 FIL 原始 `positionSide=LONG` 但 `positionAmt/notional/raw upnl` 显示实际是 SHORT；B/v16 NEAR/GRASS 也有类似冲突。新增 `core/position_utils.py`，统一用“原始浮盈与 entry/mark 匹配”优先推断有效方向，账户快照、日报当前持仓、共享模型、开仓后确认持仓都改用同一口径。
+- 当前验证：2026-05-29 02:56 CST 拉取 live context 显示腾讯六个预期服务全部 active，系统告警 0，账户浮盈约 +28.46 USDT，持仓 8，关注项 P0=1/P1=1/P2=10。P0 是策略进化候选提醒，不是服务器故障。
+- 部署记录：腾讯 account、A/v11、B/v16、C/v14、portal/system-alerts 已部署；Aliyun shadow 已部署。后续 agent 不要再按原始 `positionSide` 单独解释当前持仓方向，必须通过 `core.position_utils.infer_position_side()`。

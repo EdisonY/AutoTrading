@@ -11,6 +11,8 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from typing import Any
 
+from core.position_utils import infer_position_side, leveraged_loss_pct, position_unrealized_pnl
+
 
 def _float(value: Any, default: float = 0.0) -> float:
     try:
@@ -161,19 +163,13 @@ class PositionSnapshot:
     @classmethod
     def from_exchange_row(cls, account: str, strategy: str, row: dict[str, Any]) -> "PositionSnapshot":
         qty = _float(row.get("positionAmt"))
-        side = str(row.get("positionSide") or ("LONG" if qty > 0 else "SHORT")).upper()
+        side, _side_source = infer_position_side(row)
         entry = _float(row.get("entryPrice"))
         mark = _float(row.get("markPrice"))
         lev = _float(row.get("leverage"), 4.0)
-        upnl = _float(row.get("unRealizedProfit", row.get("unrealizedProfit")))
+        upnl, _upnl_source = position_unrealized_pnl(row, side)
         notional = abs(qty) * mark
-        if entry > 0 and mark > 0 and lev > 0:
-            if side == "LONG":
-                loss = max(0.0, (entry - mark) / entry * 100 * lev)
-            else:
-                loss = max(0.0, (mark - entry) / entry * 100 * lev)
-        else:
-            loss = 0.0
+        loss = leveraged_loss_pct(row, side)
         return cls(
             account=account,
             strategy=strategy,

@@ -55,6 +55,7 @@ from core.review_analytics import (  # noqa: E402
     summarize_counter,
     summarize_layer_counter,
 )
+from core.position_utils import infer_position_side, position_unrealized_pnl  # noqa: E402
 
 REPORTS_DIR = ROOT / "reports"
 REPORTS_DIR.mkdir(exist_ok=True)
@@ -259,14 +260,12 @@ def load_current_snapshot(strategy: dict) -> dict:
             if abs(amt) <= 0.0001:
                 continue
             snapshot["positions"] += 1
-            side = str(pos.get("positionSide") or "").lower()
-            if not side:
-                side = "long" if amt > 0 else "short"
+            side = infer_position_side(pos)[0].lower()
             if side == "long":
                 snapshot["longs"] += 1
             elif side == "short":
                 snapshot["shorts"] += 1
-            snapshot["unrealized"] += to_float(pos.get("unRealizedProfit") or pos.get("unrealizedProfit"))
+            snapshot["unrealized"] += position_unrealized_pnl(pos, side)[0]
     except Exception as exc:
         snapshot["error"] = str(exc)[:120]
     return snapshot

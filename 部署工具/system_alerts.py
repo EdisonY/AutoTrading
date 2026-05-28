@@ -33,6 +33,7 @@ ALERT_JSON = ROOT / "runtime" / "alerts_latest.json"
 ALERT_LOG = ROOT / "logs" / "alerts.jsonl"
 ALERT_MD = ROOT / "reports" / "alerts_latest.md"
 CST = timezone(timedelta(hours=8))
+ATTENTION_STALE_SECONDS = 150 * 60
 
 SERVICES = [
     "crypto-market-data-cache.service",
@@ -244,7 +245,7 @@ def collect_alerts() -> dict[str, Any]:
         try:
             attention_payload = json.loads(ATTENTION_LATEST.read_text(encoding="utf-8", errors="replace"))
             generated_at = parse_dt(attention_payload.get("generated_at"))
-            if not generated_at or (now - generated_at).total_seconds() > 10 * 60:
+            if not generated_at or (now - generated_at).total_seconds() > ATTENTION_STALE_SECONDS:
                 alerts.append({"level": "warn", "title": "持久关注台账偏旧", "body": f"最新台账 {generated_at or '无'}"})
         except Exception as exc:
             alerts.append({"level": "warn", "title": "持久关注台账读取失败", "body": str(exc)})

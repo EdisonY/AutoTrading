@@ -6,6 +6,8 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+from core.position_utils import infer_position_side
+
 
 Side = Literal["long", "short"]
 
@@ -233,12 +235,10 @@ class ExecutionEngine:
                 for p in positions:
                     if p.get("symbol") != symbol:
                         continue
-                    pos_side = str(p.get("positionSide", "")).upper()
                     amt = float(p.get("positionAmt", 0) or 0)
+                    pos_side = infer_position_side(p)[0]
                     if pos_side == side.upper():
                         qty = abs(amt)
-                    elif pos_side in ("", "BOTH"):
-                        qty = abs(amt) if ((side == "long" and amt > 0) or (side == "short" and amt < 0)) else 0.0
                     else:
                         qty = 0.0
                     if qty > 0:

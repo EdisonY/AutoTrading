@@ -56,10 +56,11 @@ This file is the long-lived project memory for multi-location development. Daily
 ## Current Open Attention
 
 - A/v11 sizing/risk must remain watched from real-time account snapshots and automatic alerts.
-- Strategy evolution currently has no P0. `EXP-20260523-v11-replacement-quality` is now P2 `small_live_monitoring`; it is approved only for guarded small-live observation, not full rollout.
+- Strategy evolution currently has one P0 visible in the command center: `EXP-20260523-v11-replacement-quality` is `verified_upgrade_ready` and should be reviewed as an explicit decision item, not auto-rolled out. Earlier guarded-small-live approval remains a limited observation path, not full rollout permission.
 - User-confirmed archived P0 system items: `入口页刷新失败`, `总入口页面偏旧`, and the 2026-05-26 21:56 CST OOM alert. They remain in SQLite acknowledgement history but no longer occupy P0.
 - B/v16 perceived two-day inactivity was a visibility issue: the event store showed a 2026-05-26 09:21:29 +08:00 `XRPUSDT` short open plus earlier same-day opens.
 - C/v14 reporting now uses entry-candidate wording. The 2026-05-25 daily review shows 57 entry candidates versus 46378 raw signals; raw data is still used for funnel analysis, but should not be read as executable signal count.
+- Account snapshots now normalize live position direction through `core/position_utils.py`. Binance testnet rows with contradictory `positionSide` are interpreted by matching raw unrealized PnL against entry/mark first; the raw side and inference source remain in the snapshot for audit.
 
 ## Not Done / Next
 
@@ -67,6 +68,7 @@ This file is the long-lived project memory for multi-location development. Daily
 - Execute `记忆文档/FUTURE_EXECUTION_PLAN.md` in order: dual-server architecture migration (Phase 0.5 ✅), strategy truth ledger (Phase 1 ✅), command-center quality board (Phase 2 ✅), sentinel quality review (Phase 6 ✅), A/B/C shadow experiments (Phase 3/4/5 ✅), recovery-position policy review (Phase 7 ✅), promotion gate hardening (Phase 8 ✅), and testnet-to-live transition (Phase 9 ✅).
 - Architecture: Tencent runs 7 services (scanner/v11, scanner_v14, scanner_v16, system_alerts, market_data_cache, market_mover_sentinel, account_snapshot) + data_maintenance timer. Aliyun runs analysis-refresh timer (every 2h), shadow-review timer (daily), attention-api service (port 8090).
 - Analysis/report pipeline runs on Aliyun from synced Tencent data; generated portal/reports are synced back to Tencent for viewing. Tencent keeps live trading/API-dependent services and local SQLite ingestion.
+- Aliyun daily shadow-review (`run_shadow_review.sh`) now runs the full report chain through decision attention and portal generation before reverse-syncing to Tencent; hourly analysis refresh remains separate.
 - A/v11 API key updated on 2026-05-28: new Testnet account with 5000 USDT, dual-side position mode enabled. Previous account was invalidated by Binance Testnet platform.
 - Sentinel scans separated into dedicated `sentinel_scans` table with date column (YYYY-MM-DD) for efficient daily queries and cleanup.
 - Phase 2 portal upgraded: `portal_dashboard.py` now shows "策略质量看板" with active-strategy PnL, recovery PnL, PF, win rate, payoff ratio from truth ledger.

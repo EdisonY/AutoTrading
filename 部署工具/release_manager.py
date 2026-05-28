@@ -80,6 +80,7 @@ CORE_FILES = [
     file_pair("core/kline_cache.py"),
     file_pair("core/market_data_cache.py"),
     file_pair("core/market_watchlist.py"),
+    file_pair("core/position_utils.py"),
     file_pair("core/risk_engine.py"),
     file_pair("core/sentinel_event_bus.py"),
     file_pair("core/sentinel_scanner.py"),
@@ -93,6 +94,7 @@ CORE_FILES = [
 RESEARCH_CORE = [
     file_pair("core/__init__.py"),
     file_pair("core/models.py"),
+    file_pair("core/position_utils.py"),
     file_pair("core/review_analytics.py"),
     file_pair("core/experiment.py"),
     file_pair("core/research_memory.py"),
@@ -214,11 +216,12 @@ ALIYUN_COMPONENTS: dict[str, dict[str, Any]] = {
             file_pair("部署工具/sync_aliyun_reports_to_tencent.py", "sync_aliyun_reports_to_tencent.py"),
             file_pair("部署工具/attention_api_server.py", "attention_api_server.py"),
             file_pair("部署工具/aliyun_analysis_refresh.sh", "aliyun_analysis_refresh.sh"),
+            file_pair("部署工具/aliyun_shadow_review.sh", "run_shadow_review.sh"),
             file_pair("部署工具/signal_quality_review.py", "signal_quality_review.py"),
             file_pair("部署工具/strategy_evolution_gate.py", "strategy_evolution_gate.py"),
         ],
         "services": [],
-        "post": [],
+        "post": ["chmod +x {root}/aliyun_analysis_refresh.sh {root}/run_shadow_review.sh"],
     }
 }
 ALIYUN_COMPONENTS["all"] = ALIYUN_COMPONENTS["shadow"]

@@ -2,6 +2,14 @@
 
 This is the durable reason-and-outcome ledger for every material design, code, configuration, deployment, rollback, optimization, or live operational change.
 
+## 2026-05-28 10:15 CST - Fix A/v11 OPEN_FAILED -1109 and B/v16 CLOSE pnl audit
+- Trigger / reason: Daily review found 694 A/v11 OPEN_FAILED with -1109 Invalid account, and B/v16 CLOSE events with pnl=None.
+- Completed: (1) Root cause for -1109: all three scanner services missing `EnvironmentFile=/etc/crypto-auto-trader/trading.env`. Added EnvironmentFile to crypto-scanner, crypto-scanner-v14, crypto-scanner-v16 services. Reloaded daemon and restarted all three. (2) Root cause for pnl=None: EventStoreWriter stores pnl in payload_json.raw sub-field, not at top level. Actual data exists (e.g. GRASSUSDT pnl=-1.5034, NEARUSDT pnl=+15.9727 in raw). This is a display/query issue, not data loss.
+- Not completed / remaining: EventStoreWriter could be enhanced to extract pnl_usd/pnl_pct from raw to top-level columns for easier querying. B/v16 CLOSE events should populate top-level pnl fields.
+- Verification: All three scanner services active/running after restart. EnvironmentFile confirmed in service config.
+- Live impact / deployment: A/v11 should now successfully open positions with valid API key. No strategy logic changed.
+- Files / release / commit: `CHANGELOG.md`; systemd service configs modified on Tencent server.
+
 ## 2026-05-27 21:45 CST - Attention API server and portal confirmation buttons
 - Trigger / reason: User requested server-side API for attention item confirmation instead of script-only workflow.
 - Completed: (1) Added `部署工具/attention_api_server.py` — lightweight HTTP API using Python built-in http.server, endpoints: GET /api/attention, POST /api/attention/ack, POST /api/attention/resolve, GET /api/health. Supports both SQLite and JSON fallback. (2) Deployed as `crypto-attention-api.service` on Aliyun port 8090. (3) Updated `portal_dashboard.py` — added "确认" button in attention table, JavaScript calls API via AJAX. (4) Synced attention JSON to Aliyun.

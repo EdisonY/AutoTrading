@@ -108,7 +108,9 @@ TENCENT_COMPONENTS: dict[str, dict[str, Any]] = {
             file_pair("部署工具/portal_refresh_service.py", "portal_refresh_service.py"),
             file_pair("部署工具/system_alerts.py", "system_alerts.py"),
         ],
-        "services": ["crypto-portal-refresh.service", "crypto-system-alerts.service"],
+        # Portal generation moved to Aliyun. Tencent keeps only the alert service
+        # here so a portal deploy cannot restart an intentionally inactive unit.
+        "services": ["crypto-system-alerts.service"],
         "post": [
             "{python} decision_attention.py || true",
             "{python} portal_dashboard.py --out-dir {root}/reports",
@@ -206,6 +208,12 @@ ALIYUN_COMPONENTS: dict[str, dict[str, Any]] = {
             file_pair("部署工具/research_memory_builder.py", "research_memory_builder.py"),
             file_pair("部署工具/research_review_dashboard.py", "research_review_dashboard.py"),
             file_pair("部署工具/shadow_sync_from_tencent.py", "shadow_sync_from_tencent.py"),
+            file_pair("部署工具/strategy_truth_ledger.py", "strategy_truth_ledger.py"),
+            file_pair("部署工具/sentinel_quality_review.py", "sentinel_quality_review.py"),
+            file_pair("部署工具/counterfactual_open_skips.py", "counterfactual_open_skips.py"),
+            file_pair("部署工具/sync_aliyun_reports_to_tencent.py", "sync_aliyun_reports_to_tencent.py"),
+            file_pair("部署工具/attention_api_server.py", "attention_api_server.py"),
+            file_pair("部署工具/aliyun_analysis_refresh.sh", "aliyun_analysis_refresh.sh"),
             file_pair("部署工具/signal_quality_review.py", "signal_quality_review.py"),
             file_pair("部署工具/strategy_evolution_gate.py", "strategy_evolution_gate.py"),
         ],

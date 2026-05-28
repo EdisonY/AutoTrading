@@ -40,6 +40,12 @@ UPLOADS = [
     (ROOT / "部署工具" / "research_review_dashboard.py", f"{REMOTE_DIR}/research_review_dashboard.py"),
     (ROOT / "部署工具" / "portal_dashboard.py", f"{REMOTE_DIR}/portal_dashboard.py"),
     (ROOT / "部署工具" / "apply_research_approval.py", f"{REMOTE_DIR}/apply_research_approval.py"),
+    (ROOT / "部署工具" / "strategy_truth_ledger.py", f"{REMOTE_DIR}/strategy_truth_ledger.py"),
+    (ROOT / "部署工具" / "sentinel_quality_review.py", f"{REMOTE_DIR}/sentinel_quality_review.py"),
+    (ROOT / "部署工具" / "counterfactual_open_skips.py", f"{REMOTE_DIR}/counterfactual_open_skips.py"),
+    (ROOT / "部署工具" / "sync_aliyun_reports_to_tencent.py", f"{REMOTE_DIR}/sync_aliyun_reports_to_tencent.py"),
+    (ROOT / "部署工具" / "attention_api_server.py", f"{REMOTE_DIR}/attention_api_server.py"),
+    (ROOT / "部署工具" / "aliyun_analysis_refresh.sh", f"{REMOTE_DIR}/aliyun_analysis_refresh.sh"),
 ]
 
 
@@ -84,6 +90,8 @@ cd {REMOTE_DIR}
 export PYTHONIOENCODING=utf-8
 {PYTHON} shadow_sync_from_tencent.py --days 3
 timeout 180s {PYTHON} research_memory_builder.py --data-root {REMOTE_DIR}/server_logs_tencent --out-dir {REMOTE_DIR}/research_memory --top 20 --min-abs-move 8 --market-limit 80 || true
+{PYTHON} strategy_truth_ledger.py --db {REMOTE_DIR}/server_logs_tencent/runtime/event_store.sqlite3 --runtime-dir {REMOTE_DIR}/runtime --reports-dir {REMOTE_DIR}/reports || true
+{PYTHON} sentinel_quality_review.py --db {REMOTE_DIR}/server_logs_tencent/runtime/event_store.sqlite3 --runtime-dir {REMOTE_DIR}/runtime --reports-dir {REMOTE_DIR}/reports || true
 {PYTHON} signal_quality_review.py --days 3 --data-root {REMOTE_DIR}/server_logs_tencent || true
 {PYTHON} experiment_runner.py --data-root {REMOTE_DIR}/server_logs_tencent --memory-dir {REMOTE_DIR}/research_memory --days 3 --windows 3,7,14,30
 {PYTHON} experiment_report.py --results {REMOTE_DIR}/experiments/results/latest.jsonl --out-dir {REMOTE_DIR}/reports

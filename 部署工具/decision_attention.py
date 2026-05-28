@@ -34,6 +34,13 @@ STRATEGY_EVOLUTION_JSON = RUNTIME_DIR / "strategy_evolution_latest.json"
 EVENT_STORE_DB = RUNTIME_DIR / "event_store.sqlite3"
 CST = timezone(timedelta(hours=8))
 PRIORITY_ORDER = {"P0": 0, "P1": 1, "P2": 2, "P3": 3}
+SUPPRESSED_ARCHIVED_KEYWORDS = (
+    "crypto-portal-refresh.service",
+    "crypto-market-review.timer",
+    "crypto-counterfactual-open-skips.timer",
+    "crypto-strategy-evolution-gate.timer",
+    "polymarket",
+)
 
 
 def now_cst() -> datetime:
@@ -173,6 +180,14 @@ def priority_from_level(level: str) -> str:
     return "P2"
 
 
+def is_suppressed_archived_item(item: dict[str, Any]) -> bool:
+    text = " ".join(
+        str(item.get(key) or "").lower()
+        for key in ("item_id", "category", "title", "evidence", "source")
+    )
+    return any(keyword in text for keyword in SUPPRESSED_ARCHIVED_KEYWORDS)
+
+
 def make_item(
     item_id: str,
     priority: str,
@@ -265,6 +280,8 @@ def detect_alert_items() -> list[dict[str, Any]]:
         title = str(alert.get("title") or "系统告警")
         body = str(alert.get("body") or "")
         level = str(alert.get("level") or "warn")
+        if is_suppressed_archived_item({"title": title, "evidence": body}):
+            continue
         out.append(
             make_item(
                 item_id=f"alert:{slug(title)}",
@@ -452,6 +469,8 @@ def merge_items(existing: dict[str, dict[str, Any]], detected: list[dict[str, An
     detected_by_id = {str(item["item_id"]): item for item in detected if item.get("item_id")}
     merged: dict[str, dict[str, Any]] = {}
     for item_id, item in detected_by_id.items():
+        if is_suppressed_archived_item(item):
+            continue
         if is_acknowledged(item, acknowledgements):
             continue
         prior = existing.get(item_id, {})
@@ -464,6 +483,17 @@ def merge_items(existing: dict[str, dict[str, Any]], detected: list[dict[str, An
         merged[item_id] = current
     for item_id, prior in existing.items():
         if item_id in merged:
+            continue
+        if is_suppressed_archived_item(prior):
+            current = dict(prior)
+            current["status"] = "archived"
+            current["acknowledged_at"] = current.get("acknowledged_at") or now
+            current["acknowledged_reason"] = (
+                current.get("acknowledged_reason")
+                or "Component intentionally migrated or decommissioned"
+            )
+            current["last_seen"] = current.get("last_seen") or now
+            merged[item_id] = current
             continue
         ack = acknowledgements.get(item_id)
         if ack and str(ack.get("status") or "") in {"acknowledged", "archived", "resolved"}:

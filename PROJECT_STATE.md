@@ -1,6 +1,6 @@
 # AutoTrading Project State
 
-Last updated: 2026-05-27 Asia/Shanghai
+Last updated: 2026-05-28 Asia/Shanghai
 
 This file is the long-lived project memory for multi-location development. Daily reports may roll forward, but this file records the current architecture, what is done, what is not done, and what must not be forgotten.
 
@@ -36,6 +36,8 @@ This file is the long-lived project memory for multi-location development. Daily
 - `部署工具/pull_live_context.py` provides one-command compact live-state sync from Tencent into ignored local files before making current PnL/position/service conclusions.
 - `部署工具/pull_live_context.py` now uses OpenSSH compressed grouped pulls with hard deadlines, so live sync should fail loudly instead of hanging silently. It pulls portal, alerts, account snapshot, strategy evolution, counterfactuals, daily market review latest MD/HTML, market snapshot, and attention ledger.
 - `部署工具/release_manager.py` provides component-based dry-run deploys, remote backups, release manifests, service restarts, release listing, and rollback.
+- `部署工具/release_manager.py` treats Tencent portal deploys as alert/report-file deploys only; it must not restart the intentionally inactive Tencent `crypto-portal-refresh.service`. Aliyun `shadow` deploys include truth ledger, sentinel quality review, counterfactual report, attention API, analysis refresh, reverse-sync scripts, and the SQLite snapshot sync path.
+- `部署工具/shadow_sync_from_tencent.py` syncs Tencent SQLite through the SQLite `backup()` API and verifies the copied DB with `pragma quick_check` before Aliyun analysis reads it.
 - `部署工具/git_change_guard.py` enforces that material staged code/config/tool changes include a `CHANGELOG.md` entry and rejects staged runtime/secret-like artifacts.
 - Tencent server has persistent 2G swap configured through `/swapfile` and `/etc/fstab`; system alerts watch memory, swap, and recent OOM kernel events.
 
@@ -61,15 +63,16 @@ This file is the long-lived project memory for multi-location development. Daily
 
 ## Not Done / Next
 
-- User acknowledgement workflow is script-driven through `部署工具/acknowledge_attention_items.py`; a portal button/UI for acknowledgements is still not implemented.
+- User acknowledgement workflow has both a script path (`部署工具/acknowledge_attention_items.py`) and a portal/API path (`crypto-attention-api.service` + `/api/attention/ack`). Continue verifying that browser-side acknowledgements write to SQLite and refresh `research_memory/attention/open_items.json`.
 - Execute `记忆文档/FUTURE_EXECUTION_PLAN.md` in order: dual-server architecture migration (Phase 0.5 ✅), strategy truth ledger (Phase 1 ✅), command-center quality board (Phase 2 ✅), sentinel quality review (Phase 6 ✅), A/B/C shadow experiments (Phase 3/4/5 ✅), recovery-position policy review (Phase 7 ✅), promotion gate hardening (Phase 8 ✅), and testnet-to-live transition (Phase 9 ✅).
 - Architecture: Tencent runs 7 services (scanner/v11, scanner_v14, scanner_v16, system_alerts, market_data_cache, market_mover_sentinel, account_snapshot) + data_maintenance timer. Aliyun runs analysis-refresh timer (every 2h), shadow-review timer (daily), attention-api service (port 8090).
-- Analysis pipeline runs on Tencent locally (SQLite is 85MB, runs in <1s). Portal and reports generated on Tencent, synced to Aliyun via scp.
+- Analysis/report pipeline runs on Aliyun from synced Tencent data; generated portal/reports are synced back to Tencent for viewing. Tencent keeps live trading/API-dependent services and local SQLite ingestion.
 - A/v11 API key updated on 2026-05-28: new Testnet account with 5000 USDT, dual-side position mode enabled. Previous account was invalidated by Binance Testnet platform.
 - Sentinel scans separated into dedicated `sentinel_scans` table with date column (YYYY-MM-DD) for efficient daily queries and cleanup.
 - Phase 2 portal upgraded: `portal_dashboard.py` now shows "策略质量看板" with active-strategy PnL, recovery PnL, PF, win rate, payoff ratio from truth ledger.
 - Phase 6 sentinel review deployed: `sentinel_quality_review.py` runs on Aliyun, measures sentinel signal contribution (open rate 0.1%, filter rate 68%). Forward-return and coverage audit pending.
 - Strategy evolution still needs stronger promotion rigor before auto-upgrade: walk-forward windows, paper fill simulation, fee/slippage modeling, regime segmentation, and post-change rollback rules.
+- SQLite growth remains a watch item: the 2026-05-29 Aliyun snapshot passed `quick_check` but had a logical file size around 1.29GB. Follow-up should inspect page/freelist growth and ensure cleanup/VACUUM keeps DB size compact without disrupting live writes.
 - After the 2026-05-27 decommission, do not recreate Polymarket code, reports, service units, or command-center cards unless the user explicitly reopens that project.
 - After the 2026-05-27 order-failure hardening, monitor fresh `OPEN_FAILED` events by exact Binance code. Rule-driven rejections should appear as `OPEN_SKIPPED/execution_preflight`; any remaining `OPEN_FAILED` means a real API/exchange/account condition still needs diagnosis.
 - GitHub CI is not configured yet.

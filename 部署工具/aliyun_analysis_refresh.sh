@@ -21,15 +21,18 @@ echo "--- Step 1.6: Sentinel Quality Review ---"
 $PYTHON sentinel_quality_review.py --db $REMOTE_DIR/server_logs_tencent/runtime/event_store.sqlite3 --runtime-dir $REMOTE_DIR/runtime --reports-dir $REMOTE_DIR/reports || echo "[WARN] sentinel review failed"
 
 echo "--- Step 2: Counterfactual evaluation ---"
-$PYTHON counterfactual_open_skips.py --data-root $REMOTE_DIR/server_logs_tencent --runtime-dir $REMOTE_DIR/runtime --reports-dir $REMOTE_DIR/reports || echo "[WARN] counterfactual failed"
+$PYTHON counterfactual_open_skips.py --root $REMOTE_DIR --db $REMOTE_DIR/server_logs_tencent/runtime/event_store.sqlite3 || echo "[WARN] counterfactual failed"
 
 echo "--- Step 3: Strategy evolution gate ---"
 $PYTHON strategy_evolution_gate.py --memory-dir $REMOTE_DIR/research_memory --experiments-dir $REMOTE_DIR/experiments --reports-dir $REMOTE_DIR/reports --runtime-dir $REMOTE_DIR/runtime || echo "[WARN] evolution gate failed"
 
-echo "--- Step 4: Portal dashboard ---"
+echo "--- Step 4: Decision attention ledger ---"
+$PYTHON decision_attention.py || echo "[WARN] attention ledger failed"
+
+echo "--- Step 5: Portal dashboard ---"
 $PYTHON portal_dashboard.py --out-dir $REMOTE_DIR/reports || echo "[WARN] portal generation failed"
 
-echo "--- Step 5: Reverse sync reports to Tencent ---"
+echo "--- Step 6: Reverse sync reports to Tencent ---"
 $PYTHON sync_aliyun_reports_to_tencent.py || echo "[WARN] reverse sync failed"
 
 echo "=== [$(date)] Analysis refresh complete ==="

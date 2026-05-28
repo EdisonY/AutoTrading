@@ -114,7 +114,6 @@ services = {
         "crypto-scanner-v14.service",
         "crypto-market-mover-sentinel.service",
         "crypto-account-snapshot.service",
-        "crypto-portal-refresh.service",
         "crypto-system-alerts.service",
     )
 }

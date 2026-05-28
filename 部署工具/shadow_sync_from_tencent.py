@@ -57,6 +57,10 @@ REPORT_FILES = [
     "reports/market_snapshot_latest.json",
 ]
 
+SQLITE_FILES = [
+    "runtime/event_store.sqlite3",
+]
+
 
 def ssh_client() -> paramiko.SSHClient:
     client = paramiko.SSHClient()
@@ -134,6 +138,28 @@ def remote_jsonl_filter_command(rel: str, days: list[str], output: str | None = 
     )
 
 
+def remote_sqlite_backup_command(rel: str, output: str) -> str:
+    code = (
+        "import pathlib, sqlite3, sys\n"
+        f"src = pathlib.Path({rel!r})\n"
+        f"dst = pathlib.Path({output!r})\n"
+        "if not src.exists():\n"
+        "    raise SystemExit(0)\n"
+        "dst.parent.mkdir(parents=True, exist_ok=True)\n"
+        "src_con = sqlite3.connect(f'file:{src}?mode=ro', uri=True, timeout=30)\n"
+        "dst_con = sqlite3.connect(str(dst), timeout=30)\n"
+        "try:\n"
+        "    src_con.backup(dst_con)\n"
+        "    check = dst_con.execute('pragma quick_check').fetchone()[0]\n"
+        "    if check != 'ok':\n"
+        "        raise RuntimeError(f'quick_check failed: {check}')\n"
+        "finally:\n"
+        "    dst_con.close()\n"
+        "    src_con.close()\n"
+    )
+    return f"python3 -c {shell_quote(code)}"
+
+
 def sync_bundle(days_back: int, log_tail: int = 300) -> None:
     LOCAL_DIR.mkdir(parents=True, exist_ok=True)
     days = recent_days(days_back)
@@ -163,6 +189,10 @@ def sync_bundle(days_back: int, log_tail: int = 300) -> None:
         commands.append(
             f"if [ -f {shell_quote(rel)} ]; then cp {shell_quote(rel)} {shell_quote(f'{tmp_dir}/{rel}')} ; fi"
         )
+    for rel in SQLITE_FILES:
+        parent = Path(rel).parent.as_posix()
+        commands.append(f"mkdir -p {shell_quote(f'{tmp_dir}/{parent}')} ")
+        commands.append(remote_sqlite_backup_command(rel, f"{tmp_dir}/{rel}"))
     commands.extend(
         [
             f"tar -czf {shell_quote(archive)} -C {shell_quote(tmp_dir)} .",
@@ -194,7 +224,7 @@ def sync_bundle(days_back: int, log_tail: int = 300) -> None:
         tar.extractall(LOCAL_DIR)
     local_archive.unlink(missing_ok=True)
 
-    for rel in JSONL_FILES + TEXT_FILES + REPORT_FILES:
+    for rel in JSONL_FILES + TEXT_FILES + REPORT_FILES + SQLITE_FILES:
         path = LOCAL_DIR / rel
         if not path.exists():
             print(f"[SKIP] {rel}")

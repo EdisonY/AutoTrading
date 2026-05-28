@@ -64,16 +64,20 @@ Current known layout:
 - Tencent live node: `/opt/crypto-auto-trader`
 - Aliyun shadow/review node: `/opt/crypto-shadow-lab`
 
-Important live services include:
+Important Tencent live services include:
 
 - `crypto-scanner.service` - A/v11
 - `crypto-scanner-v16.service` - B/v16
 - `crypto-scanner-v14.service` - C/v14
 - `crypto-market-mover-sentinel.service`
 - `crypto-account-snapshot.service`
-- `crypto-portal-refresh.service`
 - `crypto-system-alerts.service`
-- `crypto-strategy-evolution-gate.timer`
+
+Aliyun owns the generated command-center/report pipeline:
+
+- `crypto-analysis-refresh.timer`
+- `crypto-shadow-review.timer`
+- `crypto-attention-api.service` on port 8090
 
 Server access, API keys, and environment files are not stored in Git. A new machine needs SSH access and the server-side environment setup before it can operate live systems.
 
@@ -143,7 +147,7 @@ python 部署工具\decision_attention.py
 python 部署工具\portal_dashboard.py --out-dir reports
 ```
 
-The local HTML entry is `reports/index.html`, ignored by Git because it is generated. The live node regenerates it through `crypto-portal-refresh.service`.
+The local HTML entry is `reports/index.html`, ignored by Git because it is generated. Aliyun regenerates the command-center reports and syncs them back to Tencent for viewing.
 
 The command center should surface:
 

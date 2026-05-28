@@ -22,7 +22,7 @@ if sys.platform == "win32":
 
 ALIYUN_REPORTS = Path("/opt/crypto-shadow-lab/reports")
 ALIYUN_RUNTIME = Path("/opt/crypto-shadow-lab/runtime")
-ALIYUN_RESEARCH = Path("/opt/crypto-shadow-lab/research_memory")
+ALIYUN_RESEARCH = Path("/opt/crypto-shadow-lab/research_memory/attention")
 
 TENCENT_HOST = os.environ.get("TENCENT_HOST", "129.226.151.144")
 TENCENT_USER = os.environ.get("TENCENT_USER", "ubuntu")
@@ -52,6 +52,8 @@ REPORT_FILES = [
 
 RUNTIME_FILES = [
     "strategy_evolution_latest.json",
+    "strategy_truth_latest.json",
+    "sentinel_quality_latest.json",
 ]
 
 RESEARCH_FILES = [

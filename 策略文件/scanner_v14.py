@@ -458,7 +458,7 @@ def log_sentinel_scan(symbol: str, tf: str, result: str, reason: str, **extra):
     fields = sentinel_fields(symbol)
     if not fields:
         return
-    log_event({
+    _log_sentinel_scan_event({
         "time": str(datetime.now(CST)),
         "event": "SENTINEL_SCANNED",
         "symbol": symbol,
@@ -964,6 +964,12 @@ def _decision_from_signal(signal: dict) -> dict:
 def log_event(event: dict):
     write_jsonl_with_daily_shard(EVENTS_LOG, event)
     write_event_store({**_decision_from_event(event), "raw_event": event}, "C/v14/events")
+    log_decision(_decision_from_event(event))
+
+def _log_sentinel_scan_event(event: dict):
+    """Log sentinel scan to dedicated sentinel_scans table (not events)."""
+    write_jsonl_with_daily_shard(EVENTS_LOG, event)
+    EVENT_STORE.write_sentinel_scan(event, source="C/v14/events")
     log_decision(_decision_from_event(event))
 
 def log_trade(trade: dict):

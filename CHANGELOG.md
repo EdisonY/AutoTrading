@@ -2,6 +2,14 @@
 
 This is the durable reason-and-outcome ledger for every material design, code, configuration, deployment, rollback, optimization, or live operational change.
 
+## 2026-05-28 14:30 CST - Sentinel scans separated into dedicated table
+- Trigger / reason: event_store.sqlite3 grew to 1.7GB due to SENTINEL_SCANNED events (~97% of rows). User requested sentinel data in separate table with daily partitioning.
+- Completed: (1) Added `sentinel_scans` table to `core/event_store.py` DDL with columns: ts, date (YYYY-MM-DD), strategy, symbol, event_type, reason, category, decision_stage, filter_layer, change_pct, velocity_pct, abs_velocity_pct, quote_volume, scan_result, payload_json. Indexes on date, (strategy,date), (symbol,date). (2) Added `EventStoreWriter.write_sentinel_scan()` method. (3) Modified `scanner.py` and `scanner_v14.py` — sentinel scans now write to `sentinel_scans` table via `_log_sentinel_scan_event()`, no longer pollute `events` table. (4) Modified `sentinel_quality_review.py` — reads from `sentinel_scans` first, falls back to `events` for backward compatibility. (5) Updated `cleanup_event_store.py` — also cleans `sentinel_scans` table by date column.
+- Not completed / remaining: Deploy to Tencent (SSH still recovering). Need to migrate existing SENTINEL_SCANNED data from events to sentinel_scans (optional, old data will age out). A/v11 -1109 is Testnet account issue.
+- Verification: All 5 files compile successfully. No strategy core algorithm changed.
+- Live impact / deployment: New table created automatically on first write. Existing events table untouched. No strategy logic changed.
+- Files / release / commit: `core/event_store.py`, `策略文件/scanner.py`, `策略文件/scanner_v14.py`, `部署工具/sentinel_quality_review.py`, `部署工具/cleanup_event_store.py`, `CHANGELOG.md`.
+
 ## 2026-05-28 14:00 CST - SQLite cleanup script, pipeline fix, portal fix
 - Trigger / reason: event_store.sqlite3 on Tencent grew to 1.7GB, causing analysis pipeline timeout and SSH unavailability. Portal dashboard had Python syntax error (`{{}}` in f-string).
 - Completed: (1) Added `部署工具/cleanup_event_store.py` — safely deletes SENTINEL_SCANNED/EVENT/SIGNAL older than N days, protects all trading events (OPEN/CLOSE/FORCED_CLOSE/OPEN_FAILED/OPEN_SKIPPED), creates backup before deletion, runs VACUUM. (2) Fixed `portal_dashboard.py` `{{}}` syntax error — replaced with proper Python dict construction. (3) Updated `aliyun_analysis_refresh.sh` — removed `set -euo pipefail`, added `timeout 600` for sync step, each step uses `|| echo WARN` instead of failing the pipeline. (4) Analysis scripts uploaded to Tencent for local execution (data-local-compute pattern).

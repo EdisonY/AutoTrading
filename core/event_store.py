@@ -42,6 +42,29 @@ DDL = [
     "create index if not exists idx_events_symbol_ts on events(symbol, ts)",
     "create index if not exists idx_events_type_category on events(event_type, category)",
     """
+    create table if not exists sentinel_scans (
+        id integer primary key autoincrement,
+        ts text not null,
+        date text not null,
+        strategy text not null default '',
+        symbol text not null default '',
+        event_type text not null default 'SENTINEL_SCANNED',
+        reason text not null default '',
+        category text not null default '',
+        decision_stage text not null default '',
+        filter_layer text not null default '',
+        change_pct real,
+        velocity_pct real,
+        abs_velocity_pct real,
+        quote_volume real,
+        scan_result text not null default '',
+        payload_json text not null
+    )
+    """,
+    "create index if not exists idx_sentinel_date on sentinel_scans(date)",
+    "create index if not exists idx_sentinel_strategy_date on sentinel_scans(strategy, date)",
+    "create index if not exists idx_sentinel_symbol_date on sentinel_scans(symbol, date)",
+    """
     create table if not exists account_snapshots (
         id integer primary key autoincrement,
         ts text not null,
@@ -222,6 +245,58 @@ class EventStoreWriter:
                     )
                     """,
                     row,
+                )
+                conn.commit()
+            return True
+        except Exception:
+            self._failed = True
+            self._failure_count += 1
+            if self._failure_count < 10:
+                self._failed = False
+                self.close()
+            return False
+
+    def write_sentinel_scan(self, raw: dict[str, Any], *, source: str = "") -> bool:
+        """Write sentinel scan to dedicated sentinel_scans table (not events)."""
+        if not self.enabled or self._failed:
+            return False
+        try:
+            ts = str(raw.get("time") or raw.get("ts") or utc_now_iso())
+            date = ts[:10]  # YYYY-MM-DD
+            strategy = str(raw.get("strategy") or "")
+            if source.startswith("A/v11/"):
+                strategy = "A/v11"
+            elif source.startswith("B/v16/"):
+                strategy = "B/v16"
+            elif source.startswith("C/v14/"):
+                strategy = "C/v14"
+            with self._lock:
+                conn = self._connection()
+                conn.execute(
+                    """
+                    insert into sentinel_scans(
+                        ts, date, strategy, symbol, event_type, reason, category,
+                        decision_stage, filter_layer, change_pct, velocity_pct,
+                        abs_velocity_pct, quote_volume, scan_result, payload_json
+                    ) values(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        ts,
+                        date,
+                        strategy,
+                        str(raw.get("symbol") or ""),
+                        str(raw.get("event") or "SENTINEL_SCANNED"),
+                        str(raw.get("reason") or ""),
+                        str(raw.get("category") or ""),
+                        str(raw.get("decision_stage") or ""),
+                        str(raw.get("filter_layer") or ""),
+                        raw.get("sentinel_change_pct"),
+                        raw.get("sentinel_velocity_pct"),
+                        raw.get("sentinel_abs_velocity_pct"),
+                        raw.get("sentinel_quote_volume"),
+                        str(raw.get("sentinel_scan_result") or ""),
+                        json_dumps(raw),
+                    ),
                 )
                 conn.commit()
             return True

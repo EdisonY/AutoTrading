@@ -90,14 +90,43 @@ def load_sentinel_decisions(con: sqlite3.Connection, days: int = 7) -> list[dict
 
 
 def load_sentinel_scanned(con: sqlite3.Connection, days: int = 7) -> list[dict[str, Any]]:
-    """Load SENTINEL_SCANNED events."""
-    cutoff = (datetime.now(CST) - timedelta(days=days)).isoformat()
+    """Load SENTINEL_SCANNED events from dedicated sentinel_scans table (fallback to events)."""
+    cutoff = (datetime.now(CST) - timedelta(days=days)).strftime("%Y-%m-%d")
+    # Try dedicated table first
+    try:
+        rows = con.execute(
+            """SELECT id, ts, strategy, symbol, event_type, reason, category,
+                      decision_stage, filter_layer, change_pct, velocity_pct,
+                      quote_volume, scan_result, payload_json
+               FROM sentinel_scans
+               WHERE date >= ?
+               ORDER BY ts""",
+            (cutoff,),
+        ).fetchall()
+        if rows:
+            return [
+                {
+                    "id": row[0], "ts": row[1], "strategy": row[2], "symbol": row[3],
+                    "sentinel_reason": row[5] or "",
+                    "sentinel_change_pct": safe_float(row[9]),
+                    "sentinel_velocity_pct": safe_float(row[10]),
+                    "sentinel_scan_result": row[12] or "",
+                    "decision_stage": row[6] or "",
+                    "filter_layer": row[7] or "",
+                    "reason": row[5] or "",
+                }
+                for row in rows
+            ]
+    except Exception:
+        pass
+    # Fallback to events table
+    cutoff_iso = (datetime.now(CST) - timedelta(days=days)).isoformat()
     rows = con.execute(
         """SELECT id, ts, strategy, symbol, event_type, payload_json
            FROM events
            WHERE event_type = 'SENTINEL_SCANNED' AND ts >= ?
            ORDER BY ts""",
-        (cutoff,),
+        (cutoff_iso,),
     ).fetchall()
     events = []
     for row in rows:

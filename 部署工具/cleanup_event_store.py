@@ -54,14 +54,26 @@ def main(argv: list[str] | None = None) -> int:
 
     con = sqlite3.connect(str(db_path))
     try:
-        # Count what would be deleted
+        # Count what would be deleted from events table
         for etype in sorted(DELETABLE_TYPES):
             count = con.execute(
                 "SELECT count(*) FROM events WHERE event_type = ? AND ts < ?",
                 (etype, cutoff)
             ).fetchone()[0]
             if count > 0:
-                print(f"  {etype}: {count:,} rows to delete")
+                print(f"  events.{etype}: {count:,} rows to delete")
+
+        # Count sentinel_scans to delete
+        cutoff_date = (datetime.now(CST) - timedelta(days=args.days)).strftime("%Y-%m-%d")
+        sentinel_count = 0
+        try:
+            sentinel_count = con.execute(
+                "SELECT count(*) FROM sentinel_scans WHERE date < ?", (cutoff_date,)
+            ).fetchone()[0]
+            if sentinel_count > 0:
+                print(f"  sentinel_scans: {sentinel_count:,} rows to delete")
+        except Exception:
+            pass
 
         # Count protected (will NOT be deleted)
         print()
@@ -79,7 +91,7 @@ def main(argv: list[str] | None = None) -> int:
                 ",".join("?" for _ in DELETABLE_TYPES)
             ),
             list(DELETABLE_TYPES) + [cutoff]
-        ).fetchone()[0]
+        ).fetchone()[0] + sentinel_count
 
         print()
         print(f"Total rows to delete: {total_deletable:,}")
@@ -108,6 +120,9 @@ def main(argv: list[str] | None = None) -> int:
             ),
             list(DELETABLE_TYPES) + [cutoff]
         )
+        # Delete old sentinel_scans
+        if sentinel_count > 0:
+            con.execute("DELETE FROM sentinel_scans WHERE date < ?", (cutoff_date,))
         con.commit()
 
         # VACUUM

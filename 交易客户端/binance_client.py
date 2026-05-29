@@ -486,7 +486,7 @@ class BinanceClient:
     # 平仓
     # ═══════════════════════════════════════════════════════════
     def close_position(self, symbol: str, pos_side: str = None,
-                       quantity: float = None) -> dict:
+                       quantity: float = None, order_side: str = "", position_side: str = "") -> dict:
         """平仓（市价）
 
         pos_side: "LONG" 或 "SHORT"（Binance双向持仓模式下的positionSide值）
@@ -497,7 +497,8 @@ class BinanceClient:
             pos_amt = float(p.get("positionAmt", 0))
             if pos_amt == 0:
                 continue
-            if pos_side and p.get("positionSide", "").upper() != pos_side.upper():
+            target_position_side = (position_side or pos_side or "").upper()
+            if target_position_side and p.get("positionSide", "").upper() != target_position_side:
                 continue
             target = p
             break
@@ -509,7 +510,8 @@ class BinanceClient:
         current_sz = abs(float(target.get("positionAmt", 0)))
         close_sz = quantity if quantity else current_sz
         target_side = target.get("positionSide", "").upper()
-        close_side = "SELL" if target_side == "LONG" else "BUY"
+        target_amt = float(target.get("positionAmt", 0))
+        close_side = (order_side or ("SELL" if target_amt > 0 else "BUY")).upper()
 
         logger.info(f"平仓: {symbol} {target_side} qty={close_sz}")
         close_params = {

@@ -33,6 +33,8 @@ class CloseRequest:
     side: Side
     quantity: float = 0.0
     cancel_open_orders: bool = False
+    confirm_position: bool = True
+    confirm_attempts: int = 3
     context: dict[str, Any] = field(default_factory=dict)
 
 
@@ -175,48 +177,146 @@ class ExecutionEngine:
     def close_position(self, req: CloseRequest) -> ExecutionResult:
         if req.cancel_open_orders:
             self._cancel_open_orders(req.symbol)
-        try:
-            raw = self.client.close_position(req.symbol, req.side, quantity=req.quantity)
-        except Exception as exc:
-            return ExecutionResult(False, "close", req.symbol, req.side, req.quantity, code="exception", message=str(exc))
-        if self._is_success(raw):
+        qty = float(req.quantity or 0.0)
+        close_target = self._close_target(req.symbol, req.side)
+        if qty <= 0:
+            qty = float(close_target.get("quantity") or 0.0)
+        if qty <= 0:
             return ExecutionResult(
                 True,
                 "close",
                 req.symbol,
                 req.side,
-                req.quantity,
-                order_id=str(raw.get("orderId", "")) if isinstance(raw, dict) else "",
-                status=str(raw.get("status", "")) if isinstance(raw, dict) else "",
-                raw=raw,
+                0.0,
+                status="ALREADY_CLOSED",
+                message="no matching exchange position",
+                raw={"remaining_qty": 0.0},
             )
-        if req.quantity > 0:
-            try:
-                raw2 = self.client.close_position(req.symbol, req.side)
-            except Exception as exc:
-                return ExecutionResult(False, "close", req.symbol, req.side, req.quantity, code="exception", message=str(exc), raw=raw)
-            if self._is_success(raw2):
+        try:
+            raw = self._submit_close(req.symbol, req.side, qty, close_target)
+        except Exception as exc:
+            return ExecutionResult(False, "close", req.symbol, req.side, qty, code="exception", message=str(exc))
+        if self._is_success(raw):
+            remaining_qty = 0.0
+            if req.confirm_position:
+                remaining_qty = self._confirm_position_qty(
+                    req.symbol,
+                    req.side,
+                    attempts=req.confirm_attempts,
+                    delay_seconds=1.0,
+                )
+                if remaining_qty > 0:
+                    retry_raw = None
+                    try:
+                        retry_target = self._close_target(req.symbol, req.side)
+                        retry_raw = self._submit_close(req.symbol, req.side, remaining_qty, retry_target)
+                    except Exception as exc:
+                        return ExecutionResult(
+                            False,
+                            "close",
+                            req.symbol,
+                            req.side,
+                            qty,
+                            order_id=str(raw.get("orderId", "")) if isinstance(raw, dict) else "",
+                            status="CLOSE_CONFIRM_RETRY_EXCEPTION",
+                            code="close_confirm_retry_exception",
+                            message=str(exc),
+                            raw={"initial": raw, "retry": retry_raw, "remaining_qty": remaining_qty},
+                        )
+                    if self._is_success(retry_raw):
+                        remaining_qty = self._confirm_position_qty(
+                            req.symbol,
+                            req.side,
+                            attempts=req.confirm_attempts,
+                            delay_seconds=1.0,
+                        )
+                    if remaining_qty > 0:
+                        return ExecutionResult(
+                            False,
+                            "close",
+                            req.symbol,
+                            req.side,
+                            qty,
+                            order_id=str(raw.get("orderId", "")) if isinstance(raw, dict) else "",
+                            status="CLOSE_CONFIRM_FAILED",
+                            code="close_confirm_failed",
+                            message=f"position still present after close/retry: remaining_qty={remaining_qty:g}",
+                            raw={"initial": raw, "retry": retry_raw, "remaining_qty": remaining_qty},
+                        )
+            return ExecutionResult(
+                True,
+                "close",
+                req.symbol,
+                req.side,
+                qty,
+                order_id=str(raw.get("orderId", "")) if isinstance(raw, dict) else "",
+                status="CONFIRMED_CLOSED" if req.confirm_position else str(raw.get("status", "")) if isinstance(raw, dict) else "",
+                raw={"initial": raw, "remaining_qty": remaining_qty} if req.confirm_position else raw,
+            )
+        if req.confirm_position:
+            remaining_qty = self._confirm_position_qty(
+                req.symbol,
+                req.side,
+                attempts=req.confirm_attempts,
+                delay_seconds=1.0,
+            )
+            if remaining_qty <= 0:
                 return ExecutionResult(
                     True,
                     "close",
                     req.symbol,
                     req.side,
-                    req.quantity,
-                    order_id=str(raw2.get("orderId", "")) if isinstance(raw2, dict) else "",
-                    status=str(raw2.get("status", "")) if isinstance(raw2, dict) else "",
-                    raw=raw2,
+                    qty,
+                    status="CLOSE_ERROR_BUT_POSITION_GONE",
+                    code=self._raw_code(raw),
+                    message=self._raw_message(raw),
+                    raw={"initial": raw, "remaining_qty": remaining_qty},
                 )
         return ExecutionResult(
             False,
             "close",
             req.symbol,
             req.side,
-            req.quantity,
+            qty,
             status=str(raw.get("status", "")) if isinstance(raw, dict) else "",
-            code=str(raw.get("code", "")) if isinstance(raw, dict) else "",
-            message=str(raw.get("msg", raw))[:240] if isinstance(raw, dict) else str(raw)[:240],
+            code=self._raw_code(raw),
+            message=self._raw_message(raw),
             raw=raw,
         )
+
+    def _close_target(self, symbol: str, side: str) -> dict[str, Any]:
+        try:
+            if hasattr(self.client, "invalidate_account_snapshot"):
+                self.client.invalidate_account_snapshot()
+            for p in self.client.get_positions():
+                if p.get("symbol") != symbol:
+                    continue
+                amt = float(p.get("positionAmt", 0) or 0)
+                if abs(amt) <= 0:
+                    continue
+                effective_side = infer_position_side(p)[0]
+                if effective_side != side.upper():
+                    continue
+                raw_position_side = str(p.get("positionSide") or "").upper()
+                return {
+                    "quantity": abs(amt),
+                    "position_side": raw_position_side,
+                    "order_side": "SELL" if amt > 0 else "BUY",
+                }
+        except Exception:
+            return {}
+        return {}
+
+    def _submit_close(self, symbol: str, side: str, quantity: float, close_target: dict[str, Any]) -> Any:
+        kwargs = {"quantity": quantity}
+        if close_target.get("position_side"):
+            kwargs["position_side"] = close_target["position_side"]
+        if close_target.get("order_side"):
+            kwargs["order_side"] = close_target["order_side"]
+        try:
+            return self.client.close_position(symbol, side, **kwargs)
+        except TypeError:
+            return self.client.close_position(symbol, side, quantity=quantity)
 
     def _cancel_open_orders(self, symbol: str) -> None:
         try:
@@ -225,10 +325,11 @@ class ExecutionEngine:
         except Exception:
             pass
 
-    def _confirm_position_qty(self, symbol: str, side: str, attempts: int = 1) -> float:
+    def _confirm_position_qty(self, symbol: str, side: str, attempts: int = 1, delay_seconds: float = 2.0) -> float:
         try:
             for _ in range(max(1, attempts)):
-                time.sleep(2)
+                if delay_seconds > 0:
+                    time.sleep(delay_seconds)
                 if hasattr(self.client, "invalidate_account_snapshot"):
                     self.client.invalidate_account_snapshot()
                 positions = self.client.get_positions()

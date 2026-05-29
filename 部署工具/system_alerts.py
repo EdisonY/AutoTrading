@@ -138,6 +138,57 @@ def recent_oom_lines() -> list[str]:
     return lines[-5:]
 
 
+def recent_failed_close_alerts(now: datetime) -> list[dict[str, str]]:
+    if not EVENT_STORE_DB.exists():
+        return []
+    try:
+        con = sqlite3.connect(EVENT_STORE_DB)
+        rows = con.execute(
+            """
+            select ts, strategy, symbol, side, event_type, reason, payload_json
+            from events
+            where event_type in ('FORCED_CLOSE_FAILED', 'CLOSE_FAILED', 'CLOSE_CONFIRM_FAILED')
+            order by id desc
+            limit 200
+            """
+        ).fetchall()
+        con.close()
+    except Exception:
+        return []
+    recent = []
+    seen: set[tuple[str, str, str, str, str]] = set()
+    for raw_ts, strategy, symbol, side, event_type, reason, payload_json in rows:
+        dt = parse_dt(raw_ts)
+        if not dt or (now - dt).total_seconds() > 2 * 3600:
+            continue
+        detail = reason
+        try:
+            payload = json.loads(payload_json or "{}")
+            raw = payload.get("raw") if isinstance(payload.get("raw"), dict) else {}
+            raw_event = payload.get("raw_event") if isinstance(payload.get("raw_event"), dict) else {}
+            detail = (
+                payload.get("failure_reason")
+                or raw.get("failure_reason")
+                or raw_event.get("failure_reason")
+                or payload.get("reason")
+                or detail
+            )
+        except Exception:
+            pass
+        key = (str(raw_ts), str(strategy), str(symbol), str(side), str(event_type))
+        if key in seen:
+            continue
+        seen.add(key)
+        recent.append(f"{strategy or '-'} {symbol} {side} {event_type} {detail}"[:180])
+    if not recent:
+        return []
+    return [{
+        "level": "bad",
+        "title": "强平/平仓确认失败",
+        "body": f"近2小时 {len(recent)} 条；最新: {recent[0]}",
+    }]
+
+
 def collect_alerts() -> dict[str, Any]:
     now = datetime.now(CST)
     alerts: list[dict[str, str]] = []
@@ -276,6 +327,8 @@ def collect_alerts() -> dict[str, Any]:
             alerts.append({"level": "bad", "title": "SQLite 健康检查失败", "body": str(exc)})
     else:
         alerts.append({"level": "bad", "title": "SQLite 事件库缺失", "body": str(EVENT_STORE_DB)})
+
+    alerts.extend(recent_failed_close_alerts(now))
 
     return {
         "ts": now.isoformat(),

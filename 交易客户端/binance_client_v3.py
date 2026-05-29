@@ -81,6 +81,13 @@ def _request(method: str, path: str, params: dict = None) -> dict:
         return {"code": "-1", "msg": str(e)}
 
 
+def _is_reduce_only_rejected(result: dict) -> bool:
+    if not isinstance(result, dict):
+        return False
+    msg = str(result.get("msg", "")).lower()
+    return str(result.get("code", "")) == "-2022" or "reduceonly order is rejected" in msg
+
+
 def _get_exchange_info_cached() -> dict:
     global _exchange_info_cache, _exchange_info_cache_time
     now = time.time()
@@ -241,13 +248,14 @@ class BinanceClientV3:
         self.invalidate_account_snapshot()
         return result
 
-    def close_position(self, symbol: str, pos_side: str, quantity: float = 0) -> dict:
+    def close_position(self, symbol: str, pos_side: str, quantity: float = 0, order_side: str = "", position_side: str = "") -> dict:
         """平仓（市价全平）"""
-        is_long = pos_side.lower() == "long"
+        api_position_side = (position_side or pos_side).upper()
+        api_order_side = (order_side or ("SELL" if pos_side.lower() == "long" else "BUY")).upper()
         params = {
             "symbol": symbol,
-            "side": "SELL" if is_long else "BUY",
-            "positionSide": pos_side.upper(),
+            "side": api_order_side,
+            "positionSide": api_position_side,
             "type": "MARKET",
             "newOrderRespType": "FULL",
         }
@@ -255,6 +263,11 @@ class BinanceClientV3:
             params["quantity"] = f"{quantity:.8f}".rstrip('0').rstrip('.') if isinstance(quantity, float) else quantity
 
         result = _request("POST", "/fapi/v1/order", params)
+        if _is_reduce_only_rejected(result):
+            fallback = dict(params)
+            fallback.pop("positionSide", None)
+            fallback["reduceOnly"] = "true"
+            result = _request("POST", "/fapi/v1/order", fallback)
         self.invalidate_account_snapshot()
         return result
 

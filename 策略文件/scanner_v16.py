@@ -31,6 +31,7 @@ from core.event_store import EventStoreWriter
 from core.market_watchlist import load_sentinel_context
 from core.market_data_cache import cached_available_symbols, cached_top_symbols
 from core.kline_cache import load_cached_klines, save_cached_klines
+from core.position_utils import infer_position_side, leveraged_loss_pct
 from core.sentinel_scanner import fields_from_context, filter_context_by_available, merge_symbols_with_context
 from core.risk_engine import RiskEngine, RiskLimits
 from core.strategy_engine import StrategyEngine
@@ -707,9 +708,7 @@ class ScannerV16:
                 amt = float(p.get("positionAmt", 0))
                 if abs(amt) <= 0.0001:
                     continue
-                pos_side = (p.get("positionSide") or "").lower()
-                if not pos_side:
-                    pos_side = "long" if amt > 0 else "short"
+                pos_side = infer_position_side(p)[0].lower()
                 if pos_side == side:
                     count += 1
             return count
@@ -747,9 +746,7 @@ class ScannerV16:
             if abs(amt) <= 0.0001:
                 continue
             symbol = p.get("symbol")
-            side = (p.get("positionSide") or "").lower()
-            if not side or side == "both":
-                side = "long" if amt > 0 else "short"
+            side = infer_position_side(p)[0].lower()
             if any(symbol in tf_pos for tf_pos in self.positions.values()):
                 continue
             entry_price = float(p.get("entryPrice", 0) or 0)
@@ -1010,7 +1007,7 @@ class ScannerV16:
         local_holding = any(sym in tf_pos for tf_pos in self.positions.values())
         if existing_exchange_pos or local_holding:
             existing_qty = float(existing_exchange_pos.get("positionAmt") or 0) if existing_exchange_pos else 0.0
-            existing_side = str(existing_exchange_pos.get("positionSide") or "")
+            existing_side = infer_position_side(existing_exchange_pos)[0] if existing_exchange_pos else ""
             existing_entry = float(existing_exchange_pos.get("entryPrice") or 0) if existing_exchange_pos else 0.0
             logger.info(
                 f"  跳过[{tf}]: {sym} 交易所/本地已有持仓，禁止同币种重复开仓 "
@@ -1170,12 +1167,26 @@ class ScannerV16:
                 symbol=sym,
                 side=pos.side,
                 quantity=pos.exchange_qty,
+                cancel_open_orders=True,
             ))
             if not close_exec.success:
                 logger.error(f"  平仓失败: {close_exec.reason}")
+                log_event({
+                    "time": str(datetime.now(CST)), "event": "CLOSE_FAILED", "symbol": sym,
+                    "side": pos.side, "exit_price": exit_price, "reason": reason,
+                    "failure_reason": close_exec.reason, "exchange_status": close_exec.status,
+                    "exchange_close_success": False, "timeframe": tf,
+                })
+                return
             logger.info(f"  平仓[{tf}]: {sym} {pos.side} {reason} @{exit_price:.4f}")
         except Exception as e:
             logger.error(f"  平仓失败: {e}")
+            log_event({
+                "time": str(datetime.now(CST)), "event": "CLOSE_FAILED", "symbol": sym,
+                "side": pos.side, "exit_price": exit_price, "reason": reason,
+                "failure_reason": str(e), "exchange_close_success": False, "timeframe": tf,
+            })
+            return
 
         net_pnl, gross_pnl, fee = pos.calc_pnl(exit_price)
         self.capital += pos.cost + net_pnl
@@ -1219,16 +1230,13 @@ class ScannerV16:
             if abs(amt) <= 0.0001:
                 continue
             symbol = p.get("symbol")
-            side = (p.get("positionSide") or "").lower()
-            if not side or side == "both":
-                side = "long" if amt > 0 else "short"
+            side, side_source = infer_position_side(p)
+            side = side.lower()
             entry = float(p.get("entryPrice", 0) or 0)
             mark = float(p.get("markPrice", 0) or 0)
-            lev = float(p.get("leverage", LEVERAGE) or LEVERAGE)
             if entry <= 0 or mark <= 0:
                 continue
-            adverse = ((entry - mark) / entry * 100) if side == "long" else ((mark - entry) / entry * 100)
-            loss_pct = max(0.0, adverse * lev)
+            loss_pct = leveraged_loss_pct(p, side)
             if loss_pct < MAX_LOSS_PCT:
                 continue
             try:
@@ -1236,11 +1244,12 @@ class ScannerV16:
                     symbol=symbol,
                     side=side,
                     quantity=abs(amt),
+                    cancel_open_orders=True,
                 ))
                 logger.warning(f"  交易所硬顶平仓: {symbol} {side} loss={loss_pct:.2f}% >= {MAX_LOSS_PCT:.2f}%")
                 log_event({
                     "time": str(datetime.now(CST)),
-                    "event": "FORCED_CLOSE",
+                    "event": "FORCED_CLOSE" if close_exec.success else "FORCED_CLOSE_FAILED",
                     "symbol": symbol,
                     "side": side,
                     "reason": f"交易所硬顶{MAX_LOSS_PCT:.0f}%",
@@ -1248,6 +1257,10 @@ class ScannerV16:
                     "entry_price": entry,
                     "mark_price": mark,
                     "qty": abs(amt),
+                    "side_source": side_source,
+                    "raw_position_side": p.get("positionSide", ""),
+                    "failure_reason": "" if close_exec.success else close_exec.reason,
+                    "exchange_status": close_exec.status,
                     "exchange_close_success": close_exec.success,
                 })
             except Exception as e:

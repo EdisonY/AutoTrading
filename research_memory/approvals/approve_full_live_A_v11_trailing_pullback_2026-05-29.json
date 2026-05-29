@@ -1,0 +1,22 @@
+{
+  "action_schema": "manual_strategy_research_approval/v1",
+  "candidate_ids": [
+    "EXP-20260527-v11-trailing-pullback-0p8",
+    "EXP-20260527-v11-trailing-pullback-1p0"
+  ],
+  "experiment_ids": [
+    "EXP-20260527-v11-trailing-pullback-0p8",
+    "EXP-20260527-v11-trailing-pullback-1p0"
+  ],
+  "family_id": "FAM-A-v11-trailing-pullback",
+  "base_strategy": "A/v11",
+  "manual_action": "approve_full_live",
+  "approved_scope": "full_live",
+  "selected_live_parameter": {
+    "trail_pullback_15m": 1.0,
+    "trail_pullback_30m": 0.8
+  },
+  "decision_reason": "User approved both P0 A/v11 trailing-pullback candidates for full rollout. Because both candidates change the same 15m parameter, live code uses the wider approved 1.0 ATR setting; the 0.8 ATR candidate remains recorded as approved evidence within the same family.",
+  "risk_notes": "This changes live A/v11 exit behavior only. It does not increase max positions, does not remove same-symbol no-stacking, and does not lower entry thresholds. Monitor A/v11 stop-loss count, trailing exits, hard-stop count, and active PnL after rollout.",
+  "applied_at": "2026-05-29T10:00:00+08:00"
+}

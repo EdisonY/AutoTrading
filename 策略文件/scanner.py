@@ -156,7 +156,7 @@ STOP_LOSS_COOLDOWN_MINUTES = 60  # 固定止损后60分钟冷静期
 SL_MULT = {"15m": 1.5, "30m": 2.0}     # 止损：15m 1.5×ATR, 30m 2.0×ATR
 TP_MULT = {"15m": 5.5, "30m": 6.5}     # 止盈：15m 5.5×ATR, 30m 6.5×ATR
 TRAILING_ACTIVATE = {"15m": 1.0, "30m": 1.2}  # v11优化(2026-05-15): 1.2/1.5→1.0/1.2，加快止盈
-TRAILING_PULLBACK = {"15m": 0.6, "30m": 0.8}  # v11优化(2026-05-15): 0.8/1.0→0.6/0.8，更快锁定盈利
+TRAILING_PULLBACK = {"15m": 1.0, "30m": 0.8}  # 2026-05-29: 用户批准 A/v11 trailing pullback 0.8/1.0 候选全量开放，15m 采用更宽 1.0 ATR
 
 COOLDOWN_MINUTES = 30          # 同币种平仓后冷却时间（分钟）
 ATR_PRICE_MAX = 0.05           # ATR/Price > 5% 跳过（过滤极端波动币）

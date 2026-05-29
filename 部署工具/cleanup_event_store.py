@@ -2,7 +2,7 @@
 
 SAFE BY DEFAULT:
 - Only deletes SENTINEL_SCANNED, EVENT, SIGNAL (high-frequency low-value)
-- NEVER deletes OPEN, CLOSE, FORCED_CLOSE, OPEN_FAILED, OPEN_SKIPPED
+- NEVER deletes OPEN, CLOSE, FORCED_CLOSE, forced-close/close failures, OPEN_FAILED, OPEN_SKIPPED
 - Runs VACUUM after cleanup to reclaim disk space
 - Creates a backup before any deletion
 
@@ -27,7 +27,18 @@ CST = timezone(timedelta(hours=8))
 DELETABLE_TYPES = {"SENTINEL_SCANNED", "EVENT", "SIGNAL"}
 
 # Event types that should NEVER be deleted (core trading data)
-PROTECTED_TYPES = {"OPEN", "CLOSE", "FORCED_CLOSE", "OPEN_FAILED", "OPEN_SKIPPED", "SENTINEL_SIGNAL", "SMOKE_TEST"}
+PROTECTED_TYPES = {
+    "OPEN",
+    "CLOSE",
+    "FORCED_CLOSE",
+    "FORCED_CLOSE_FAILED",
+    "CLOSE_FAILED",
+    "CLOSE_CONFIRM_FAILED",
+    "OPEN_FAILED",
+    "OPEN_SKIPPED",
+    "SENTINEL_SIGNAL",
+    "SMOKE_TEST",
+}
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -197,6 +197,13 @@ def _request(method: str, path: str, params: dict = None) -> dict:
         return {"code": "-1", "msg": str(e)}
 
 
+def _is_reduce_only_rejected(result: dict) -> bool:
+    if not isinstance(result, dict):
+        return False
+    msg = str(result.get("msg", "")).lower()
+    return str(result.get("code", "")) == "-2022" or "reduceonly order is rejected" in msg
+
+
 class BinanceClientV2:
     """Account B 专用 Binance Testnet 客户端"""
 
@@ -364,7 +371,7 @@ class BinanceClientV2:
             except Exception as e:
                 logger.debug(f"_add_tp_sl失败: {e}")
 
-    def close_position(self, symbol: str, pos_side: str, quantity: float = 0) -> dict:
+    def close_position(self, symbol: str, pos_side: str, quantity: float = 0, order_side: str = "", position_side: str = "") -> dict:
         """平仓（市价全平）
 
         Args:
@@ -373,11 +380,12 @@ class BinanceClientV2:
             quantity: 平仓数量，0表示全平（不传quantity由交易所自动全平）
         注意：Hedge Mode 下不能传 reduceOnly，只用 positionSide 区分方向
         """
-        is_long = pos_side.lower() == "long"
+        api_position_side = (position_side or pos_side).upper()
+        api_order_side = (order_side or ("SELL" if pos_side.lower() == "long" else "BUY")).upper()
         params = {
             "symbol": symbol,
-            "side": "SELL" if is_long else "BUY",
-            "positionSide": pos_side.upper(),
+            "side": api_order_side,
+            "positionSide": api_position_side,
             "type": "MARKET",
             # Hedge Mode 下禁止 reduceOnly，移除该参数
             "newOrderRespType": "FULL",
@@ -386,6 +394,11 @@ class BinanceClientV2:
             params["quantity"] = _format_quantity(quantity, _get_step_size(symbol)[0])
 
         result = _request("POST", "/fapi/v1/order", params)
+        if _is_reduce_only_rejected(result):
+            fallback = dict(params)
+            fallback.pop("positionSide", None)
+            fallback["reduceOnly"] = "true"
+            result = _request("POST", "/fapi/v1/order", fallback)
         self.invalidate_account_snapshot()
         return result
 

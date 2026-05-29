@@ -42,3 +42,6 @@ sl_mult_15m = 1.5
 sl_mult_30m = 2.0
 tp_mult_15m = 5.5
 tp_mult_30m = 6.5
+trail_pullback_15m = 1.0
+trail_pullback_30m = 0.8
+trail_pullback_policy = "full_live_v11_trailing_pullback_20260529"

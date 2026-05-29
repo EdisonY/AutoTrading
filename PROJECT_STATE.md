@@ -1,6 +1,6 @@
 # AutoTrading Project State
 
-Last updated: 2026-05-28 Asia/Shanghai
+Last updated: 2026-05-29 Asia/Shanghai
 
 This file is the long-lived project memory for multi-location development. Daily reports may roll forward, but this file records the current architecture, what is done, what is not done, and what must not be forgotten.
 
@@ -13,11 +13,11 @@ This file is the long-lived project memory for multi-location development. Daily
 
 ## Strategy Stack
 
-- `A/v11`: original high-frequency/scanner strategy, now has full-position replacement/release logic and same-symbol no-stacking protection. As of 2026-05-27, replacement-quality is guarded small-live only: strong signal >=112, score gap >=25, profitable positions >=2% are protected, no total-position expansion.
-- `B/v16`: CVD/OFI order-flow strategy. Small-stage guard was temporarily removed per user instruction; latest server event check on 2026-05-26 showed active scanning and new opens today, not a two-day stall.
+- `A/v11`: original high-frequency/scanner strategy, now has full-position replacement/release logic and same-symbol no-stacking protection. As of 2026-05-27, replacement-quality remains guarded small-live only: strong signal >=112, score gap >=25, profitable positions >=2% are protected, no total-position expansion. As of 2026-05-29, user approved both trailing-pullback P0 candidates for full rollout; live uses 15m pullback `1.0 ATR` and 30m pullback `0.8 ATR`.
+- `B/v16`: CVD/OFI order-flow strategy. Small-stage guard was temporarily removed per user instruction; latest server event check on 2026-05-26 showed active scanning and new opens today, not a two-day stall. As of 2026-05-29, close/forced-close now confirms the exchange position disappears before local state can be removed, but three legacy Binance Testnet positions (`BCHUSDT` long, `ETHUSDT` long, `FHEUSDT` short) still reject close attempts with `-4061` and remain a visible system alert.
 - `C/v14`: four-factor scoring strategy with same-symbol no-stacking protection. Signal reporting now distinguishes raw analysis candidates from real 1h entry candidates; no entry loosen was made in that observability fix.
 - Sentinel: market mover detector feeds unusual movers into strategies; strategy scans now record which layer opened, filtered, rejected, or had no signal.
-- Shared execution layer: A/B/C use `core/binance_order_rules.py` and `core/execution_engine.py` for Binance exchange-rule preflight, MARKET_LOT_SIZE/minNotional/maxQty rounding, TradFi-Perps blocking, percent-price checks, and `-1007` status-unknown position confirmation. Deterministic preflight rejections should be logged as `OPEN_SKIPPED`, not `OPEN_FAILED`.
+- Shared execution layer: A/B/C use `core/binance_order_rules.py` and `core/execution_engine.py` for Binance exchange-rule preflight, MARKET_LOT_SIZE/minNotional/maxQty rounding, TradFi-Perps blocking, percent-price checks, `-1007` status-unknown position confirmation, and close confirmation. A close is not considered successful until the matching exchange position disappears; remaining positions after retry must be logged as `CLOSE_FAILED` or `FORCED_CLOSE_FAILED` and surfaced by system alerts. Deterministic preflight rejections should be logged as `OPEN_SKIPPED`, not `OPEN_FAILED`.
 
 ## Done
 
@@ -56,7 +56,8 @@ This file is the long-lived project memory for multi-location development. Daily
 ## Current Open Attention
 
 - A/v11 sizing/risk must remain watched from real-time account snapshots and automatic alerts.
-- Strategy evolution currently has one P0 visible in the command center: `EXP-20260523-v11-replacement-quality` is `verified_upgrade_ready` and should be reviewed as an explicit decision item, not auto-rolled out. Earlier guarded-small-live approval remains a limited observation path, not full rollout permission.
+- B/v16 has an active bad system alert for close-confirm failures on legacy Testnet positions (`BCHUSDT`, `ETHUSDT`, `FHEUSDT`). The code no longer silently deletes local state on failed close; keep diagnosing Binance Testnet/account-position corruption or flatten through the exchange UI if available.
+- Strategy evolution attention P0 was cleared after the 2026-05-29 full-live approval of the two A/v11 trailing-pullback candidates. `EXP-20260523-v11-replacement-quality` remains a guarded/shadow item, not a full-rollout approval.
 - User-confirmed archived P0 system items: `入口页刷新失败`, `总入口页面偏旧`, and the 2026-05-26 21:56 CST OOM alert. They remain in SQLite acknowledgement history but no longer occupy P0.
 - B/v16 perceived two-day inactivity was a visibility issue: the event store showed a 2026-05-26 09:21:29 +08:00 `XRPUSDT` short open plus earlier same-day opens.
 - C/v14 reporting now uses entry-candidate wording. The 2026-05-25 daily review shows 57 entry candidates versus 46378 raw signals; raw data is still used for funnel analysis, but should not be read as executable signal count.

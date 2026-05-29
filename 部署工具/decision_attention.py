@@ -25,6 +25,7 @@ ROOT = SCRIPT_DIR.parent if SCRIPT_DIR.name == "部署工具" else SCRIPT_DIR
 RUNTIME_DIR = ROOT / "runtime"
 REPORTS_DIR = ROOT / "reports"
 ATTENTION_DIR = ROOT / "research_memory" / "attention"
+APPROVAL_DIR = ROOT / "research_memory" / "approvals"
 ATTENTION_JSON = ATTENTION_DIR / "open_items.json"
 ATTENTION_ACK_JSONL = ATTENTION_DIR / "acknowledgements.jsonl"
 ATTENTION_MD = REPORTS_DIR / "decision_attention_latest.md"
@@ -240,6 +241,43 @@ def read_jsonl(path: Path) -> list[dict[str, Any]]:
     return rows
 
 
+def load_full_live_approved_candidate_ids() -> set[str]:
+    approved: set[str] = set()
+    paths = [
+        APPROVAL_DIR / "manual_actions.jsonl",
+        APPROVAL_DIR / "manual_actions_latest.jsonl",
+    ]
+    rows: list[dict[str, Any]] = []
+    for path in paths:
+        rows.extend(read_jsonl(path))
+    if APPROVAL_DIR.exists():
+        for path in APPROVAL_DIR.glob("approve_full_live_*.json"):
+            payload = read_json(path)
+            if isinstance(payload, dict):
+                rows.append(payload)
+    for row in rows:
+        if str(row.get("manual_action") or "") != "approve_full_live":
+            continue
+        if str(row.get("approved_scope") or "") != "full_live":
+            continue
+        ids: list[Any] = []
+        ids.extend(row.get("candidate_ids") or [])
+        ids.extend(row.get("experiment_ids") or [])
+        for key in ("candidate_id", "experiment_id"):
+            value = row.get(key)
+            if value:
+                ids.append(value)
+        for candidate_id in ids:
+            text = str(candidate_id or "").strip()
+            if text:
+                approved.add(text)
+    return approved
+
+
+def is_full_live_approved_attention_item(item_id: str, approved_ids: set[str]) -> bool:
+    return any(item_id == f"evolution:{slug(candidate_id)}" for candidate_id in approved_ids)
+
+
 def load_acknowledgements() -> dict[str, dict[str, Any]]:
     out: dict[str, dict[str, Any]] = {}
     conn = connect_attention_db()
@@ -300,6 +338,7 @@ def detect_strategy_evolution_items() -> list[dict[str, Any]]:
     payload = read_json(STRATEGY_EVOLUTION_JSON)
     if not isinstance(payload, dict):
         return []
+    full_live_approved = load_full_live_approved_candidate_ids()
     out = []
     for decision in payload.get("decisions") or []:
         if not isinstance(decision, dict):
@@ -308,6 +347,8 @@ def detect_strategy_evolution_items() -> list[dict[str, Any]]:
         if priority not in {"P0", "P1", "P2"}:
             continue
         candidate_id = str(decision.get("candidate_id") or decision.get("experiment_id") or decision.get("status") or "unknown")
+        if candidate_id in full_live_approved:
+            continue
         strategy = str(decision.get("strategy") or "-")
         blockers = "; ".join(str(x) for x in (decision.get("blockers") or []) if x)
         evidence = (
@@ -466,6 +507,7 @@ def persist_attention_items(items: list[dict[str, Any]]) -> None:
 def merge_items(existing: dict[str, dict[str, Any]], detected: list[dict[str, Any]]) -> list[dict[str, Any]]:
     now = now_cst().isoformat()
     acknowledgements = load_acknowledgements()
+    full_live_approved = load_full_live_approved_candidate_ids()
     detected_by_id = {str(item["item_id"]): item for item in detected if item.get("item_id")}
     merged: dict[str, dict[str, Any]] = {}
     for item_id, item in detected_by_id.items():
@@ -483,6 +525,17 @@ def merge_items(existing: dict[str, dict[str, Any]], detected: list[dict[str, An
         merged[item_id] = current
     for item_id, prior in existing.items():
         if item_id in merged:
+            continue
+        if is_full_live_approved_attention_item(item_id, full_live_approved):
+            current = dict(prior)
+            current["status"] = "resolved"
+            current["acknowledged_at"] = current.get("acknowledged_at") or now
+            current["acknowledged_reason"] = (
+                current.get("acknowledged_reason")
+                or "Manual full-live approval recorded in research_memory/approvals"
+            )
+            current["last_seen"] = current.get("last_seen") or now
+            merged[item_id] = current
             continue
         if is_suppressed_archived_item(prior):
             current = dict(prior)

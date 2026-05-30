@@ -1,0 +1,9 @@
+[Unit]
+Description=Hourly Crypto Data Retention Maintenance Timer
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+
+[Install]
+WantedBy=timers.target

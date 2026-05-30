@@ -175,6 +175,7 @@ def ingest_trades() -> dict[str, int]:
 
 def prune_db(
     purge_duplicate_sentinel: bool,
+    purge_event_store_mirrors: bool,
     vacuum: bool,
     retention: bool,
     event_retention_days: int,
@@ -186,6 +187,13 @@ def prune_db(
     try:
         if purge_duplicate_sentinel:
             counts["sentinel_deleted"] = con.execute("delete from events where source='sentinel/events'").rowcount
+        if purge_event_store_mirrors:
+            counts["decision_mirror_deleted"] = con.execute(
+                "delete from events where source in ('A/v11/decisions','B/v16/decisions','C/v14/decisions')"
+            ).rowcount
+            counts["sentinel_event_mirror_deleted"] = con.execute(
+                "delete from events where event_type='SENTINEL_SCANNED'"
+            ).rowcount
         if retention:
             cutoff_sentinel = (datetime.now(CST) - timedelta(days=7)).isoformat()
             counts["sentinel_retention_deleted"] = con.execute(
@@ -302,6 +310,7 @@ def main() -> int:
     parser.add_argument("--archive-legacy", action="store_true")
     parser.add_argument("--ingest-trades", action="store_true")
     parser.add_argument("--purge-duplicate-sentinel", action="store_true")
+    parser.add_argument("--purge-event-store-mirrors", action="store_true")
     parser.add_argument("--retention", action="store_true")
     parser.add_argument("--event-retention-days", type=int, default=14)
     parser.add_argument("--vacuum", action="store_true")
@@ -320,8 +329,14 @@ def main() -> int:
         output["ingested_trades"] = ingest_trades()
     if args.partition_legacy or args.archive_legacy:
         output["legacy"] = [partition_file(path, args.archive_legacy) for path in LEGACY_JSONL]
-    if args.purge_duplicate_sentinel or args.retention or args.vacuum:
-        output["db"] = prune_db(args.purge_duplicate_sentinel, args.vacuum, args.retention, args.event_retention_days)
+    if args.purge_duplicate_sentinel or args.purge_event_store_mirrors or args.retention or args.vacuum:
+        output["db"] = prune_db(
+            args.purge_duplicate_sentinel,
+            args.purge_event_store_mirrors,
+            args.vacuum,
+            args.retention,
+            args.event_retention_days,
+        )
     if args.prune_snapshot_html:
         output["snapshot_html_removed"] = prune_snapshot_html()
     if args.archive_noisy_shards:

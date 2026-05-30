@@ -172,10 +172,11 @@ def _decision_category(status: str, reason: str) -> str:
         return "signal_candidate"
     return "other"
 
-def log_decision(record: dict):
+def log_decision(record: dict, *, persist_event_store: bool = True):
     try:
         log_jsonl(DECISION_LOG, record)
-        write_event_store(record, "B/v16/decisions")
+        if persist_event_store:
+            write_event_store(record, "B/v16/decisions")
     except Exception as e:
         logger.debug(f"写入决策日志失败: {e}")
 
@@ -257,12 +258,12 @@ def _decision_from_signal(signal: dict) -> dict:
 def log_event(event: dict):
     log_jsonl(EVENTS_LOG, event)
     write_event_store({**_decision_from_event(event), "raw_event": event}, "B/v16/events")
-    log_decision(_decision_from_event(event))
+    log_decision(_decision_from_event(event), persist_event_store=False)
 
 def log_signal(signal: dict):
     log_jsonl(SIGNAL_LOG, signal)
     write_event_store({**_decision_from_signal(signal), "raw_signal": signal}, "B/v16/signals")
-    log_decision(_decision_from_signal(signal))
+    log_decision(_decision_from_signal(signal), persist_event_store=False)
 
 def log_system(state: dict):
     log_jsonl(SYSTEM_LOG, state)
@@ -480,7 +481,7 @@ def log_sentinel_scan(symbol: str, tf: str, result: str, reason: str, **extra):
     fields = sentinel_fields(symbol)
     if not fields:
         return
-    log_event({
+    event = {
         "time": str(datetime.now(CST)),
         "event": "SENTINEL_SCANNED",
         "symbol": symbol,
@@ -492,7 +493,10 @@ def log_sentinel_scan(symbol: str, tf: str, result: str, reason: str, **extra):
         "sentinel_scan_result": result,
         **fields,
         **extra,
-    })
+    }
+    log_jsonl(EVENTS_LOG, event)
+    EVENT_STORE.write_sentinel_scan(event, source="B/v16/events")
+    log_decision(_decision_from_event(event), persist_event_store=False)
 
 
 def merge_sentinel_symbols(symbols, limit=30):

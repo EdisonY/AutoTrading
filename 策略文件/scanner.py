@@ -841,10 +841,11 @@ def _decision_category(status: str, reason: str) -> str:
         return "signal_candidate"
     return "other"
 
-def log_decision(record: dict):
+def log_decision(record: dict, *, persist_event_store: bool = True):
     try:
         write_jsonl_with_daily_shard(DECISION_LOG, record)
-        write_event_store(record, "A/v11/decisions")
+        if persist_event_store:
+            write_event_store(record, "A/v11/decisions")
     except Exception as e:
         logger.debug(f"写入决策日志失败: {e}")
 
@@ -910,13 +911,13 @@ def _decision_from_signal(signal: dict) -> dict:
 def log_event(event: dict):
     write_jsonl_with_daily_shard(EVENTS_LOG, event)
     write_event_store({**_decision_from_event(event), "raw_event": event}, "A/v11/events")
-    log_decision(_decision_from_event(event))
+    log_decision(_decision_from_event(event), persist_event_store=False)
 
 def _log_sentinel_scan_event(event: dict):
     """Log sentinel scan to dedicated sentinel_scans table (not events)."""
     write_jsonl_with_daily_shard(EVENTS_LOG, event)
     EVENT_STORE.write_sentinel_scan(event, source="A/v11/events")
-    log_decision(_decision_from_event(event))
+    log_decision(_decision_from_event(event), persist_event_store=False)
 
 def log_trade(trade: dict):
     write_jsonl_with_daily_shard(TRADES_LOG, trade)
@@ -929,7 +930,7 @@ def log_signal(signal: dict):
     """记录每次扫描产生的信号（不论是否触发开仓）。用于复盘分析信号质量。"""
     write_jsonl_with_daily_shard(SIGNAL_LOG, signal)
     write_event_store({**_decision_from_signal(signal), "raw_signal": signal}, "A/v11/signals")
-    log_decision(_decision_from_signal(signal))
+    log_decision(_decision_from_signal(signal), persist_event_store=False)
 
 def log_operation(op: dict):
     """记录操作日志（启动/停止/错误/配置变更等）。"""

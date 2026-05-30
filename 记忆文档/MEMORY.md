@@ -1,5 +1,13 @@
 # MEMORY.md - 长期记忆
 
+## 2026-05-31 运行复盘与事件库去重
+- 2026-05-31 01:41 CST live context：Tencent 六个预期核心服务全部 active，system alerts `ok/0`，三账户当前浮亏约 `-4.71 USDT`，持仓 `7`。A/v11 4 仓、B/v16 2 仓、C/v14 1 仓；A/B/C 当前均无 sizing violation，硬止损风险计数为 0。
+- 当前 P0=2 不是服务器故障，而是 B/v16 策略进化候选：`EXP-20260527-v16-atr-stop-bands` 与 `EXP-20260527-v16-overheat-cap-85`，状态 `verified_upgrade_ready`，仍需明确审批后才可扩展。
+- 发现并修复 SQLite 事件库重复计数：A/B/C scanner 过去把同一 OPEN/CLOSE/OPEN_FAILED/OPEN_SKIPPED/SIGNAL 同时从 raw event/signal 和 decision source 写入 `events`，B/v16 还把哨兵逐币扫描写入 `events`。已改为 JSONL 决策日志保留，SQLite 只保留权威事件源；B/v16 哨兵扫描写入 `sentinel_scans`。
+- 已在 Tencent 一次性清理 `events` 历史镜像：`decision_mirror_deleted=205450`，`sentinel_event_mirror_deleted=24665`，`quick_check ok`。2026-05-30 至 2026-05-31 01:40 去重后口径：A/v11 OPEN 93 / CLOSE 86 / OPEN_FAILED 3 / OPEN_SKIPPED 77；B/v16 OPEN 55 / CLOSE 53 / FORCED_CLOSE 7 / OPEN_FAILED 2 / OPEN_SKIPPED 77；C/v14 OPEN 1 / OPEN_SKIPPED 44。
+- 已把 `crypto-data-maintenance.service` 的持久化命令改为每小时运行 `--purge-event-store-mirrors`，并把 service/timer 文件纳入 Git，后续 agent 不应再用未去重的 `events` 原始计数直接复盘。
+- 报告入口已重建：`reports/index.html` 不再包含 `no such table` 或 `无实时账户快照`。注意 2026-05-31 01:xx 复盘早于 2026-05-30 日报正常生成窗口，当前 `market_review_latest` 仍是 2026-05-29 全日文件，不能把它当作 2026-05-30 全日复盘。
+
 ## 2026-05-30 运行续检、开仓尺寸确认与关注台账口径修复
 - 用户要求继续未完成的整体运行检查。最终 live context（2026-05-30 09:13 CST）显示 Tencent 六个预期服务全部 active，system alerts `ok/0`，账户浮盈约 `+16.47 USDT`，持仓 `6`，attention `P0=0/P1=2/P2=3`。
 - 已完成开仓后真实数量确认：`ExecutionEngine.open_position()` 在请求确认时用交易所持仓数量覆盖订单回报数量；B/v16、C/v14 本地持仓 size 用成交/确认数量；C/v14 开仓也启用 position confirmation。

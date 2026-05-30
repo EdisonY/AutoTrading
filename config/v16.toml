@@ -28,7 +28,7 @@ confirm_timeframe = "15m"
 confirm_min_score = 15
 confirm_opposite_reject_score = 25
 score_min = 35
-score_max = 90
+score_max = 85
 score_threshold_1h = 38
 score_threshold_15m = 55
 short_entry_penalty = 8
@@ -53,7 +53,11 @@ min_vol_ratio_high_vol = 0.8
 
 [exit]
 sl_mult = 2.0
+sl_mult_low_vol = 2.5
+sl_mult_normal_vol = 2.0
+sl_mult_high_vol = 1.5
+atr_stop_low_vol_threshold = 0.02
+atr_stop_high_vol_threshold = 0.03
 tp_mult = 4.0
 trail_activate = 1.0
 trail_pullback = 1.0
-

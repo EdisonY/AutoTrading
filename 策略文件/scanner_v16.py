@@ -62,8 +62,17 @@ TRADE_SIZE = SMALL_LIVE_TRADE_SIZE if STAGE_GUARD_SMALL_LIVE_ENABLED else 100.0
 SCORE_MIN = 35                  # v16优化(2026-05-15): 30→35，减少假信号
 SCORE_THRESHOLDS = {"1h": 38, "15m": 55}  # P1: 1h轻微放宽，15m仍只做强确认
 SHORT_ENTRY_PENALTY = 8         # P1: 小币空头额外提高门槛
-SCORE_MAX = 90
-SL_MULT = 2.0                   # P1: 降低固定止损尾部损失
+SCORE_MAX = 85                  # P0 approved 2026-05-31: EXP-20260527-v16-overheat-cap-85
+SL_MULT = 2.0                   # 默认止损；实盘使用 sl_mult_for_atr_pct 分档
+SL_MULT_LOW_VOL = 2.5           # P0 approved 2026-05-31: EXP-20260527-v16-atr-stop-bands
+SL_MULT_NORMAL_VOL = 2.0
+SL_MULT_HIGH_VOL = 1.5
+ATR_STOP_LOW_VOL_THRESHOLD = 0.02
+ATR_STOP_HIGH_VOL_THRESHOLD = 0.03
+APPROVED_FULL_LIVE_CANDIDATE_IDS = [
+    "EXP-20260527-v16-atr-stop-bands",
+    "EXP-20260527-v16-overheat-cap-85",
+]
 TP_MULT = 4.0
 TRAIL_ACTIVATE = 1.0            # P1: 更早进入浮动保护
 TRAIL_PULLBACK = 1.0            # v16优化(2026-05-15): 1.5→1.0，更快止损
@@ -107,6 +116,15 @@ SCORE_FUNDING = 10
 SCORE_EMA = 8
 SCORE_CVD_STRONG = 15
 SCORE_CVD_WEAK = 8
+
+
+def sl_mult_for_atr_pct(atr_pct: float) -> float:
+    """Return the approved v16 ATR stop band for the current volatility regime."""
+    if atr_pct >= ATR_STOP_HIGH_VOL_THRESHOLD:
+        return SL_MULT_HIGH_VOL
+    if atr_pct < ATR_STOP_LOW_VOL_THRESHOLD:
+        return SL_MULT_LOW_VOL
+    return SL_MULT_NORMAL_VOL
 
 # OFI参数
 OFI_STRONG = 0.30   # 极端失衡
@@ -340,6 +358,7 @@ class SimPosition:
     confirm_reason: str = ""
     cvd: float = 0.0
     ofi: float = 0.0
+    sl_mult: float = SL_MULT
 
     def calc_pnl(self, ep):
         d = (ep - self.entry_price) / self.entry_price if self.side == "long" else (self.entry_price - ep) / self.entry_price
@@ -652,8 +671,9 @@ def analyze_symbol(symbol, bar="15m"):
 
     net_score = score_long - score_short
 
-    sl_long = round(price - atr * SL_MULT, 6)
-    sl_short = round(price + atr * SL_MULT, 6)
+    sl_mult = sl_mult_for_atr_pct(atr_pct)
+    sl_long = round(price - atr * sl_mult, 6)
+    sl_short = round(price + atr * sl_mult, 6)
     tp_long = round(price + atr * TP_MULT, 6)
     tp_short = round(price - atr * TP_MULT, 6)
 
@@ -667,6 +687,7 @@ def analyze_symbol(symbol, bar="15m"):
         "trade_side": "long" if net_score > 0 else "short",
         "sl_long": sl_long, "sl_short": sl_short,
         "tp_long": tp_long, "tp_short": tp_short,
+        "sl_mult": sl_mult,
         "rsi": round(rsi, 1), "ofi": round(ofi, 3),
         "cvd": round(cvd, 3),
         "atr_pct": round(atr_pct, 4), "vol_ratio": round(vol_ratio, 2),
@@ -1107,6 +1128,7 @@ class ScannerV16:
                 confirm_reason=confirm_reason,
                 cvd=float(sig.get("cvd") or 0),
                 ofi=float(sig.get("ofi") or 0),
+                sl_mult=float(sig.get("sl_mult") or SL_MULT),
             )
             self.positions[tf][sym] = pos
             logger.info(f"  ✅ 开仓成功: {sym} qty={exec_qty}")
@@ -1114,6 +1136,7 @@ class ScannerV16:
                 "time": str(datetime.now(CST)), "event": "OPEN", "symbol": sym,
                 "side": side, "price": price, "qty": exec_qty, "leverage": LEVERAGE,
                 "sl": sl, "tp": tp, "score": score, "timeframe": tf,
+                "sl_mult": sig.get("sl_mult"),
                 "entry_reason": "+".join(sig.get(f"reasons_{side}", [])[:6]),
                 "confirm_reason": confirm_reason,
                 "reasons": sig.get(f"reasons_{side}", []),
@@ -1125,7 +1148,12 @@ class ScannerV16:
                 "order_id": str(r.get("orderId","")) if isinstance(r, dict) else "",
                 "trade_size_usdt": TRADE_SIZE,
                 "small_live_stage_guard": STAGE_GUARD_SMALL_LIVE_ENABLED,
-                "approved_candidate_id": "HYP-2026-05-22-B-v16-reverse_trade-stage-guard" if STAGE_GUARD_SMALL_LIVE_ENABLED else "",
+                "approved_candidate_id": (
+                    "HYP-2026-05-22-B-v16-reverse_trade-stage-guard"
+                    if STAGE_GUARD_SMALL_LIVE_ENABLED
+                    else ",".join(APPROVED_FULL_LIVE_CANDIDATE_IDS)
+                ),
+                "approved_candidate_ids": APPROVED_FULL_LIVE_CANDIDATE_IDS,
                 **sentinel_fields(sym),
             })
             return True
@@ -1279,7 +1307,11 @@ class ScannerV16:
         log_system({"ts": str(datetime.now(CST)), "capital": round(self.capital, 4), "positions": total_positions, "status": "running"})
 
     def run(self):
-        logger.info(f"v16启动 | 阈值{SCORE_MIN} | 止损{SL_MULT}×ATR | 止盈{TP_MULT}×ATR | OFI窗口{OFI_WINDOW}")
+        logger.info(
+            f"v16启动 | 阈值{SCORE_MIN} | 过热封顶{SCORE_MAX} | "
+            f"分档止损low/normal/high={SL_MULT_LOW_VOL}/{SL_MULT_NORMAL_VOL}/{SL_MULT_HIGH_VOL}×ATR | "
+            f"止盈{TP_MULT}×ATR | OFI窗口{OFI_WINDOW}"
+        )
         interval = 120  # 2分钟
         while True:
             try:

@@ -1,13 +1,13 @@
 {
-  "generated_at": "2026-05-30T09:13:20.033336+08:00",
+  "generated_at": "2026-05-31T02:04:05.603302+08:00",
   "summary": {
     "total_visible": 15,
     "open": 5,
     "cleared_pending_review": 10,
     "counts": {
       "P0": 0,
-      "P1": 2,
-      "P2": 3,
+      "P1": 0,
+      "P2": 5,
       "P3": 0
     }
   },
@@ -322,34 +322,6 @@
       "cleared_at": "2026-05-29T02:39:27.090592+08:00"
     },
     {
-      "item_id": "evolution:exp-20260527-v16-atr-stop-bands",
-      "priority": "P1",
-      "category": "策略进化",
-      "title": "P1 B/v16 EXP-20260527-v16-atr-stop-bands",
-      "status": "open",
-      "first_seen": "2026-05-28T18:25:28.667608+08:00",
-      "last_seen": "2026-05-30T09:13:20.024838+08:00",
-      "last_confirmed_active": "2026-05-30T09:13:20.024838+08:00",
-      "evidence": "状态 ready_for_review；证据分 77；风险分 0；阻塞 -",
-      "recommended_action": "review_for_small_live",
-      "source": "/opt/crypto-auto-trader/runtime/strategy_evolution_latest.json",
-      "requires_user_confirmation": true
-    },
-    {
-      "item_id": "evolution:exp-20260527-v16-overheat-cap-85",
-      "priority": "P1",
-      "category": "策略进化",
-      "title": "P1 B/v16 EXP-20260527-v16-overheat-cap-85",
-      "status": "open",
-      "first_seen": "2026-05-28T18:25:28.667615+08:00",
-      "last_seen": "2026-05-30T09:13:20.024838+08:00",
-      "last_confirmed_active": "2026-05-30T09:13:20.024838+08:00",
-      "evidence": "状态 ready_for_review；证据分 77；风险分 0；阻塞 -",
-      "recommended_action": "review_for_small_live",
-      "source": "/opt/crypto-auto-trader/runtime/strategy_evolution_latest.json",
-      "requires_user_confirmation": true
-    },
-    {
       "item_id": "evolution:hyp-2026-05-24-b-v16-hard_stop_loss-stage-guard",
       "priority": "P1",
       "category": "策略进化",
@@ -412,15 +384,43 @@
       "acknowledged_reason": "Polymarket module decommissioned by user request"
     },
     {
+      "item_id": "strategy-open-stale:a-v11",
+      "priority": "P2",
+      "category": "策略开仓节奏",
+      "title": "A/v11 连续 48h 无新开仓",
+      "status": "open",
+      "first_seen": "2026-05-31T01:40:52.699142+08:00",
+      "last_seen": "2026-05-31T02:04:05.597733+08:00",
+      "last_confirmed_active": "2026-05-31T02:04:05.597733+08:00",
+      "evidence": "最近系统心跳 3 分钟前；最近开仓 无记录",
+      "recommended_action": "结合反事实评估与过滤层分布确认是否过严；若只是行情不匹配，可标记为观察。",
+      "source": "/opt/crypto-auto-trader/runtime/event_store.sqlite3",
+      "requires_user_confirmation": true
+    },
+    {
+      "item_id": "strategy-open-stale:b-v16",
+      "priority": "P2",
+      "category": "策略开仓节奏",
+      "title": "B/v16 连续 48h 无新开仓",
+      "status": "open",
+      "first_seen": "2026-05-31T01:40:52.749734+08:00",
+      "last_seen": "2026-05-31T02:04:05.597733+08:00",
+      "last_confirmed_active": "2026-05-31T02:04:05.597733+08:00",
+      "evidence": "最近系统心跳 1 分钟前；最近开仓 无记录",
+      "recommended_action": "结合反事实评估与过滤层分布确认是否过严；若只是行情不匹配，可标记为观察。",
+      "source": "/opt/crypto-auto-trader/runtime/event_store.sqlite3",
+      "requires_user_confirmation": true
+    },
+    {
       "item_id": "strategy-open-stale:c-v14",
       "priority": "P2",
       "category": "策略开仓节奏",
       "title": "C/v14 连续 48h 无新开仓",
       "status": "open",
       "first_seen": "2026-05-30T09:11:57.213142+08:00",
-      "last_seen": "2026-05-30T09:13:20.024838+08:00",
-      "last_confirmed_active": "2026-05-30T09:13:20.024838+08:00",
-      "evidence": "最近系统心跳 2 分钟前；最近开仓 2 天前（BIOUSDT long）",
+      "last_seen": "2026-05-31T02:04:05.597733+08:00",
+      "last_confirmed_active": "2026-05-31T02:04:05.597733+08:00",
+      "evidence": "最近系统心跳 89 秒前；最近开仓 无记录",
       "recommended_action": "结合反事实评估与过滤层分布确认是否过严；若只是行情不匹配，可标记为观察。",
       "source": "/opt/crypto-auto-trader/runtime/event_store.sqlite3",
       "requires_user_confirmation": true
@@ -432,9 +432,9 @@
       "title": "P2 A/v11 EXP-20260523-v11-replacement-quality",
       "status": "open",
       "first_seen": "2026-05-26T11:30:42.758220+08:00",
-      "last_seen": "2026-05-30T09:13:20.024838+08:00",
-      "last_confirmed_active": "2026-05-30T09:13:20.024838+08:00",
-      "evidence": "状态 small_live_monitoring；证据分 50；风险分 0；阻塞 人工批准小仓观察，不等于全量已验证",
+      "last_seen": "2026-05-31T02:04:05.597733+08:00",
+      "last_confirmed_active": "2026-05-31T02:04:05.597733+08:00",
+      "evidence": "状态 small_live_monitoring；证据分 30；风险分 0；阻塞 人工批准小仓观察，不等于全量已验证",
       "recommended_action": "keep_small_live_monitoring",
       "source": "/opt/crypto-auto-trader/runtime/strategy_evolution_latest.json",
       "requires_user_confirmation": true
@@ -446,10 +446,10 @@
       "title": "P2 B/v16 EXP-20260523-v16-confirm-soft-pass",
       "status": "open",
       "first_seen": "2026-05-26T11:30:42.758262+08:00",
-      "last_seen": "2026-05-30T09:13:20.024838+08:00",
-      "last_confirmed_active": "2026-05-30T09:13:20.024838+08:00",
-      "evidence": "状态 shadow_validating；证据分 10；风险分 20；阻塞 缺少真实/纸面撮合 PnL，不能作为晋级证据",
-      "recommended_action": "continue_shadow_validation",
+      "last_seen": "2026-05-31T02:04:05.597733+08:00",
+      "last_confirmed_active": "2026-05-31T02:04:05.597733+08:00",
+      "evidence": "状态 counterfactual_supported；证据分 50；风险分 0；阻塞 长窗口影子验证不足",
+      "recommended_action": "run_multi_window_shadow",
       "source": "/opt/crypto-auto-trader/runtime/strategy_evolution_latest.json",
       "requires_user_confirmation": true
     },
@@ -500,6 +500,38 @@
       "requires_user_confirmation": true,
       "cleared_at": "2026-05-29T11:56:18.615180+08:00",
       "acknowledged_at": "2026-05-29T11:59:40.326093+08:00",
+      "acknowledged_reason": "Manual full-live approval recorded in research_memory/approvals"
+    },
+    {
+      "item_id": "evolution:exp-20260527-v16-atr-stop-bands",
+      "priority": "P0",
+      "category": "策略进化",
+      "title": "P0 B/v16 EXP-20260527-v16-atr-stop-bands",
+      "status": "resolved",
+      "first_seen": "2026-05-28T18:25:28.667608+08:00",
+      "last_seen": "2026-05-31T01:40:52.766833+08:00",
+      "last_confirmed_active": "2026-05-31T01:40:52.766833+08:00",
+      "evidence": "状态 verified_upgrade_ready；证据分 97；风险分 0；阻塞 -",
+      "recommended_action": "review_for_expansion",
+      "source": "/opt/crypto-auto-trader/runtime/strategy_evolution_latest.json",
+      "requires_user_confirmation": true,
+      "acknowledged_at": "2026-05-31T02:04:05.597733+08:00",
+      "acknowledged_reason": "Manual full-live approval recorded in research_memory/approvals"
+    },
+    {
+      "item_id": "evolution:exp-20260527-v16-overheat-cap-85",
+      "priority": "P0",
+      "category": "策略进化",
+      "title": "P0 B/v16 EXP-20260527-v16-overheat-cap-85",
+      "status": "resolved",
+      "first_seen": "2026-05-28T18:25:28.667615+08:00",
+      "last_seen": "2026-05-31T01:40:52.766833+08:00",
+      "last_confirmed_active": "2026-05-31T01:40:52.766833+08:00",
+      "evidence": "状态 verified_upgrade_ready；证据分 97；风险分 0；阻塞 -",
+      "recommended_action": "review_for_expansion",
+      "source": "/opt/crypto-auto-trader/runtime/strategy_evolution_latest.json",
+      "requires_user_confirmation": true,
+      "acknowledged_at": "2026-05-31T02:04:05.597733+08:00",
       "acknowledged_reason": "Manual full-live approval recorded in research_memory/approvals"
     }
   ]

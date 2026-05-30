@@ -1,6 +1,6 @@
 # AutoTrading Project State
 
-Last updated: 2026-05-30 Asia/Shanghai
+Last updated: 2026-05-31 Asia/Shanghai
 
 This file is the long-lived project memory for multi-location development. Daily reports may roll forward, but this file records the current architecture, what is done, what is not done, and what must not be forgotten.
 
@@ -14,8 +14,8 @@ This file is the long-lived project memory for multi-location development. Daily
 ## Strategy Stack
 
 - `A/v11`: original high-frequency/scanner strategy, now has full-position replacement/release logic and same-symbol no-stacking protection. As of 2026-05-27, replacement-quality remains guarded small-live only: strong signal >=112, score gap >=25, profitable positions >=2% are protected, no total-position expansion. As of 2026-05-29, user approved both trailing-pullback P0 candidates for full rollout; live uses 15m pullback `1.0 ATR` and 30m pullback `0.8 ATR`.
-- `B/v16`: CVD/OFI order-flow strategy. Small-stage guard was temporarily removed per user instruction; latest server event checks show active scanning and new opens, not a stall. As of 2026-05-29, close/forced-close confirms the exchange position disappears before local state can be removed; the legacy Testnet `-4061` close-confirm alert cleared by 2026-05-30, but future close failures must remain visible if they recur.
-- `C/v14`: four-factor scoring strategy with same-symbol no-stacking protection. Signal reporting now distinguishes raw analysis candidates from real 1h entry candidates; no entry loosen was made in that observability fix.
+- `B/v16`: CVD/OFI order-flow strategy. Small-stage guard was temporarily removed per user instruction; latest server event checks show active scanning and new opens, not a stall. As of 2026-05-29, close/forced-close confirms the exchange position disappears before local state can be removed; the legacy Testnet `-4061` close-confirm alert cleared by 2026-05-30, but future close failures must remain visible if they recur. As of 2026-05-31, user approved `EXP-20260527-v16-atr-stop-bands` and `EXP-20260527-v16-overheat-cap-85` for full-live rollout: live uses score cap 85 and ATR stop bands 2.5/2.0/1.5 by volatility.
+- `C/v14`: four-factor scoring strategy with same-symbol no-stacking protection. Signal reporting distinguishes raw analysis candidates from real 1h entry candidates. As of 2026-05-31, C/v14 is in sample-expansion mode to fix too-few opens: 1h threshold 50, 15m confirm threshold 25, short penalty 10, max 3 positions per timeframe/sector, and high-score 1h candidates can pass weak/no 15m confirmation. Hard risk gates remain unchanged: same-symbol no-stacking, account/side caps, exchange-rule preflight, 100 USDT normal risk size, and close confirmation.
 - Sentinel: market mover detector feeds unusual movers into strategies; strategy scans now record which layer opened, filtered, rejected, or had no signal.
 - Shared execution layer: A/B/C use `core/binance_order_rules.py` and `core/execution_engine.py` for Binance exchange-rule preflight, MARKET_LOT_SIZE/minNotional/maxQty rounding, TradFi-Perps blocking, percent-price checks, `-1007` status-unknown position confirmation, open-position quantity confirmation, and close confirmation. A close is not considered successful until the matching exchange position disappears; remaining positions after retry must be logged as `CLOSE_FAILED` or `FORCED_CLOSE_FAILED` and surfaced by system alerts. Deterministic preflight rejections should be logged as `OPEN_SKIPPED`, not `OPEN_FAILED`.
 
@@ -58,7 +58,7 @@ This file is the long-lived project memory for multi-location development. Daily
 
 - A/v11 sizing/risk must remain watched from real-time account snapshots and automatic alerts.
 - B/v16's legacy close-confirm alert cleared by the 2026-05-30 check; the code still must surface any new close-confirm or open-sizing mismatch failures as bad alerts.
-- Strategy evolution attention P0 is currently clear. The two A/v11 trailing-pullback candidates are resolved from the attention ledger after full-live approval, and `EXP-20260523-v11-replacement-quality` remains a guarded/small-live monitoring item rather than a full-rollout approval.
+- Strategy evolution attention should treat the two B/v16 2026-05-27 candidates as resolved after the 2026-05-31 full-live approval. The two A/v11 trailing-pullback candidates are resolved from the attention ledger after full-live approval, and `EXP-20260523-v11-replacement-quality` remains a guarded/small-live monitoring item rather than a full-rollout approval.
 - User-confirmed archived P0 system items: `入口页刷新失败`, `总入口页面偏旧`, and the 2026-05-26 21:56 CST OOM alert. They remain in SQLite acknowledgement history but no longer occupy P0.
 - B/v16 perceived two-day inactivity was a visibility issue: the event store showed a 2026-05-26 09:21:29 +08:00 `XRPUSDT` short open plus earlier same-day opens.
 - C/v14 reporting now uses entry-candidate wording. The 2026-05-25 daily review shows 57 entry candidates versus 46378 raw signals; raw data is still used for funnel analysis, but should not be read as executable signal count.
@@ -68,7 +68,7 @@ This file is the long-lived project memory for multi-location development. Daily
 ## Not Done / Next
 
 - User acknowledgement workflow has both a script path (`部署工具/acknowledge_attention_items.py`) and a portal/API path (`crypto-attention-api.service` + `/api/attention/ack`). Continue verifying that browser-side acknowledgements write to SQLite and refresh `research_memory/attention/open_items.json`.
-- B/v16 P1 strategy-evolution candidates (`EXP-20260527-v16-atr-stop-bands`, `EXP-20260527-v16-overheat-cap-85`) remain review-only; do not roll them into live behavior without explicit user approval.
+- B/v16 P1 strategy-evolution candidates (`EXP-20260527-v16-atr-stop-bands`, `EXP-20260527-v16-overheat-cap-85`) were explicitly approved by the user on 2026-05-31 and are no longer review-only. Continue monitoring live sample count, B/v16 PnL, hard-stop rate, and close-confirm failures after rollout.
 - Execute `记忆文档/FUTURE_EXECUTION_PLAN.md` in order: dual-server architecture migration (Phase 0.5 ✅), strategy truth ledger (Phase 1 ✅), command-center quality board (Phase 2 ✅), sentinel quality review (Phase 6 ✅), A/B/C shadow experiments (Phase 3/4/5 ✅), recovery-position policy review (Phase 7 ✅), promotion gate hardening (Phase 8 ✅), and testnet-to-live transition (Phase 9 ✅).
 - Architecture: Tencent runs 7 services (scanner/v11, scanner_v14, scanner_v16, system_alerts, market_data_cache, market_mover_sentinel, account_snapshot) + data_maintenance timer. Aliyun runs analysis-refresh timer (every 2h), shadow-review timer (daily), attention-api service (port 8090).
 - Analysis/report pipeline runs on Aliyun from synced Tencent data; generated portal/reports are synced back to Tencent for viewing. Tencent keeps live trading/API-dependent services and local SQLite ingestion.

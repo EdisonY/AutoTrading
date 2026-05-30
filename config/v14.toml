@@ -9,9 +9,9 @@ logs_dir = "logs_v14"
 [risk]
 leverage = 4
 max_total_positions = 20
-max_positions_per_timeframe = 2
+max_positions_per_timeframe = 3
 max_positions_per_side = 12
-max_positions_per_sector = 2
+max_positions_per_sector = 3
 max_loss_pct = 12.0
 min_available_balance_pct = 0.25
 min_available_balance_usdt = 300.0
@@ -24,12 +24,15 @@ symbol_sl_ban_hours = 72
 timeframes = ["1h", "15m"]
 entry_timeframes = ["1h"]
 confirm_timeframe = "15m"
-confirm_min_score = 35
+confirm_min_score = 25
 score_min = 25
-score_max = 80
-score_threshold_1h = 55
-score_threshold_15m = 65
-short_entry_penalty = 15
+score_max = 85
+score_threshold_1h = 50
+score_threshold_15m = 60
+short_entry_penalty = 10
+no_confirm_high_score_pass = 64
+weak_confirm_min_score = 20
+sample_expansion_policy = "v14_sample_expansion_2026_05_31"
 
 [exit]
 sl_tier_low = 2.3

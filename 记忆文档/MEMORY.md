@@ -1,5 +1,13 @@
 # MEMORY.md - 长期记忆
 
+## 2026-05-31 B/v16 全量放开与 C/v14 扩样
+- 用户明确要求“放开”，核心原因是当前样本量太少，无法有效优化策略；同时要求解决 C/v14 开仓少，并保证 A/v11 无异常。
+- B/v16 两个 P0/P1 进化候选已获用户全量审批并落地为实盘规则：`EXP-20260527-v16-atr-stop-bands` 使用 ATR/Price 分档止损（低波动 2.5×ATR、常规 2.0×ATR、高波动 1.5×ATR），`EXP-20260527-v16-overheat-cap-85` 把过热封顶降到 85。B/v16 不提高单仓保证金、不取消同币种禁止叠仓、不取消余额保护。
+- C/v14 进入 `v14_sample_expansion_2026_05_31` 扩样模式：每周期/赛道上限 2→3，1h 入场门槛 55→50，15m 确认门槛 35→25，空头额外惩罚 15→10，高分 1h 候选允许弱确认或无确认小范围放行。风控闭环保持：同币种禁止重复开仓、总仓位/方向/余额保护、交易所规则预检、开仓确认、强平/关闭必须确认仓位消失。
+- A/v11 本次不放松入场和替换规则，只作为异常监控对象：继续看 100 USDT 保证金纪律、同币种禁止叠仓、硬底止损和 replacement-quality guarded small-live 表现。
+- 已部署并验证：Tencent `strategy-b` release `20260531-020144-strategy-b-3a5f427`、`strategy-c` release `20260531-020214-strategy-c-3a5f427`、`research` release `20260531-020241-research-3a5f427`、`portal` release `20260531-020348-portal-3a5f427`，Aliyun `shadow` release `20260531-020337-shadow-3a5f427`。2026-05-31 02:04 CST live context：六个预期服务 active，system alerts `ok/0`，attention `P0=0/P1=0/P2=5`，A/v11 当前 4 仓保证金约 99.6-101.0 USDT，无 sizing abnormality。
+- 后续复盘重点：B/v16 OPEN/CLOSE 样本量、硬底止损率、真实 PnL 与 close-confirm 失败；C/v14 入场候选→开仓转换率、OPEN_SKIPPED 分层、样本扩张后的胜率/PF；A/v11 sizing violation 必须保持 0。
+
 ## 2026-05-31 运行复盘与事件库去重
 - 2026-05-31 01:41 CST live context：Tencent 六个预期核心服务全部 active，system alerts `ok/0`，三账户当前浮亏约 `-4.71 USDT`，持仓 `7`。A/v11 4 仓、B/v16 2 仓、C/v14 1 仓；A/B/C 当前均无 sizing violation，硬止损风险计数为 0。
 - 当前 P0=2 不是服务器故障，而是 B/v16 策略进化候选：`EXP-20260527-v16-atr-stop-bands` 与 `EXP-20260527-v16-overheat-cap-85`，状态 `verified_upgrade_ready`，仍需明确审批后才可扩展。

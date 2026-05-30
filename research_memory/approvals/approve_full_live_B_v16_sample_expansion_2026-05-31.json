@@ -1,0 +1,26 @@
+{
+  "action_schema": "manual_strategy_research_approval/v1",
+  "candidate_ids": [
+    "EXP-20260527-v16-atr-stop-bands",
+    "EXP-20260527-v16-overheat-cap-85"
+  ],
+  "family_id": "FAM-B-v16-sample-expansion",
+  "base_strategy": "B/v16",
+  "manual_action": "approve_full_live",
+  "approved_scope": "full_live",
+  "selected_live_parameter": {
+    "atr_stop_bands": {
+      "low_vol_atr_pct_lt": 0.02,
+      "low_vol_sl_mult": 2.5,
+      "normal_sl_mult": 2.0,
+      "high_vol_atr_pct_gte": 0.03,
+      "high_vol_sl_mult": 1.5
+    },
+    "score_max": 85
+  },
+  "next_step": "用户明确批准全量开放两个 B/v16 候选；实盘采用 ATR 分档止损与过热封顶 85，以增加可验证样本并降低尾部损失。",
+  "risk_notes": "不提高单仓保证金、不取消同币种禁止叠仓、不取消余额保护；上线后重点监控 B/v16 OPEN/CLOSE、强平确认、硬底止损、真实 PnL 和样本量。",
+  "approved_by": "user",
+  "approved_at": "2026-05-31T02:00:00+08:00",
+  "applied_at": "2026-05-31T02:00:00+08:00"
+}

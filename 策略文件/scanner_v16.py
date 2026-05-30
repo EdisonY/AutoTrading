@@ -1093,7 +1093,7 @@ class ScannerV16:
                 return False
             exec_qty = exec_result.quantity or size_qty
             pos = SimPosition(
-                symbol=sym, side=side, entry_price=price, size=size_qty, leverage=LEVERAGE,
+                symbol=sym, side=side, entry_price=price, size=exec_qty, leverage=LEVERAGE,
                 atr=atr, entry_time=datetime.now(CST), score=score, tf=tf,
                 stop_loss=sl, take_profit=tp, trailing_sl=sl,
                 highest=price, lowest=price,

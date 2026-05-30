@@ -159,8 +159,10 @@ class ExecutionEngine:
             )
 
         exec_qty = self._executed_quantity(raw)
-        if exec_qty <= 0 and req.confirm_position:
-            exec_qty = self._confirm_position_qty(req.symbol, req.side)
+        if req.confirm_position:
+            confirmed_qty = self._confirm_position_qty(req.symbol, req.side)
+            if confirmed_qty > 0:
+                exec_qty = confirmed_qty
         if exec_qty <= 0:
             exec_qty = qty
         return ExecutionResult(

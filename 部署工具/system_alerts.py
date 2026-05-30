@@ -147,7 +147,7 @@ def recent_failed_close_alerts(now: datetime) -> list[dict[str, str]]:
             """
             select ts, strategy, symbol, side, event_type, reason, payload_json
             from events
-            where event_type in ('FORCED_CLOSE_FAILED', 'CLOSE_FAILED', 'CLOSE_CONFIRM_FAILED')
+            where event_type in ('FORCED_CLOSE_FAILED', 'CLOSE_FAILED', 'CLOSE_CONFIRM_FAILED', 'OPEN_SIZING_MISMATCH_FAILED')
             order by id desc
             limit 200
             """
@@ -184,7 +184,7 @@ def recent_failed_close_alerts(now: datetime) -> list[dict[str, str]]:
         return []
     return [{
         "level": "bad",
-        "title": "强平/平仓确认失败",
+        "title": "强平/平仓/仓位尺寸确认失败",
         "body": f"近2小时 {len(recent)} 条；最新: {recent[0]}",
     }]
 

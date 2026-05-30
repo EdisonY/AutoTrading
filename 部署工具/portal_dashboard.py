@@ -26,9 +26,12 @@ REVIEW_DIR = ROOT / "复盘报告"
 MEMORY_DIR = ROOT / "research_memory"
 EXPERIMENTS_DIR = ROOT / "experiments"
 SERVER_MIRROR_DIR = ROOT / "server_logs_tencent"
-EVENT_STORE_DB = ROOT / "runtime" / "event_store.sqlite3"
+LOCAL_EVENT_STORE_DB = ROOT / "runtime" / "event_store.sqlite3"
+MIRROR_EVENT_STORE_DB = SERVER_MIRROR_DIR / "runtime" / "event_store.sqlite3"
+EVENT_STORE_DB = MIRROR_EVENT_STORE_DB if MIRROR_EVENT_STORE_DB.exists() else LOCAL_EVENT_STORE_DB
 MARKET_CACHE_PATH = ROOT / "runtime" / "market_data_cache.json"
 ALERTS_PATH = ROOT / "runtime" / "alerts_latest.json"
+ACCOUNT_SNAPSHOT_PATH = ROOT / "runtime" / "account_snapshot_latest.json"
 COUNTERFACTUAL_JSON = REPORTS_DIR / "counterfactual_open_skips_latest.json"
 COUNTERFACTUAL_HTML = REPORTS_DIR / "counterfactual_open_skips_latest.html"
 STRATEGY_EVOLUTION_JSON = ROOT / "runtime" / "strategy_evolution_latest.json"
@@ -572,6 +575,67 @@ def realtime_account_summary() -> dict[str, Any]:
         "sizing_violations": [],
         "note": "尚未写入实时账户快照。",
     }
+    snapshot = read_json(ACCOUNT_SNAPSHOT_PATH)
+    if isinstance(snapshot, dict) and isinstance(snapshot.get("accounts"), list):
+        summary = snapshot.get("summary") if isinstance(snapshot.get("summary"), dict) else {}
+        accounts = []
+        latest_ts = parse_dt(summary.get("ts"))
+        sizing_violations = []
+        for row in snapshot.get("accounts") or []:
+            if not isinstance(row, dict):
+                continue
+            ts = parse_dt(row.get("ts"))
+            if ts and (latest_ts is None or ts > latest_ts):
+                latest_ts = ts
+            account_violations = row.get("sizing_violations") or []
+            if isinstance(account_violations, list):
+                sizing_violations.extend(account_violations)
+            accounts.append(
+                {
+                    "account": row.get("account", ""),
+                    "strategy": row.get("strategy") or row.get("account", ""),
+                    "version": row.get("version", ""),
+                    "wallet_usdt": float(row.get("wallet_usdt") or 0),
+                    "available_usdt": float(row.get("available_usdt") or 0),
+                    "margin_usdt": float(row.get("margin_usdt") or 0),
+                    "unrealized_pnl_usdt": float(row.get("unrealized_pnl_usdt") or 0),
+                    "open_positions": int(row.get("open_positions") or 0),
+                    "longs": int(row.get("longs") or 0),
+                    "shorts": int(row.get("shorts") or 0),
+                    "notional_usdt": float(row.get("notional_usdt") or 0),
+                    "risk_count": int(row.get("hard_stop_risk_count") or 0),
+                    "sizing_violation_count": int(row.get("sizing_violation_count") or 0),
+                    "sizing_violations": account_violations if isinstance(account_violations, list) else [],
+                    "worst": row.get("worst_position") or {},
+                    "best": row.get("best_position") or {},
+                    "ts": ts,
+                }
+            )
+        age_seconds = (datetime.now(CST) - latest_ts).total_seconds() if latest_ts else None
+        fresh = bool(latest_ts and age_seconds is not None and age_seconds <= 120)
+        wallet = float(summary.get("wallet_usdt") or sum(a["wallet_usdt"] for a in accounts))
+        available = float(summary.get("available_usdt") or sum(a["available_usdt"] for a in accounts))
+        margin = float(summary.get("margin_usdt") or sum(a["margin_usdt"] for a in accounts))
+        upnl = float(summary.get("unrealized_pnl_usdt") or sum(a["unrealized_pnl_usdt"] for a in accounts))
+        positions = int(summary.get("open_positions") or sum(a["open_positions"] for a in accounts))
+        risks = sum(a["risk_count"] for a in accounts)
+        sizing_count = sum(a["sizing_violation_count"] for a in accounts)
+        return {
+            "available": True,
+            "fresh": fresh,
+            "ts": latest_ts,
+            "age": age_text(latest_ts),
+            "accounts": accounts,
+            "wallet_usdt": wallet,
+            "available_usdt": available,
+            "margin_usdt": margin,
+            "unrealized_pnl_usdt": upnl,
+            "open_positions": positions,
+            "risk_count": risks,
+            "sizing_violation_count": sizing_count,
+            "sizing_violations": sizing_violations,
+            "note": f"实时 JSON 快照覆盖 {len(accounts)} 个账号，当前持仓 {positions}，浮盈亏 {upnl:+.2f} USDT。",
+        }
     if not EVENT_STORE_DB.exists():
         return empty
     try:

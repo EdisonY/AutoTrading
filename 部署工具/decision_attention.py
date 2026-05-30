@@ -584,15 +584,16 @@ def build_payload() -> dict[str, Any]:
     items = merge_items(load_existing(), detected)
     persist_attention_items(items)
     visible = [i for i in items if i.get("status") in {"open", "cleared_pending_review"}]
+    open_items = [i for i in visible if i.get("status") == "open"]
     counts: dict[str, int] = {}
-    for item in visible:
+    for item in open_items:
         key = str(item.get("priority") or "P3")
         counts[key] = counts.get(key, 0) + 1
     return {
         "generated_at": now_cst().isoformat(),
         "summary": {
             "total_visible": len(visible),
-            "open": sum(1 for i in visible if i.get("status") == "open"),
+            "open": len(open_items),
             "cleared_pending_review": sum(1 for i in visible if i.get("status") == "cleared_pending_review"),
             "counts": {k: counts.get(k, 0) for k in ("P0", "P1", "P2", "P3")},
         },

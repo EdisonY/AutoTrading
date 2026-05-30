@@ -1,6 +1,6 @@
 # AutoTrading Project State
 
-Last updated: 2026-05-29 Asia/Shanghai
+Last updated: 2026-05-30 Asia/Shanghai
 
 This file is the long-lived project memory for multi-location development. Daily reports may roll forward, but this file records the current architecture, what is done, what is not done, and what must not be forgotten.
 
@@ -14,10 +14,10 @@ This file is the long-lived project memory for multi-location development. Daily
 ## Strategy Stack
 
 - `A/v11`: original high-frequency/scanner strategy, now has full-position replacement/release logic and same-symbol no-stacking protection. As of 2026-05-27, replacement-quality remains guarded small-live only: strong signal >=112, score gap >=25, profitable positions >=2% are protected, no total-position expansion. As of 2026-05-29, user approved both trailing-pullback P0 candidates for full rollout; live uses 15m pullback `1.0 ATR` and 30m pullback `0.8 ATR`.
-- `B/v16`: CVD/OFI order-flow strategy. Small-stage guard was temporarily removed per user instruction; latest server event check on 2026-05-26 showed active scanning and new opens today, not a two-day stall. As of 2026-05-29, close/forced-close now confirms the exchange position disappears before local state can be removed, but three legacy Binance Testnet positions (`BCHUSDT` long, `ETHUSDT` long, `FHEUSDT` short) still reject close attempts with `-4061` and remain a visible system alert.
+- `B/v16`: CVD/OFI order-flow strategy. Small-stage guard was temporarily removed per user instruction; latest server event checks show active scanning and new opens, not a stall. As of 2026-05-29, close/forced-close confirms the exchange position disappears before local state can be removed; the legacy Testnet `-4061` close-confirm alert cleared by 2026-05-30, but future close failures must remain visible if they recur.
 - `C/v14`: four-factor scoring strategy with same-symbol no-stacking protection. Signal reporting now distinguishes raw analysis candidates from real 1h entry candidates; no entry loosen was made in that observability fix.
 - Sentinel: market mover detector feeds unusual movers into strategies; strategy scans now record which layer opened, filtered, rejected, or had no signal.
-- Shared execution layer: A/B/C use `core/binance_order_rules.py` and `core/execution_engine.py` for Binance exchange-rule preflight, MARKET_LOT_SIZE/minNotional/maxQty rounding, TradFi-Perps blocking, percent-price checks, `-1007` status-unknown position confirmation, and close confirmation. A close is not considered successful until the matching exchange position disappears; remaining positions after retry must be logged as `CLOSE_FAILED` or `FORCED_CLOSE_FAILED` and surfaced by system alerts. Deterministic preflight rejections should be logged as `OPEN_SKIPPED`, not `OPEN_FAILED`.
+- Shared execution layer: A/B/C use `core/binance_order_rules.py` and `core/execution_engine.py` for Binance exchange-rule preflight, MARKET_LOT_SIZE/minNotional/maxQty rounding, TradFi-Perps blocking, percent-price checks, `-1007` status-unknown position confirmation, open-position quantity confirmation, and close confirmation. A close is not considered successful until the matching exchange position disappears; remaining positions after retry must be logged as `CLOSE_FAILED` or `FORCED_CLOSE_FAILED` and surfaced by system alerts. Deterministic preflight rejections should be logged as `OPEN_SKIPPED`, not `OPEN_FAILED`.
 
 ## Done
 
@@ -38,6 +38,7 @@ This file is the long-lived project memory for multi-location development. Daily
 - `部署工具/release_manager.py` provides component-based dry-run deploys, remote backups, release manifests, service restarts, release listing, and rollback.
 - `部署工具/release_manager.py` treats Tencent portal deploys as alert/report-file deploys only; it must not restart the intentionally inactive Tencent `crypto-portal-refresh.service`. Aliyun `shadow` deploys include truth ledger, sentinel quality review, counterfactual report, attention API, analysis refresh, reverse-sync scripts, and the SQLite snapshot sync path.
 - `部署工具/shadow_sync_from_tencent.py` syncs Tencent SQLite through the SQLite `backup()` API and verifies the copied DB with `pragma quick_check` before Aliyun analysis reads it.
+- `部署工具/shadow_sync_from_tencent.py` now writes the mirror to project-level `server_logs_tencent`, syncs compact runtime/report context, builds a slim verified SQLite snapshot for Aliyun analysis, and keeps legacy JSONL pulls optional.
 - `部署工具/git_change_guard.py` enforces that material staged code/config/tool changes include a `CHANGELOG.md` entry and rejects staged runtime/secret-like artifacts.
 - Tencent server has persistent 2G swap configured through `/swapfile` and `/etc/fstab`; system alerts watch memory, swap, and recent OOM kernel events.
 
@@ -56,16 +57,18 @@ This file is the long-lived project memory for multi-location development. Daily
 ## Current Open Attention
 
 - A/v11 sizing/risk must remain watched from real-time account snapshots and automatic alerts.
-- B/v16 has an active bad system alert for close-confirm failures on legacy Testnet positions (`BCHUSDT`, `ETHUSDT`, `FHEUSDT`). The code no longer silently deletes local state on failed close; keep diagnosing Binance Testnet/account-position corruption or flatten through the exchange UI if available.
-- Strategy evolution attention P0 was cleared after the 2026-05-29 full-live approval of the two A/v11 trailing-pullback candidates. `EXP-20260523-v11-replacement-quality` remains a guarded/shadow item, not a full-rollout approval.
+- B/v16's legacy close-confirm alert cleared by the 2026-05-30 check; the code still must surface any new close-confirm or open-sizing mismatch failures as bad alerts.
+- Strategy evolution attention P0 is currently clear. The two A/v11 trailing-pullback candidates are resolved from the attention ledger after full-live approval, and `EXP-20260523-v11-replacement-quality` remains a guarded/small-live monitoring item rather than a full-rollout approval.
 - User-confirmed archived P0 system items: `入口页刷新失败`, `总入口页面偏旧`, and the 2026-05-26 21:56 CST OOM alert. They remain in SQLite acknowledgement history but no longer occupy P0.
 - B/v16 perceived two-day inactivity was a visibility issue: the event store showed a 2026-05-26 09:21:29 +08:00 `XRPUSDT` short open plus earlier same-day opens.
 - C/v14 reporting now uses entry-candidate wording. The 2026-05-25 daily review shows 57 entry candidates versus 46378 raw signals; raw data is still used for funnel analysis, but should not be read as executable signal count.
+- C/v14 has an open P2 stale-open attention item as of 2026-05-30 because no new open has occurred for more than 48h while service heartbeat remains current; treat it as a funnel/market-fit review item, not a service outage.
 - Account snapshots now normalize live position direction through `core/position_utils.py`. Binance testnet rows with contradictory `positionSide` are interpreted by matching raw unrealized PnL against entry/mark first; the raw side and inference source remain in the snapshot for audit.
 
 ## Not Done / Next
 
 - User acknowledgement workflow has both a script path (`部署工具/acknowledge_attention_items.py`) and a portal/API path (`crypto-attention-api.service` + `/api/attention/ack`). Continue verifying that browser-side acknowledgements write to SQLite and refresh `research_memory/attention/open_items.json`.
+- B/v16 P1 strategy-evolution candidates (`EXP-20260527-v16-atr-stop-bands`, `EXP-20260527-v16-overheat-cap-85`) remain review-only; do not roll them into live behavior without explicit user approval.
 - Execute `记忆文档/FUTURE_EXECUTION_PLAN.md` in order: dual-server architecture migration (Phase 0.5 ✅), strategy truth ledger (Phase 1 ✅), command-center quality board (Phase 2 ✅), sentinel quality review (Phase 6 ✅), A/B/C shadow experiments (Phase 3/4/5 ✅), recovery-position policy review (Phase 7 ✅), promotion gate hardening (Phase 8 ✅), and testnet-to-live transition (Phase 9 ✅).
 - Architecture: Tencent runs 7 services (scanner/v11, scanner_v14, scanner_v16, system_alerts, market_data_cache, market_mover_sentinel, account_snapshot) + data_maintenance timer. Aliyun runs analysis-refresh timer (every 2h), shadow-review timer (daily), attention-api service (port 8090).
 - Analysis/report pipeline runs on Aliyun from synced Tencent data; generated portal/reports are synced back to Tencent for viewing. Tencent keeps live trading/API-dependent services and local SQLite ingestion.

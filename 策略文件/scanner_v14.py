@@ -1898,7 +1898,7 @@ class Scanner:
             take_profit=tp,
             stop_loss=sl,
             quantity=qty,
-            confirm_position=False,
+            confirm_position=True,
         ))
         if not exec_result.success:
             if exec_result.preflight_rejected:
@@ -1941,7 +1941,7 @@ class Scanner:
         sl_m = calc_sl_mult_v14(sig.get("atr_pct", 0.02))
         pos = SimPosition(
             symbol=inst_id, side=side,
-            entry_price=price, size=qty,
+            entry_price=price, size=exchange_qty,
             leverage=self.leverage,
             stop_loss=sl, take_profit=tp,
             atr_at_entry=atr,

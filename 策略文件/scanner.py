@@ -2050,7 +2050,7 @@ class Scanner:
                     risk_usdt=risk_usdt, leverage=self.leverage,
                     take_profit=tp, stop_loss=sl,
                     quantity=exchange_qty,
-                    confirm_position=False,
+                    confirm_position=True,
                 ))
             else:
                 exec_result = self.execution.open_position(OpenRequest(
@@ -2058,7 +2058,7 @@ class Scanner:
                     risk_usdt=risk_usdt, leverage=self.leverage,
                     take_profit=tp, stop_loss=sl,
                     quantity=exchange_qty,
-                    confirm_position=False,
+                    confirm_position=True,
                 ))
             result = exec_result.raw if isinstance(exec_result.raw, dict) else {}
 
@@ -2066,6 +2066,44 @@ class Scanner:
             if exec_result.success:
                 exchange_success = True
                 order_id = exec_result.order_id
+                planned_exchange_qty = exchange_qty
+                exchange_qty = float(exec_result.quantity or exchange_qty)
+                actual_margin_usdt = exchange_qty * price / self.leverage
+                if not min_notional_adjustment and not min_margin_usdt <= actual_margin_usdt <= max_margin_usdt:
+                    close_exec = self.execution.close_position(CloseRequest(
+                        symbol=inst_id,
+                        side=side,
+                        quantity=exchange_qty,
+                        cancel_open_orders=True,
+                    ))
+                    log_event({
+                        "time": now_str,
+                        "event": "OPEN_SIZING_MISMATCH_CLOSED" if close_exec.success else "OPEN_SIZING_MISMATCH_FAILED",
+                        "symbol": inst_id,
+                        "side": side,
+                        "price": price,
+                        "score": net_score,
+                        "timeframe": tf,
+                        "reason": "成交后确认保证金偏离100 USDT目标，自动撤销该仓",
+                        "sizing_policy": "fixed_margin_v1_confirmed",
+                        "target_margin_usdt": risk_usdt,
+                        "planned_exchange_qty": planned_exchange_qty,
+                        "confirmed_exchange_qty": exchange_qty,
+                        "confirmed_margin_usdt": round(actual_margin_usdt, 4),
+                        "planned_margin_usdt": round(planned_exchange_qty * price / self.leverage, 4),
+                        "exchange_close_success": close_exec.success,
+                        "close_failure_reason": close_exec.reason,
+                        "decision_stage": "post_open_sizing_confirm",
+                        "filter_layer": "execution",
+                        **sentinel_fields(inst_id),
+                    })
+                    now_dt = datetime.now(CST)
+                    self.cooldowns[tf][inst_id] = now_dt + timedelta(minutes=15)
+                    logger.warning(
+                        f"  开仓后保证金确认失败并已处理: {inst_id} planned={planned_exchange_qty:g} "
+                        f"actual={exchange_qty:g} margin={actual_margin_usdt:.2f} close={close_exec.success}"
+                    )
+                    return
                 logger.info(f"  下单成功: orderId={order_id} qty={exchange_qty}")
             elif exec_result.preflight_rejected:
                 err_code = exec_result.code or "preflight_rejected"
@@ -2208,6 +2246,7 @@ class Scanner:
             "resonance": resonance,
             "order_id": order_id,
             "exchange_qty": exchange_qty,
+            "planned_exchange_qty": locals().get("planned_exchange_qty", exchange_qty),
             "sizing_policy": "fixed_margin_v1",
             "target_margin_usdt": risk_usdt,
             "expected_margin_usdt": round(exchange_qty * price / self.leverage, 4),

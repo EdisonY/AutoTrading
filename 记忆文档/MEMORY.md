@@ -1,5 +1,13 @@
 # MEMORY.md - 长期记忆
 
+## 2026-05-30 运行续检、开仓尺寸确认与关注台账口径修复
+- 用户要求继续未完成的整体运行检查。最终 live context（2026-05-30 09:13 CST）显示 Tencent 六个预期服务全部 active，system alerts `ok/0`，账户浮盈约 `+16.47 USDT`，持仓 `6`，attention `P0=0/P1=2/P2=3`。
+- 已完成开仓后真实数量确认：`ExecutionEngine.open_position()` 在请求确认时用交易所持仓数量覆盖订单回报数量；B/v16、C/v14 本地持仓 size 用成交/确认数量；C/v14 开仓也启用 position confirmation。
+- A/v11 增加 post-open sizing guard：如果确认后的初始保证金偏离 100 USDT 目标区间且不是 minNotional 例外，会立刻尝试关闭新仓并记录 `OPEN_SIZING_MISMATCH_CLOSED` 或 `OPEN_SIZING_MISMATCH_FAILED`。系统告警和清理脚本已保护/展示这些事件。
+- Aliyun `shadow_sync_from_tencent.py` 已修复：镜像路径回到项目根 `server_logs_tencent`，同步 compact runtime/report 文件，默认不再拉 legacy JSONL，生成瘦身 SQLite 快照并 quick_check，SSH stream 失败时 scp fallback；同时修掉旧 Python 对 f-string backslash 的 SyntaxError。
+- `decision_attention.py` 的 summary counts 现在只统计 `status=open` 的事项，`cleared_pending_review`、`archived`、`resolved` 不再把历史 P0 算进当前 P0。Tencent 远端重建后显示 open P0=0。
+- 未做：没有批准或部署任何 B/v16 P1 策略候选；C/v14 仍有 P2 stale-open 关注项，应继续看过滤层/反事实，不要直接放宽阈值。
+
 ## 2026-05-27 双服务器架构优化 + 长期计划扩展
 - 用户明确要求：策略间资金无法动态分配，放弃此项；结合服务器内存和存储容量对新增功能有限制；币安API调用不能被ban。
 - 阿里云服务器（39.105.156.210）资源闲置，但无法调用币安实盘API（被墙）。决定将阿里云作为分析节点，承担所有不需要API的离线计算任务。

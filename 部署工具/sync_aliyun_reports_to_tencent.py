@@ -35,8 +35,12 @@ TENCENT_RESEARCH = "/opt/crypto-auto-trader/research_memory/attention"
 
 # Reports generated on Aliyun that should be synced to Tencent
 REPORT_FILES = [
-    "portal_latest.html",
     "index.html",
+    "counterfactual_open_skips_latest.json",
+    "counterfactual_open_skips_latest.md",
+    "counterfactual_open_skips_latest.html",
+    "research_store_summary_latest.md",
+    "portal_latest.html",
     "strategy_evolution_latest.json",
     "strategy_evolution_latest.md",
     "strategy_evolution_latest.html",
@@ -44,10 +48,6 @@ REPORT_FILES = [
     "strategy_truth_latest.md",
     "sentinel_quality_latest.json",
     "sentinel_quality_latest.md",
-    "counterfactual_open_skips_latest.json",
-    "counterfactual_open_skips_latest.md",
-    "counterfactual_open_skips_latest.html",
-    "research_store_summary_latest.md",
     "alerts_latest.md",
     "market_review_latest.md",
     "market_review_latest.html",
@@ -120,12 +120,14 @@ def sync_files(
     max_bytes: int,
     file_timeout: int,
     method: str,
+    max_errors: int,
 ) -> int:
     """Upload files from local_dir to remote_dir. Returns count of files uploaded."""
     sftp = client.open_sftp() if client and method == "sftp" else None
     if sftp:
         sftp.get_channel().settimeout(file_timeout)
     uploaded = 0
+    errors = 0
     try:
         # Ensure remote directory exists
         if client:
@@ -164,6 +166,10 @@ def sync_files(
                 uploaded += 1
             except Exception as exc:
                 print(f"  [ERR]  {label}/{name} - {exc}")
+                errors += 1
+                if errors >= max_errors:
+                    print(f"  [STOP] {label} reached {max_errors} upload errors")
+                    break
     finally:
         if sftp:
             sftp.close()
@@ -178,6 +184,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--max-file-mb", type=float, default=8.0, help="Skip individual files larger than this")
     parser.add_argument("--file-timeout", type=int, default=30, help="Per-file upload timeout in seconds")
     parser.add_argument("--method", choices=["ssh", "stream", "sftp"], default="ssh", help="Upload method; ssh uses one OpenSSH/base64 upload per file")
+    parser.add_argument("--max-errors", type=int, default=4, help="Stop a section after this many upload errors")
     args = parser.parse_args(argv)
     max_bytes = int(args.max_file_mb * 1024 * 1024)
 
@@ -205,13 +212,13 @@ def main(argv: list[str] | None = None) -> int:
     try:
         total = 0
         print("--- Syncing runtime ---")
-        total += sync_files(client, ALIYUN_RUNTIME, TENCENT_RUNTIME, RUNTIME_FILES, "runtime", max_bytes, args.file_timeout, args.method)
-        print()
-        print("--- Syncing research attention ---")
-        total += sync_files(client, ALIYUN_RESEARCH, TENCENT_RESEARCH, RESEARCH_FILES, "research", max_bytes, args.file_timeout, args.method)
+        total += sync_files(client, ALIYUN_RUNTIME, TENCENT_RUNTIME, RUNTIME_FILES, "runtime", max_bytes, args.file_timeout, args.method, args.max_errors)
         print()
         print("--- Syncing reports ---")
-        total += sync_files(client, ALIYUN_REPORTS, TENCENT_REPORTS, REPORT_FILES, "reports", max_bytes, args.file_timeout, args.method)
+        total += sync_files(client, ALIYUN_REPORTS, TENCENT_REPORTS, REPORT_FILES, "reports", max_bytes, args.file_timeout, args.method, args.max_errors)
+        print()
+        print("--- Syncing research attention ---")
+        total += sync_files(client, ALIYUN_RESEARCH, TENCENT_RESEARCH, RESEARCH_FILES, "research", max_bytes, args.file_timeout, args.method, args.max_errors)
         print()
         print(f"Total: {total} files uploaded to Tencent")
         return 0

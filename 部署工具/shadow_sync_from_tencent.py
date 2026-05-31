@@ -27,7 +27,8 @@ TENCENT_PASS = os.environ.get("TENCENT_SSH_PASSWORD")
 REMOTE_DIR = "/opt/crypto-auto-trader"
 CST = timezone(timedelta(hours=8))
 
-ROOT = Path(__file__).resolve().parent.parent
+SCRIPT_DIR = Path(__file__).resolve().parent
+ROOT = SCRIPT_DIR if (SCRIPT_DIR / "core").exists() else SCRIPT_DIR.parent
 LOCAL_DIR = ROOT / "server_logs_tencent"
 
 JSONL_FILES = [

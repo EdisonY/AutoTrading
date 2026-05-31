@@ -281,6 +281,11 @@ ROLLBACK_OPEN_FAILED_THRESHOLD = 5
 ROLLBACK_PF_DECAY_RATIO = 0.8  # new PF < old PF * 0.8
 ROLLBACK_HARD_STOP_RATIO = 1.5  # new hard-stop rate > old * 1.5
 ROLLBACK_ACCOUNT_LOSS_USDT = 200  # 7-day account loss
+POST_APPROVAL_MIN_CLOSED = 20
+POST_APPROVAL_LOSS_USDT = 80
+POST_APPROVAL_FORCED_CLOSE_RATE = 0.12
+POST_APPROVAL_OPEN_FAILED_RATE = 0.08
+POST_APPROVAL_NOTIONAL_PER_TRADE = 400.0
 
 
 def adjust_pnl_for_fees(pnl: float, sample_trades: int, notional_per_trade: float = 400.0) -> float:
@@ -425,6 +430,48 @@ def classify_regime(metrics: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def classify_window_quality(metrics: dict[str, Any]) -> dict[str, Any]:
+    opens = to_int(metrics.get("opens"))
+    closes = to_int(metrics.get("closes"))
+    forced_closes = to_int(metrics.get("forced_closes"))
+    open_failed = to_int(metrics.get("open_failed"))
+    close_failed = to_int(metrics.get("close_failed"))
+    closed_total = closes + forced_closes
+    attempted_opens = opens + open_failed
+    forced_rate = forced_closes / max(1, closed_total)
+    open_failed_rate = open_failed / max(1, attempted_opens)
+    cost = closed_total * POST_APPROVAL_NOTIONAL_PER_TRADE * FEE_SLIPPAGE_ADJUSTMENT_PCT / 100
+    pnl_after_cost = to_float(metrics.get("realized_pnl_usdt")) - cost
+    reasons: list[str] = []
+    if close_failed:
+        reasons.append(f"close_failed={close_failed}")
+    if closed_total < POST_APPROVAL_MIN_CLOSED:
+        label = "maturing"
+        reasons.append(f"closed_samples={closed_total}/{POST_APPROVAL_MIN_CLOSED}")
+    else:
+        label = "ok"
+        if pnl_after_cost <= -POST_APPROVAL_LOSS_USDT:
+            label = "bad"
+            reasons.append(f"pnl_after_cost={pnl_after_cost:.2f}")
+        if forced_rate >= POST_APPROVAL_FORCED_CLOSE_RATE:
+            label = "bad"
+            reasons.append(f"forced_close_rate={forced_rate:.1%}")
+        if open_failed_rate >= POST_APPROVAL_OPEN_FAILED_RATE:
+            label = "bad"
+            reasons.append(f"open_failed_rate={open_failed_rate:.1%}")
+    if not reasons:
+        reasons.append("window_quality_ok")
+    return {
+        "label": label,
+        "closed_samples": closed_total,
+        "forced_close_rate": round(forced_rate, 4),
+        "open_failed_rate": round(open_failed_rate, 4),
+        "estimated_cost_usdt": round(cost, 4),
+        "realized_pnl_after_cost": round(pnl_after_cost, 4),
+        "reasons": reasons[:4],
+    }
+
+
 def summarize_post_approval_windows(db_path: Path | None, approvals: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
     if not db_path or not approvals:
         return {}
@@ -529,6 +576,7 @@ def summarize_post_approval_windows(db_path: Path | None, approvals: dict[str, d
                         metrics["realized_pnl_usdt"] += payload_float(payload, ("pnl_usd", "pnl_usdt", "realized_pnl_usdt", "pnl"))
                 metrics["realized_pnl_usdt"] = round(float(metrics["realized_pnl_usdt"]), 4)
                 metrics["regime"] = classify_regime(metrics)
+                metrics["quality"] = classify_window_quality(metrics)
                 for key in ("abs_change_sum", "abs_velocity_sum", "quote_volume_sum"):
                     metrics.pop(key, None)
                 windows[f"{hours}h"] = metrics
@@ -567,6 +615,13 @@ def rollback_watch_verdict(
         if day_open_failed >= ROLLBACK_OPEN_FAILED_THRESHOLD:
             priority = priority or "P1"
             triggers.append(f"24h OPEN_FAILED {day_open_failed}")
+        for label, metrics in (post_approval.get("windows") or {}).items():
+            quality = metrics.get("quality") or {}
+            if quality.get("label") == "bad":
+                priority = priority or "P1"
+                reason = "; ".join(str(x) for x in (quality.get("reasons") or [])[:2])
+                triggers.append(f"{label} 实盘窗口质量差 {reason}")
+                break
     if to_float(account_risk.get("unrealized_pnl_usdt")) <= -ROLLBACK_ACCOUNT_LOSS_USDT:
         priority = priority or "P1"
         triggers.append(f"策略账户浮亏 {to_float(account_risk.get('unrealized_pnl_usdt')):.2f} USDT")

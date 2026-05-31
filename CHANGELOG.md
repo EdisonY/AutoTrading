@@ -2,6 +2,14 @@
 
 This is the durable reason-and-outcome ledger for every material design, code, configuration, deployment, rollback, optimization, or live operational change.
 
+## 2026-05-31 23:46 CST - Add post-approval window quality thresholds
+- Trigger / reason: Continue N4. Approved live candidates had post-approval windows and regime labels, but the gate still needed explicit window-quality thresholds for fee-adjusted loss, forced-close rate, and open-failure rate.
+- Completed: `strategy_evolution_gate.py` now adds `quality` to each post-approval 24h/72h/168h window. It estimates fee/slippage using 0.15% on 400 USDT notional per closed trade, computes `realized_pnl_after_cost`, forced-close rate, open-failure rate, and closed sample count. Mature windows become `bad` if fee-adjusted PnL is below threshold, forced-close rate is too high, or open-failure rate is too high. `rollback_watch_verdict()` now upgrades approved full-live candidates to `rollback_watch/P1` when any post-approval window quality is bad; close-confirm failure remains `rollback_required/P0`. `portal_dashboard.py` now exposes approved-candidate 24h `quality_counts` in the executive brief and findings.
+- Not completed / remaining: The thresholds are conservative heuristics and still need calibration against longer 3/7/14/30-day windows. Automatic code rollback is not wired yet.
+- Verification: Pending local/remote validation and deployment.
+- Live impact / deployment: Pending. Read-side gate/report behavior only; no scanner, order, threshold, or risk behavior changes.
+- Files / release / commit: `部署工具/strategy_evolution_gate.py`, `部署工具/portal_dashboard.py`, `记忆文档/FUTURE_EXECUTION_PLAN.md`, `记忆文档/MEMORY.md`, `CHANGELOG.md`; Git commit to contain this entry.
+
 ## 2026-05-31 23:32 CST - Add first regime layer to approved-candidate monitoring
 - Trigger / reason: Continue N4. Post-approval windows existed, but they did not yet explain whether a candidate was being observed in trend, range, high-volatility, or low-liquidity conditions.
 - Completed: `strategy_evolution_gate.py` now classifies every post-approval 24h/72h/168h live window into a first regime label: `high_volatility`, `trend`, `low_liquidity`, or `range`. The classifier uses average absolute move, velocity, quote volume, long/short imbalance, and forced-close density from event payloads. `portal_dashboard.py` now summarizes approved-candidate 24h regime distribution, `OPEN_FAILED`, and `CLOSE_FAILED` in the executive brief and adds a top-level finding so the entry page can separate strategy degradation from market-environment context.

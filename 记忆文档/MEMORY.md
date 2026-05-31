@@ -14,6 +14,7 @@
 - 跨云同步继续收敛：2026-05-31 19:46 CST 验证发现 3 日同步在当前链路上仍可能超过 180s，而 1 日 bounded sync（5000 条哨兵、500 条账户快照）能稳定完成且数据新鲜约 0.04h。因此小时级入口刷新应走 1 日小镜像；每日 shadow review 可以先试 3 日，失败后自动降级 1 日，避免整条报告链卡死。
 - N4 又补一层：`strategy_evolution_gate.py` 现在会从事件库为 full-live 候选生成 post-approval 24h/72h/168h 实盘观察窗，统计开仓、平仓、强平、OPEN_FAILED、CLOSE_FAILED、OPEN_SKIPPED 和已实现 PnL。关闭确认失败会直接触发 `rollback_required/P0`，24h OPEN_FAILED 达阈值会触发 `rollback_watch/P1`。后续还要补 regime 分层、窗口收益质量阈值和自动回滚执行。
 - N4 regime 第一版已接入：post-approval 实盘窗口会按平均绝对涨跌、速度、成交额、方向偏斜和强平密度标成 `high_volatility` / `trend` / `low_liquidity` / `range`；入口页 executive summary 会直接显示已放开候选 24h regime 分布、OPEN_FAILED 和 CLOSE_FAILED，方便判断候选表现是策略问题还是行情环境问题。
+- N4 窗口质量阈值第一版已接入：post-approval 实盘窗口会估算 0.15% 费用/滑点后的 PnL，并计算强平率、开仓失败率和样本成熟度。关闭确认失败直接 P0；样本足够后扣费后亏损过大、强平率过高或开仓失败率过高会升 `rollback_watch/P1`。入口页会显示已放开候选 24h `quality` 分布。
 
 ## 2026-05-31 B/v16 全量放开与 C/v14 扩样
 - 用户明确要求“放开”，核心原因是当前样本量太少，无法有效优化策略；同时要求解决 C/v14 开仓少，并保证 A/v11 无异常。

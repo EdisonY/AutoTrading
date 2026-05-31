@@ -331,6 +331,7 @@ def strategy_evolution_summary(path: Path | None) -> dict[str, Any]:
     live_window_count = 0
     live_open_failed = 0
     live_close_failed = 0
+    quality_counts: dict[str, int] = {}
     for decision in decisions:
         if not isinstance(decision, dict) or not decision.get("approved_full_live"):
             continue
@@ -342,6 +343,8 @@ def strategy_evolution_summary(path: Path | None) -> dict[str, Any]:
         live_close_failed += int(window.get("close_failed") or 0)
         regime = ((window.get("regime") or {}).get("label") or "unknown")
         regime_counts[str(regime)] = regime_counts.get(str(regime), 0) + 1
+        quality = ((window.get("quality") or {}).get("label") or "unknown")
+        quality_counts[str(quality)] = quality_counts.get(str(quality), 0) + 1
     return {
         "available": True,
         "path": STRATEGY_EVOLUTION_HTML,
@@ -352,6 +355,7 @@ def strategy_evolution_summary(path: Path | None) -> dict[str, Any]:
         "regime_summary": {
             "window_count": live_window_count,
             "counts": regime_counts,
+            "quality_counts": quality_counts,
             "open_failed_24h": live_open_failed,
             "close_failed_24h": live_close_failed,
         },
@@ -1371,6 +1375,7 @@ def build_findings(data: dict[str, Any]) -> list[dict[str, str]]:
                     "title": "P2 已放开候选 24h 环境分层",
                     "body": (
                         f"regime={regime_summary.get('counts') or {}}；"
+                        f"quality={regime_summary.get('quality_counts') or {}}；"
                         f"OPEN_FAILED={open_failed}，CLOSE_FAILED={close_failed}。"
                     ),
                 }
@@ -1574,7 +1579,7 @@ def build_executive_summary(data: dict[str, Any]) -> dict[str, Any]:
         f"账户：实时浮盈亏 {account_upnl:+.2f} USDT，持仓 {positions}，硬顶风险 {risk_count}，尺寸违规 {sizing_count}。",
         f"运行：核心服务 {'正常' if services_ok else '需检查'}，自动告警 {alert_count}，持久关注 P0 {p0} / P1 {p1}。",
         f"进化：{evo_text}；只有门禁通过且用户批准的候选才允许进入实盘。",
-        f"环境：已放开候选 24h regime {regime_summary.get('counts') or {}}，OPEN_FAILED {int(regime_summary.get('open_failed_24h') or 0)}，CLOSE_FAILED {int(regime_summary.get('close_failed_24h') or 0)}。",
+        f"环境：已放开候选 24h regime {regime_summary.get('counts') or {}}，quality {regime_summary.get('quality_counts') or {}}，OPEN_FAILED {int(regime_summary.get('open_failed_24h') or 0)}，CLOSE_FAILED {int(regime_summary.get('close_failed_24h') or 0)}。",
         "扩样决策：不再全局盲目放宽。A/v11保持稳定，B/v16观察已批准全量候选，C/v14维持当前受控扩样窗口。",
     ]
 

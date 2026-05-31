@@ -167,7 +167,7 @@ def load_skip_events(db: Path, since: datetime, until: datetime) -> list[SkipEve
             select id, ts, strategy, symbol, side, score, stage, layer, reason, payload_json
             from events
             where event_type = 'OPEN_SKIPPED'
-              and source in ('A/v11/decisions', 'B/v16/decisions', 'C/v14/decisions')
+              and strategy in ('A/v11', 'B/v16', 'C/v14')
             order by id
             """
         )

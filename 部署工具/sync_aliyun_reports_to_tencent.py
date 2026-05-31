@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 import sys
+import base64
 from pathlib import Path
 
 import paramiko
@@ -63,6 +64,10 @@ RESEARCH_FILES = [
 ]
 
 
+def shell_quote(value: str) -> str:
+    return "'" + value.replace("'", "'\"'\"'") + "'"
+
+
 def ssh_client() -> paramiko.SSHClient:
     client = paramiko.SSHClient()
     client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
@@ -91,18 +96,17 @@ def sync_files(
     label: str,
     max_bytes: int,
     file_timeout: int,
+    method: str,
 ) -> int:
     """Upload files from local_dir to remote_dir. Returns count of files uploaded."""
-    sftp = client.open_sftp()
-    sftp.get_channel().settimeout(file_timeout)
+    sftp = client.open_sftp() if method == "sftp" else None
+    if sftp:
+        sftp.get_channel().settimeout(file_timeout)
     uploaded = 0
     try:
         # Ensure remote directory exists
-        try:
-            sftp.stat(remote_dir)
-        except FileNotFoundError:
-            stdin, stdout, stderr = client.exec_command(f"mkdir -p {remote_dir}", timeout=10)
-            stdout.channel.recv_exit_status()
+        stdin, stdout, stderr = client.exec_command(f"mkdir -p {shell_quote(remote_dir)}", timeout=10)
+        stdout.channel.recv_exit_status()
 
         for name in filenames:
             local_path = local_dir / name
@@ -115,13 +119,26 @@ def sync_files(
                 continue
             remote_path = f"{remote_dir}/{name}"
             try:
-                sftp.put(str(local_path), remote_path)
+                if method == "sftp":
+                    assert sftp is not None
+                    sftp.put(str(local_path), remote_path)
+                else:
+                    data = base64.b64encode(local_path.read_bytes())
+                    cmd = f"base64 -d > {shell_quote(remote_path)}"
+                    stdin, stdout, stderr = client.exec_command(cmd, timeout=file_timeout)
+                    stdin.write(data.decode("ascii"))
+                    stdin.channel.shutdown_write()
+                    rc = stdout.channel.recv_exit_status()
+                    if rc != 0:
+                        err = stderr.read().decode("utf-8", errors="replace")
+                        raise RuntimeError(err or f"remote base64 upload failed rc={rc}")
                 print(f"  [OK]   {label}/{name} ({size} bytes) -> {remote_path}")
                 uploaded += 1
             except Exception as exc:
                 print(f"  [ERR]  {label}/{name} - {exc}")
     finally:
-        sftp.close()
+        if sftp:
+            sftp.close()
     return uploaded
 
 
@@ -131,7 +148,8 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Sync Aliyun reports to Tencent")
     parser.add_argument("--dry-run", action="store_true", help="Show what would be synced without uploading")
     parser.add_argument("--max-file-mb", type=float, default=8.0, help="Skip individual files larger than this")
-    parser.add_argument("--file-timeout", type=int, default=30, help="Per-file SFTP timeout in seconds")
+    parser.add_argument("--file-timeout", type=int, default=30, help="Per-file upload timeout in seconds")
+    parser.add_argument("--method", choices=["stream", "sftp"], default="stream", help="Upload method; stream uses SSH/base64 and avoids SFTP stalls")
     args = parser.parse_args(argv)
     max_bytes = int(args.max_file_mb * 1024 * 1024)
 
@@ -159,13 +177,13 @@ def main(argv: list[str] | None = None) -> int:
     try:
         total = 0
         print("--- Syncing runtime ---")
-        total += sync_files(client, ALIYUN_RUNTIME, TENCENT_RUNTIME, RUNTIME_FILES, "runtime", max_bytes, args.file_timeout)
+        total += sync_files(client, ALIYUN_RUNTIME, TENCENT_RUNTIME, RUNTIME_FILES, "runtime", max_bytes, args.file_timeout, args.method)
         print()
         print("--- Syncing research attention ---")
-        total += sync_files(client, ALIYUN_RESEARCH, TENCENT_RESEARCH, RESEARCH_FILES, "research", max_bytes, args.file_timeout)
+        total += sync_files(client, ALIYUN_RESEARCH, TENCENT_RESEARCH, RESEARCH_FILES, "research", max_bytes, args.file_timeout, args.method)
         print()
         print("--- Syncing reports ---")
-        total += sync_files(client, ALIYUN_REPORTS, TENCENT_REPORTS, REPORT_FILES, "reports", max_bytes, args.file_timeout)
+        total += sync_files(client, ALIYUN_REPORTS, TENCENT_REPORTS, REPORT_FILES, "reports", max_bytes, args.file_timeout, args.method)
         print()
         print(f"Total: {total} files uploaded to Tencent")
         return 0

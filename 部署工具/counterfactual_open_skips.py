@@ -30,11 +30,15 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 ROOT = SCRIPT_DIR if (SCRIPT_DIR / "core").exists() else SCRIPT_DIR.parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 try:
     from daily_market_review import render_markdown_html
 except Exception:
     render_markdown_html = None
+
+from core.replay import ReplayEvent, classify_replay_decision
 
 CST = timezone(timedelta(hours=8))
 UTC = timezone.utc
@@ -57,6 +61,8 @@ class SkipEvent:
     layer: str
     reason: str
     sentinel: bool
+    replay_decision: str
+    replay_gate: str
     payload: dict[str, Any]
 
 
@@ -148,7 +154,7 @@ def normalized_reason(reason: str) -> str:
 
 
 def filter_name(event: SkipEvent) -> str:
-    stage = event.stage or event.layer or "unknown"
+    stage = event.replay_gate or event.stage or event.layer or "unknown"
     return f"{stage}: {normalized_reason(event.reason)}"
 
 
@@ -176,19 +182,23 @@ def load_skip_events(db: Path, since: datetime, until: datetime) -> list[SkipEve
             except Exception:
                 payload = {}
             raw = payload.get("raw") if isinstance(payload.get("raw"), dict) else payload
+            replay_event = ReplayEvent.from_event_store_row(dict(row))
+            replay_decision = classify_replay_decision(replay_event)
             events.append(
                 SkipEvent(
                     event_id=int(row["id"]),
                     ts=ts,
-                    strategy=str(row["strategy"]),
-                    symbol=symbol,
-                    side=side,
-                    timeframe=str(raw.get("timeframe") or payload.get("timeframe") or ""),
-                    score=num(row["score"]),
-                    stage=str(row["stage"] or raw.get("decision_stage") or payload.get("decision_stage") or ""),
-                    layer=str(row["layer"] or raw.get("filter_layer") or payload.get("filter_layer") or ""),
-                    reason=str(row["reason"] or raw.get("skip_reason") or payload.get("skip_reason") or ""),
+                    strategy=replay_event.strategy or str(row["strategy"]),
+                    symbol=replay_event.symbol or symbol,
+                    side=replay_event.side or side,
+                    timeframe=replay_event.timeframe or str(raw.get("timeframe") or payload.get("timeframe") or ""),
+                    score=replay_event.score if replay_event.score is not None else num(row["score"]),
+                    stage=replay_event.stage or str(row["stage"] or raw.get("decision_stage") or payload.get("decision_stage") or ""),
+                    layer=replay_event.layer or str(row["layer"] or raw.get("filter_layer") or payload.get("filter_layer") or ""),
+                    reason=replay_event.reason or str(row["reason"] or raw.get("skip_reason") or payload.get("skip_reason") or ""),
                     sentinel=bool(raw.get("sentinel", payload.get("sentinel", False))),
+                    replay_decision=replay_decision.decision,
+                    replay_gate=replay_decision.gate,
                     payload=payload,
                 )
             )
@@ -356,7 +366,15 @@ def store_results(db: Path, results: list[Result], evaluated_at: str) -> None:
                     int(r.event.sentinel), r.entry_ts.isoformat() if r.entry_ts else None,
                     r.entry_price, r.end_price, r.return_pct, r.sim_pnl_usdt,
                     r.mfe_pct, r.mae_pct, r.barrier_outcome, r.status,
-                    json.dumps(r.event.payload, ensure_ascii=False, separators=(",", ":")),
+                    json.dumps(
+                        {
+                            **r.event.payload,
+                            "replay_decision": r.event.replay_decision,
+                            "replay_gate": r.event.replay_gate,
+                        },
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                    ),
                 )
                 for r in results
             ],
@@ -434,6 +452,7 @@ def report_markdown(
         f"- 模拟仓位统一为保证金 {args.margin_usdt:.0f} USDT、{args.leverage:.0f}x 杠杆；PnL 用于比较过滤价值，不等同于真实成交回报。",
         f"- `MFE/MAE` 为顺向/逆向最大价格波动；`TP/SL first` 是统一 `{args.tp_pct:.1f}% / {args.sl_pct:.1f}%` 价格障碍测试，不替代各策略真实 ATR 出场。",
         f"- 默认用 {args.primary_horizon} 分钟结果判断过滤层是否错杀；尚未走满窗口的事件只入库为 pending，不进入结论。",
+        "- 事件归一使用 `core.replay.ReplayEvent` / `ReplayDecision`，过滤层分组优先采用统一 replay gate，后续会把实盘门控迁到同一路径。",
         "",
         "## 当前结论",
         "",
@@ -531,12 +550,13 @@ def write_json_report(path: Path, events: list[SkipEvent], results: list[Result]
         "generated_at": generated_at.isoformat(),
         "hours": args.hours,
         "primary_horizon_minutes": args.primary_horizon,
+        "replay_schema": "core.replay/v1",
         "events": len(events),
         "complete_primary_samples": len(primary),
         "overall": aggregate(primary),
         "strategies": {strategy: aggregate([r for r in primary if r.event.strategy == strategy]) for strategy in STRATEGIES},
         "filters": [
-            {"strategy": key[0], "filter": key[1], **aggregate(value)}
+            {"strategy": key[0], "filter": key[1], "replay_gate": value[0].event.replay_gate if value else "", **aggregate(value)}
             for key, value in sorted(groups.items(), key=lambda item: float(aggregate(item[1])["pnl"] or 0), reverse=True)
         ],
     }

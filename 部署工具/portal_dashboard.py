@@ -40,6 +40,8 @@ ATTENTION_JSON = ROOT / "research_memory" / "attention" / "open_items.json"
 ATTENTION_HTML = REPORTS_DIR / "decision_attention_latest.html"
 STRATEGY_TRUTH_JSON = ROOT / "runtime" / "strategy_truth_latest.json"
 STRATEGY_TRUTH_MD = REPORTS_DIR / "strategy_truth_latest.md"
+RESEARCH_STORE_JSON = ROOT / "runtime" / "research_store_summary_latest.json"
+RESEARCH_STORE_MD = REPORTS_DIR / "research_store_summary_latest.md"
 CST = timezone(timedelta(hours=8))
 
 
@@ -388,6 +390,51 @@ def strategy_truth_summary(path: Path | None) -> dict[str, Any]:
         "summary": payload.get("summary") or {},
         "strategy_stats": payload.get("strategy_stats") or {},
         "recovery_stats": payload.get("recovery_stats") or {},
+    }
+
+
+def research_store_summary(path: Path | None) -> dict[str, Any]:
+    empty = {
+        "available": False,
+        "path": RESEARCH_STORE_MD,
+        "age": "无研究仓",
+        "fresh": False,
+        "days": 0,
+        "tables": [],
+        "strategy_funnel": [],
+        "skip_layers": [],
+        "sentinel": [],
+        "latest_accounts": [],
+        "totals": {"events": 0, "signals": 0, "opens": 0, "skipped": 0, "failed": 0},
+        "top_skip": {},
+    }
+    payload = read_json(path) if path else None
+    if not isinstance(payload, dict):
+        return empty
+    generated_at = parse_dt(payload.get("generated_at"))
+    funnel = payload.get("strategy_funnel") if isinstance(payload.get("strategy_funnel"), list) else []
+    skip_layers = payload.get("skip_layers") if isinstance(payload.get("skip_layers"), list) else []
+    tables = payload.get("available_tables") if isinstance(payload.get("available_tables"), list) else []
+    totals = {
+        "events": sum(int(r.get("events") or 0) for r in funnel if isinstance(r, dict)),
+        "signals": sum(int(r.get("signals") or 0) for r in funnel if isinstance(r, dict)),
+        "opens": sum(int(r.get("opens") or 0) for r in funnel if isinstance(r, dict)),
+        "skipped": sum(int(r.get("open_skipped") or 0) for r in funnel if isinstance(r, dict)),
+        "failed": sum(int(r.get("open_failed") or 0) for r in funnel if isinstance(r, dict)),
+    }
+    return {
+        "available": True,
+        "path": RESEARCH_STORE_MD,
+        "age": age_text(generated_at),
+        "fresh": bool(generated_at and (datetime.now(CST) - generated_at).total_seconds() < 4 * 3600),
+        "days": int(payload.get("days") or 0),
+        "tables": tables,
+        "strategy_funnel": funnel,
+        "skip_layers": skip_layers,
+        "sentinel": payload.get("sentinel") if isinstance(payload.get("sentinel"), list) else [],
+        "latest_accounts": payload.get("latest_accounts") if isinstance(payload.get("latest_accounts"), list) else [],
+        "totals": totals,
+        "top_skip": skip_layers[0] if skip_layers else {},
     }
 
 
@@ -1090,6 +1137,7 @@ def function_status_cards(data: dict[str, Any]) -> list[dict[str, str]]:
     realtime_account = data.get("realtime_account") or {}
     alerts = data.get("alerts") or {}
     counterfactual = data.get("counterfactual") or {}
+    research_store = data.get("research_store") or {}
     evolution = data.get("strategy_evolution") or {}
     evo_counts = evolution.get("counts") or {}
     attention = data.get("attention") or {}
@@ -1190,6 +1238,22 @@ def function_status_cards(data: dict[str, Any]) -> list[dict[str, str]]:
                 f"{float((counterfactual.get('overall') or {}).get('pnl') or 0):+.2f}；更新 {counterfactual.get('age')}。"
                 if counterfactual.get("available")
                 else "OPEN_SKIPPED 反事实任务尚无最新报告。"
+            ),
+        },
+        {
+            "level": "ok" if research_store.get("fresh") else "warn",
+            "name": "研究仓/DuckDB",
+            "value": (
+                f"{int((research_store.get('totals') or {}).get('events') or 0)} 事件"
+                if research_store.get("available")
+                else "未生成"
+            ),
+            "body": (
+                f"{research_store.get('days', 0)}日样本：开仓 {int((research_store.get('totals') or {}).get('opens') or 0)}，"
+                f"跳过 {int((research_store.get('totals') or {}).get('skipped') or 0)}，失败 {int((research_store.get('totals') or {}).get('failed') or 0)}；"
+                f"主否决 {((research_store.get('top_skip') or {}).get('strategy') or '-')}/{((research_store.get('top_skip') or {}).get('gate') or '-')}。"
+                if research_store.get("available")
+                else "Parquet/DuckDB 样本漏斗尚未生成，进化判断只能看 SQLite/报表口径。"
             ),
         },
     ]
@@ -1548,6 +1612,8 @@ def build_data() -> dict[str, Any]:
     data["attention_html"] = ATTENTION_HTML
     data["strategy_truth"] = strategy_truth_summary(STRATEGY_TRUTH_JSON)
     data["strategy_truth_html"] = STRATEGY_TRUTH_MD
+    data["research_store"] = research_store_summary(RESEARCH_STORE_JSON)
+    data["research_store_html"] = RESEARCH_STORE_MD
     data["function_status"] = function_status_cards(data)
     data["findings"] = build_findings(data)
     data["executive_summary"] = build_executive_summary(data)
@@ -1802,6 +1868,32 @@ def render_html(out_dir: Path) -> str:
         for r in counterfactual.get("filters", [])[:6]
     ) or '<tr><td colspan="5">暂无过滤层评估</td></tr>'
 
+    research_store = data.get("research_store") or {}
+    research_funnel_rows = "".join(
+        f"""
+<tr>
+  <td>{h(r.get('strategy'))}</td>
+  <td>{int(r.get('events') or 0)}</td>
+  <td>{int(r.get('signals') or 0)}</td>
+  <td>{int(r.get('opens') or 0)}</td>
+  <td>{int(r.get('open_skipped') or 0)}</td>
+  <td>{int(r.get('open_failed') or 0)}</td>
+  <td>{h(r.get('latest_ts') or '-')}</td>
+</tr>
+""".strip()
+        for r in (research_store.get("strategy_funnel") or [])[:6]
+    ) or '<tr><td colspan="7">暂无研究仓漏斗</td></tr>'
+    research_skip_rows = "".join(
+        f"""
+<tr>
+  <td>{h(r.get('strategy'))}</td>
+  <td>{h(r.get('gate'))}</td>
+  <td>{int(r.get('n') or 0)}</td>
+</tr>
+""".strip()
+        for r in (research_store.get("skip_layers") or [])[:8]
+    ) or '<tr><td colspan="3">暂无研究仓否决层</td></tr>'
+
     evolution = data.get("strategy_evolution") or {}
     evolution_counts = evolution.get("counts") or {}
     evolution_rows = "".join(
@@ -1877,6 +1969,14 @@ def render_html(out_dir: Path) -> str:
             data["counterfactual_html"],
             "看反事实评估",
             "amber",
+        ),
+        route_card(
+            "样本是否够用",
+            "研究仓漏斗",
+            "看 DuckDB/Parquet 汇总后的开仓、跳过、失败、哨兵贡献，用来判断策略进化样本是否足够。",
+            data["research_store_html"],
+            "看研究仓摘要",
+            "blue",
         ),
         route_card(
             "是否有更优方案",
@@ -2089,6 +2189,19 @@ th {{ background:#f1f5f9; color:#334155; }}
     <table class="subtable">
       <thead><tr><th>策略</th><th>主要否决层</th><th>样本</th><th>若放行胜率</th><th>若放行PnL</th></tr></thead>
       <tbody>{counterfactual_filter_rows}</tbody>
+    </table>
+  </section>
+
+  <section class="section panel">
+    <h2>研究仓样本漏斗</h2>
+    <p class="note">DuckDB/Parquet 口径；最近 {h(research_store.get('days', '-'))} 日，更新 {h(research_store.get('age'))}。先看样本是否足够，再决定是否继续放宽或收紧策略。</p>
+    <table>
+      <thead><tr><th>策略</th><th>事件</th><th>信号</th><th>开仓</th><th>跳过</th><th>失败</th><th>最新时间</th></tr></thead>
+      <tbody>{research_funnel_rows}</tbody>
+    </table>
+    <table class="subtable">
+      <thead><tr><th>策略</th><th>主要否决层</th><th>数量</th></tr></thead>
+      <tbody>{research_skip_rows}</tbody>
     </table>
   </section>
 

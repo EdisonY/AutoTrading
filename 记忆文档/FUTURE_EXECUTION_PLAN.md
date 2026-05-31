@@ -16,10 +16,10 @@
 **目标**：`reports/index.html` 第一屏只回答四个问题：现在赚亏多少，哪些策略有效/无效，系统有没有风险，是否出现可批准的更优方案。
 
 关键技术节点：
-- [ ] `portal_dashboard.py` 新增 executive summary 数据层，融合账户快照、策略真相台账、进化门禁、关注台账、系统告警。
-- [ ] 第一屏展示三策略当前动作：稳态监控、观察全量候选、受控扩样、暂停扩展、需要回滚。
-- [ ] findings 只展示 top 6 关键发现，详细表下移。
-- [ ] 每个结论必须能下钻到来源：account snapshot、truth ledger、evolution gate、counterfactual、attention ledger。
+- [x] `portal_dashboard.py` 新增 executive summary 数据层，融合账户快照、策略真相台账、进化门禁、关注台账、系统告警。
+- [x] 第一屏展示三策略当前动作：稳态监控、观察全量候选、受控扩样、暂停扩展、需要回滚。
+- [x] findings 只展示 top 6 关键发现，详细表下移。
+- [x] 每个结论必须能下钻到来源：account snapshot、truth ledger、evolution gate、counterfactual、attention ledger、research store。
 
 验收：
 - 决策者不看详情页，也能知道是否需要干预。
@@ -33,7 +33,8 @@
 - [x] 定义统一事件模型起点：`core/replay.py` 提供 `ReplayEvent`、`ReplayDecision`、事件类型归一和初始 gate 分类。
 - [ ] A/B/C 抽出纯策略函数和门控函数，实盘 scanner 只负责编排和下单。
 - [ ] replay 引擎从 SQLite/Parquet 读取历史事件、K线、哨兵上下文，重放 OPEN_SKIPPED/OPEN/CLOSE。
-- [ ] 反事实评估直接调用 replay gate，不再各脚本单独复刻过滤逻辑。
+- [x] `counterfactual_open_skips.py` 已先把 OPEN_SKIPPED 归一到 `core.replay.ReplayEvent` / `ReplayDecision`，反事实过滤层分组优先使用统一 replay gate。
+- [ ] 反事实评估的成交/出场仿真仍需继续迁到完整 replay 引擎，不再各脚本单独复刻过滤逻辑。
 - [ ] 每个实盘 OPEN_SKIPPED 必须能回答：如果放行，按同一出场规则会怎样。
 
 验收：
@@ -48,6 +49,7 @@
 - [x] 新增 `research_store/` ignored 数据目录，先按日导出 `events`、`sentinel_scans`、`account_snapshots`。
 - [x] 新增导出脚本：`部署工具/research_store_export.py` 可从 SQLite 只读导出 partitioned Parquet/JSONL，并写 manifest。
 - [x] 新增 DuckDB 查询脚本起点：`部署工具/research_store_query.py` 可从 exported research_store 生成策略漏斗、OPEN_SKIPPED gate、哨兵贡献和最新账户概览。
+- [x] `portal_dashboard.py` 已读取 `runtime/research_store_summary_latest.json`，在入口页功能状态、详情入口和样本漏斗区展示研究仓摘要。
 - [ ] 数据维护 timer 只保留近期 SQLite 明细，长期研究读 Parquet。
 - [ ] 后续补 `klines/features` 研究数据集和 watermark 增量导出，避免重复扫描大表。
 

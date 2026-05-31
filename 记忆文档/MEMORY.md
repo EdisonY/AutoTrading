@@ -7,6 +7,7 @@
 - report 设计原则：第一屏必须先给结论和下一步动作；详情表、日报、反事实、哨兵、研究审阅台只作为下钻。入口页应把三策略分别标成“稳态监控/观察全量候选/受控扩样/暂停扩展/需要回滚”等可决策状态。
 - N3 也已起步：新增 `部署工具/research_store_export.py`，可把 SQLite `events`、`sentinel_scans`、`account_snapshots` 按日导出到 Git 忽略的 `research_store/`，支持 Parquet/JSONL，并写 `manifest_latest.json`。这只是离线研究仓基础，不影响实盘。
 - N2/N3 继续推进：新增 `core/replay.py` 作为统一 replay/live 事件归一模型；新增 `部署工具/research_store_query.py` 作为 DuckDB 查询入口，面向策略漏斗、OPEN_SKIPPED gate、哨兵贡献和账户概览。本机当前缺少 `duckdb/pyarrow` 包，已写入 `requirements.txt`；脚本已通过 py_compile，完整查询需在安装依赖后运行。
+- N2/N3 又推进一步：`counterfactual_open_skips.py` 已开始通过 `core.replay` 归一 OPEN_SKIPPED 并把 `replay_gate` 写入反事实 JSON/DB payload；`portal_dashboard.py` 已把研究仓摘要接入入口页，用于快速看样本漏斗、主要否决层和 DuckDB/Parquet 是否新鲜。剩余重点是把 A/B/C 实盘门控抽成纯函数、让 replay 与 live 真正同路径。
 
 ## 2026-05-31 B/v16 全量放开与 C/v14 扩样
 - 用户明确要求“放开”，核心原因是当前样本量太少，无法有效优化策略；同时要求解决 C/v14 开仓少，并保证 A/v11 无异常。

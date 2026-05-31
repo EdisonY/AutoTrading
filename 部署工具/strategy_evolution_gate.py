@@ -282,6 +282,11 @@ ROLLBACK_PF_DECAY_RATIO = 0.8  # new PF < old PF * 0.8
 ROLLBACK_HARD_STOP_RATIO = 1.5  # new hard-stop rate > old * 1.5
 ROLLBACK_ACCOUNT_LOSS_USDT = 200  # 7-day account loss
 POST_APPROVAL_MIN_CLOSED = 20
+POST_APPROVAL_MIN_CLOSED_BY_HOURS = {
+    24: 20,
+    72: 50,
+    168: 100,
+}
 POST_APPROVAL_LOSS_USDT = 80
 POST_APPROVAL_FORCED_CLOSE_RATE = 0.12
 POST_APPROVAL_OPEN_FAILED_RATE = 0.08
@@ -431,6 +436,8 @@ def classify_regime(metrics: dict[str, Any]) -> dict[str, Any]:
 
 
 def classify_window_quality(metrics: dict[str, Any]) -> dict[str, Any]:
+    window_hours = to_int(metrics.get("window_hours"))
+    required_closed = POST_APPROVAL_MIN_CLOSED_BY_HOURS.get(window_hours, POST_APPROVAL_MIN_CLOSED)
     opens = to_int(metrics.get("opens"))
     closes = to_int(metrics.get("closes"))
     forced_closes = to_int(metrics.get("forced_closes"))
@@ -445,9 +452,9 @@ def classify_window_quality(metrics: dict[str, Any]) -> dict[str, Any]:
     reasons: list[str] = []
     if close_failed:
         reasons.append(f"close_failed={close_failed}")
-    if closed_total < POST_APPROVAL_MIN_CLOSED:
+    if closed_total < required_closed:
         label = "maturing"
-        reasons.append(f"closed_samples={closed_total}/{POST_APPROVAL_MIN_CLOSED}")
+        reasons.append(f"closed_samples={closed_total}/{required_closed}")
     else:
         label = "ok"
         if pnl_after_cost <= -POST_APPROVAL_LOSS_USDT:
@@ -464,6 +471,7 @@ def classify_window_quality(metrics: dict[str, Any]) -> dict[str, Any]:
     return {
         "label": label,
         "closed_samples": closed_total,
+        "required_closed_samples": required_closed,
         "forced_close_rate": round(forced_rate, 4),
         "open_failed_rate": round(open_failed_rate, 4),
         "estimated_cost_usdt": round(cost, 4),
@@ -653,6 +661,21 @@ def rollback_watch_verdict(
     return priority, triggers
 
 
+def post_approval_sample_blockers(post_approval: dict[str, Any] | None) -> list[str]:
+    if not post_approval:
+        return []
+    blockers: list[str] = []
+    for label, metrics in (post_approval.get("windows") or {}).items():
+        if metrics.get("status") != "ready":
+            continue
+        quality = metrics.get("quality") or {}
+        required = to_int(quality.get("required_closed_samples"))
+        closed = to_int(quality.get("closed_samples"))
+        if required and closed < required:
+            blockers.append(f"{label} 实盘样本未达最低数 {closed}/{required}")
+    return blockers
+
+
 def classify_decision(
     candidate: dict[str, Any],
     results: list[dict[str, Any]],
@@ -677,6 +700,7 @@ def classify_decision(
         sample = to_int(latest.get("sample_trades")) if latest else 0
         if sample < MIN_SAMPLE_TRADES:
             blockers.append(f"全量放开后样本继续收集中 {sample}/{MIN_SAMPLE_TRADES}")
+        blockers.extend(post_approval_sample_blockers(post_approval))
         return "full_live_monitoring", "keep_full_live_monitoring", blockers
 
     # Rollback triggers

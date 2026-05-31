@@ -2,6 +2,14 @@
 
 This is the durable reason-and-outcome ledger for every material design, code, configuration, deployment, rollback, optimization, or live operational change.
 
+## 2026-06-01 00:20 CST - Add post-approval minimum sample gates
+- Trigger / reason: Continue N4 after surfacing the evolution priority strip. The plan required every approved candidate to have 24h/72h/7d observation windows and minimum sample counts, but the gate still used one generic post-approval closed-sample threshold.
+- Completed: `strategy_evolution_gate.py` now applies post-approval minimum closed-sample thresholds by window length: 24h requires 20, 72h requires 50, and 168h requires 100. `classify_window_quality()` records `required_closed_samples`; full-live monitoring now adds blockers such as `72h 实盘样本未达最低数 x/50` when a ready window is still not statistically mature. Updated future plan and long memory.
+- Not completed / remaining: The thresholds are first-pass guardrails and still need calibration against longer live history. Automatic code rollback remains future work.
+- Verification: Pending deploy. Local `py_compile` and gate generation to be run before deployment.
+- Live impact / deployment: Pending. Read-side gate/report behavior only; no scanner, order, threshold, or risk behavior changes.
+- Files / release / commit: `部署工具/strategy_evolution_gate.py`, `记忆文档/FUTURE_EXECUTION_PLAN.md`, `记忆文档/MEMORY.md`, `CHANGELOG.md`; Git commit to contain this entry.
+
 ## 2026-06-01 00:08 CST - Add sentinel-scan retention and evolution priority strip
 - Trigger / reason: Continue the next-stage optimization goal after the user asked to stop approval popups and keep moving. Remaining N3/N4 gaps included SQLite growth from the dedicated `sentinel_scans` table and the requirement that the entry page make verified better strategies or degrading approved candidates impossible to miss.
 - Completed: `data_maintenance.py` retention mode now checks for the `sentinel_scans` table and deletes partitions older than `--sentinel-retention-days` (default 14), while preserving compatibility with older DBs that do not have the table. The Tencent maintenance systemd command now passes `--sentinel-retention-days 14` explicitly. `portal_dashboard.py` now computes an evolution priority alert for the first screen: rollback/forced degradation first, then P0/P1 `verified_upgrade_ready`, otherwise approved full-live candidate quality/watch status. While verifying, found that manually regenerating Aliyun portal without a fresh sync could reuse stale `runtime/account_snapshot_latest.json`; `portal_dashboard.py` now only treats JSON account snapshots as primary when they are fresh, otherwise it falls back to SQLite or explicitly marks the stale snapshot. Updated future plan, project state, and long memory.

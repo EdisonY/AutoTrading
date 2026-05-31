@@ -314,6 +314,8 @@ def strategy_evolution_summary(path: Path | None) -> dict[str, Any]:
         "age": "无门禁",
         "fresh": False,
         "counts": {"P0": 0, "P1": 0, "P2": 0, "P3": 0, "REJECT": 0},
+        "summary": {},
+        "regime_summary": {},
         "top": {},
         "decisions": [],
     }
@@ -325,12 +327,34 @@ def strategy_evolution_summary(path: Path | None) -> dict[str, Any]:
     top = next((d for d in decisions if d.get("priority") in {"P0", "P1", "P2"}), decisions[0] if decisions else {})
     summary = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
     counts = (summary.get("counts") if isinstance(summary.get("counts"), dict) else {}) or empty["counts"]
+    regime_counts: dict[str, int] = {}
+    live_window_count = 0
+    live_open_failed = 0
+    live_close_failed = 0
+    for decision in decisions:
+        if not isinstance(decision, dict) or not decision.get("approved_full_live"):
+            continue
+        window = (((decision.get("post_approval_live") or {}).get("windows") or {}).get("24h") or {})
+        if not window:
+            continue
+        live_window_count += 1
+        live_open_failed += int(window.get("open_failed") or 0)
+        live_close_failed += int(window.get("close_failed") or 0)
+        regime = ((window.get("regime") or {}).get("label") or "unknown")
+        regime_counts[str(regime)] = regime_counts.get(str(regime), 0) + 1
     return {
         "available": True,
         "path": STRATEGY_EVOLUTION_HTML,
         "age": age_text(generated_at),
         "fresh": bool(generated_at and (datetime.now(CST) - generated_at).total_seconds() < 4 * 3600),
         "counts": {k: int(counts.get(k) or 0) for k in ("P0", "P1", "P2", "P3", "REJECT")},
+        "summary": summary,
+        "regime_summary": {
+            "window_count": live_window_count,
+            "counts": regime_counts,
+            "open_failed_24h": live_open_failed,
+            "close_failed_24h": live_close_failed,
+        },
         "top": top or {},
         "decisions": decisions,
     }
@@ -1337,6 +1361,20 @@ def build_findings(data: dict[str, Any]) -> list[dict[str, str]]:
                     ),
                 }
             )
+        regime_summary = evolution.get("regime_summary") or {}
+        if int(regime_summary.get("window_count") or 0):
+            close_failed = int(regime_summary.get("close_failed_24h") or 0)
+            open_failed = int(regime_summary.get("open_failed_24h") or 0)
+            findings.append(
+                {
+                    "level": "bad" if close_failed else "warn" if open_failed >= 5 else "ok",
+                    "title": "P2 已放开候选 24h 环境分层",
+                    "body": (
+                        f"regime={regime_summary.get('counts') or {}}；"
+                        f"OPEN_FAILED={open_failed}，CLOSE_FAILED={close_failed}。"
+                    ),
+                }
+            )
     if realtime_account.get("available"):
         sizing_count = int(realtime_account.get("sizing_violation_count") or 0)
         findings.append(
@@ -1464,6 +1502,7 @@ def build_executive_summary(data: dict[str, Any]) -> dict[str, Any]:
     attention_counts = ((attention.get("summary") or {}).get("counts") or {})
     evolution = data.get("strategy_evolution") or {}
     evolution_counts = evolution.get("counts") or {}
+    regime_summary = evolution.get("regime_summary") or {}
     truth = data.get("strategy_truth") or {}
     truth_stats = truth.get("strategy_stats") or {}
     decision_rows = data.get("decision_summary") or []
@@ -1535,6 +1574,7 @@ def build_executive_summary(data: dict[str, Any]) -> dict[str, Any]:
         f"账户：实时浮盈亏 {account_upnl:+.2f} USDT，持仓 {positions}，硬顶风险 {risk_count}，尺寸违规 {sizing_count}。",
         f"运行：核心服务 {'正常' if services_ok else '需检查'}，自动告警 {alert_count}，持久关注 P0 {p0} / P1 {p1}。",
         f"进化：{evo_text}；只有门禁通过且用户批准的候选才允许进入实盘。",
+        f"环境：已放开候选 24h regime {regime_summary.get('counts') or {}}，OPEN_FAILED {int(regime_summary.get('open_failed_24h') or 0)}，CLOSE_FAILED {int(regime_summary.get('close_failed_24h') or 0)}。",
         "扩样决策：不再全局盲目放宽。A/v11保持稳定，B/v16观察已批准全量候选，C/v14维持当前受控扩样窗口。",
     ]
 

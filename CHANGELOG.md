@@ -2,6 +2,14 @@
 
 This is the durable reason-and-outcome ledger for every material design, code, configuration, deployment, rollback, optimization, or live operational change.
 
+## 2026-05-31 23:32 CST - Add first regime layer to approved-candidate monitoring
+- Trigger / reason: Continue N4. Post-approval windows existed, but they did not yet explain whether a candidate was being observed in trend, range, high-volatility, or low-liquidity conditions.
+- Completed: `strategy_evolution_gate.py` now classifies every post-approval 24h/72h/168h live window into a first regime label: `high_volatility`, `trend`, `low_liquidity`, or `range`. The classifier uses average absolute move, velocity, quote volume, long/short imbalance, and forced-close density from event payloads. `portal_dashboard.py` now summarizes approved-candidate 24h regime distribution, `OPEN_FAILED`, and `CLOSE_FAILED` in the executive brief and adds a top-level finding so the entry page can separate strategy degradation from market-environment context.
+- Not completed / remaining: Regime thresholds are still heuristic. Next N4 work is finer regime calibration, window PF/quality thresholds, and automatic rollback action wiring.
+- Verification: Pending local/remote validation and deployment.
+- Live impact / deployment: Pending. Read-side gate/report behavior only; no scanner, order, threshold, or risk behavior changes.
+- Files / release / commit: `部署工具/strategy_evolution_gate.py`, `部署工具/portal_dashboard.py`, `记忆文档/FUTURE_EXECUTION_PLAN.md`, `记忆文档/MEMORY.md`, `CHANGELOG.md`; Git commit to contain this entry.
+
 ## 2026-05-31 20:05 CST - Add post-approval live windows to evolution gate
 - Trigger / reason: Continue N4 after rollback-watch deployment. Approved full-live candidates need explicit 24h/72h/7d real live windows, not only shadow/experiment evidence.
 - Completed: `strategy_evolution_gate.py` now locates the event-store SQLite DB, reads full-live approvals, and builds post-approval live windows for 24h, 72h, and 168h per approved candidate. The DB locator prefers the Tencent mirror under `server_logs_tencent/runtime/event_store.sqlite3` and validates the `events` table before use, avoiding Aliyun's non-event runtime DB. The windows de-duplicate event-store mirror rows and count `OPEN`, `CLOSE`, `FORCED_CLOSE`, `OPEN_FAILED`, `CLOSE_FAILED`/`FORCED_CLOSE_FAILED`, `OPEN_SKIPPED`, latest event time, and realized close PnL. Close-confirm failures in any post-approval window now trigger `rollback_required/P0`; 24h `OPEN_FAILED` above threshold triggers `rollback_watch/P1`. Gate JSON/MD/HTML now expose the post-approval live-window summary.

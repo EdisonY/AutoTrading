@@ -388,6 +388,43 @@ def payload_float(payload: dict[str, Any], keys: tuple[str, ...]) -> float:
     return 0.0
 
 
+def classify_regime(metrics: dict[str, Any]) -> dict[str, Any]:
+    event_count = max(1, to_int(metrics.get("event_count")))
+    avg_abs_change = to_float(metrics.get("abs_change_sum")) / event_count
+    avg_abs_velocity = to_float(metrics.get("abs_velocity_sum")) / event_count
+    volume_samples = to_int(metrics.get("volume_samples"))
+    avg_quote_volume = to_float(metrics.get("quote_volume_sum")) / max(1, volume_samples)
+    long_count = to_int(metrics.get("long_count"))
+    short_count = to_int(metrics.get("short_count"))
+    directional_total = max(1, long_count + short_count)
+    long_ratio = long_count / directional_total
+    forced_closes = to_int(metrics.get("forced_closes"))
+    opens = to_int(metrics.get("opens"))
+
+    signals: list[str] = []
+    label = "range"
+    if avg_abs_change >= 8 or avg_abs_velocity >= 0.35 or forced_closes >= max(3, opens // 8):
+        label = "high_volatility"
+        signals.append("large_move_or_forced_close")
+    elif volume_samples and avg_quote_volume < 5_000_000:
+        label = "low_liquidity"
+        signals.append("low_quote_volume")
+    elif long_ratio >= 0.65 or long_ratio <= 0.35:
+        label = "trend"
+        signals.append("directional_imbalance")
+    else:
+        signals.append("balanced_flow")
+
+    return {
+        "label": label,
+        "signals": signals,
+        "avg_abs_change_pct": round(avg_abs_change, 4),
+        "avg_abs_velocity_pct": round(avg_abs_velocity, 4),
+        "avg_quote_volume": round(avg_quote_volume, 4) if volume_samples else 0.0,
+        "long_ratio": round(long_ratio, 4),
+    }
+
+
 def summarize_post_approval_windows(db_path: Path | None, approvals: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
     if not db_path or not approvals:
         return {}
@@ -432,6 +469,13 @@ def summarize_post_approval_windows(db_path: Path | None, approvals: dict[str, d
                     "open_skipped": 0,
                     "realized_pnl_usdt": 0.0,
                     "latest_event_ts": "",
+                    "event_count": 0,
+                    "long_count": 0,
+                    "short_count": 0,
+                    "abs_change_sum": 0.0,
+                    "abs_velocity_sum": 0.0,
+                    "quote_volume_sum": 0.0,
+                    "volume_samples": 0,
                 }
                 for row in cache[strategy]:
                     ts_text = str(row["ts"] or "")
@@ -449,6 +493,24 @@ def summarize_post_approval_windows(db_path: Path | None, approvals: dict[str, d
                     if key in seen:
                         continue
                     seen.add(key)
+                    metrics["event_count"] += 1
+                    side_text = str(row["side"] or "").lower()
+                    if side_text == "long":
+                        metrics["long_count"] += 1
+                    elif side_text == "short":
+                        metrics["short_count"] += 1
+                    try:
+                        payload = json.loads(row["payload_json"] or "{}")
+                    except Exception:
+                        payload = {}
+                    abs_change = abs(payload_float(payload, ("sentinel_change_pct", "change_pct", "price_change_pct", "pnl_pct")))
+                    abs_velocity = abs(payload_float(payload, ("sentinel_abs_velocity_pct", "sentinel_velocity_pct", "velocity_pct")))
+                    quote_volume = payload_float(payload, ("sentinel_quote_volume", "quote_volume", "volume_usdt", "turnover_usdt"))
+                    metrics["abs_change_sum"] += abs_change
+                    metrics["abs_velocity_sum"] += abs_velocity
+                    if quote_volume > 0:
+                        metrics["quote_volume_sum"] += quote_volume
+                        metrics["volume_samples"] += 1
                     if ts_text > str(metrics["latest_event_ts"]):
                         metrics["latest_event_ts"] = ts_text
                     if event_type == "OPEN":
@@ -464,12 +526,11 @@ def summarize_post_approval_windows(db_path: Path | None, approvals: dict[str, d
                     elif event_type == "OPEN_SKIPPED":
                         metrics["open_skipped"] += 1
                     if event_type in {"CLOSE", "FORCED_CLOSE"}:
-                        try:
-                            payload = json.loads(row["payload_json"] or "{}")
-                        except Exception:
-                            payload = {}
                         metrics["realized_pnl_usdt"] += payload_float(payload, ("pnl_usd", "pnl_usdt", "realized_pnl_usdt", "pnl"))
                 metrics["realized_pnl_usdt"] = round(float(metrics["realized_pnl_usdt"]), 4)
+                metrics["regime"] = classify_regime(metrics)
+                for key in ("abs_change_sum", "abs_velocity_sum", "quote_volume_sum"):
+                    metrics.pop(key, None)
                 windows[f"{hours}h"] = metrics
             out[candidate_id] = {
                 "approved_at": approved_at.isoformat(timespec="seconds"),

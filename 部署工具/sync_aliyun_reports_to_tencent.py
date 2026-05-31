@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 import sys
 import base64
+import subprocess
 from pathlib import Path
 
 import paramiko
@@ -68,6 +69,28 @@ def shell_quote(value: str) -> str:
     return "'" + value.replace("'", "'\"'\"'") + "'"
 
 
+def upload_with_system_ssh(local_path: Path, remote_path: str, file_timeout: int) -> None:
+    data = base64.b64encode(local_path.read_bytes())
+    remote_dir = remote_path.rsplit("/", 1)[0]
+    cmd = [
+        "ssh",
+        "-o",
+        "BatchMode=yes",
+        "-o",
+        "ConnectTimeout=12",
+        "-o",
+        "ServerAliveInterval=5",
+        "-o",
+        "ServerAliveCountMax=2",
+        f"{TENCENT_USER}@{TENCENT_HOST}",
+        f"mkdir -p {shell_quote(remote_dir)} && base64 -d > {shell_quote(remote_path)}",
+    ]
+    proc = subprocess.run(cmd, input=data, capture_output=True, timeout=file_timeout)
+    if proc.returncode != 0:
+        err = (proc.stderr or proc.stdout).decode("utf-8", errors="replace")
+        raise RuntimeError(err[-1200:] or f"ssh upload failed rc={proc.returncode}")
+
+
 def ssh_client() -> paramiko.SSHClient:
     client = paramiko.SSHClient()
     client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
@@ -89,7 +112,7 @@ def ssh_client() -> paramiko.SSHClient:
 
 
 def sync_files(
-    client: paramiko.SSHClient,
+    client: paramiko.SSHClient | None,
     local_dir: Path,
     remote_dir: str,
     filenames: list[str],
@@ -99,14 +122,15 @@ def sync_files(
     method: str,
 ) -> int:
     """Upload files from local_dir to remote_dir. Returns count of files uploaded."""
-    sftp = client.open_sftp() if method == "sftp" else None
+    sftp = client.open_sftp() if client and method == "sftp" else None
     if sftp:
         sftp.get_channel().settimeout(file_timeout)
     uploaded = 0
     try:
         # Ensure remote directory exists
-        stdin, stdout, stderr = client.exec_command(f"mkdir -p {shell_quote(remote_dir)}", timeout=10)
-        stdout.channel.recv_exit_status()
+        if client:
+            stdin, stdout, stderr = client.exec_command(f"mkdir -p {shell_quote(remote_dir)}", timeout=10)
+            stdout.channel.recv_exit_status()
 
         for name in filenames:
             local_path = local_dir / name
@@ -122,12 +146,16 @@ def sync_files(
                 if method == "sftp":
                     assert sftp is not None
                     sftp.put(str(local_path), remote_path)
+                elif method == "ssh":
+                    upload_with_system_ssh(local_path, remote_path, file_timeout)
                 else:
+                    assert client is not None
                     data = base64.b64encode(local_path.read_bytes())
                     cmd = f"base64 -d > {shell_quote(remote_path)}"
                     stdin, stdout, stderr = client.exec_command(cmd, timeout=file_timeout)
                     stdin.write(data.decode("ascii"))
                     stdin.channel.shutdown_write()
+                    stdin.close()
                     rc = stdout.channel.recv_exit_status()
                     if rc != 0:
                         err = stderr.read().decode("utf-8", errors="replace")
@@ -149,7 +177,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--dry-run", action="store_true", help="Show what would be synced without uploading")
     parser.add_argument("--max-file-mb", type=float, default=8.0, help="Skip individual files larger than this")
     parser.add_argument("--file-timeout", type=int, default=30, help="Per-file upload timeout in seconds")
-    parser.add_argument("--method", choices=["stream", "sftp"], default="stream", help="Upload method; stream uses SSH/base64 and avoids SFTP stalls")
+    parser.add_argument("--method", choices=["ssh", "stream", "sftp"], default="ssh", help="Upload method; ssh uses one OpenSSH/base64 upload per file")
     args = parser.parse_args(argv)
     max_bytes = int(args.max_file_mb * 1024 * 1024)
 
@@ -173,7 +201,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  [{status}] research_memory/attention/{name}")
         return 0
 
-    client = ssh_client()
+    client = None if args.method == "ssh" else ssh_client()
     try:
         total = 0
         print("--- Syncing runtime ---")
@@ -188,7 +216,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Total: {total} files uploaded to Tencent")
         return 0
     finally:
-        client.close()
+        if client:
+            client.close()
 
 
 if __name__ == "__main__":

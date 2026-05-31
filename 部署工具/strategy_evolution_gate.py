@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import html
 import json
+import sqlite3
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -32,6 +33,7 @@ COUNTERFACTUAL_JSON = REPORTS_DIR / "counterfactual_open_skips_latest.json"
 ACCOUNT_SNAPSHOT_JSON = RUNTIME_DIR / "account_snapshot_latest.json"
 CST = timezone(timedelta(hours=8))
 WINDOWS = (3, 7, 14, 30)
+POST_APPROVAL_WINDOWS_HOURS = (24, 72, 168)
 
 
 def h(value: Any) -> str:
@@ -354,9 +356,127 @@ def load_full_live_approvals(memory_dir: Path) -> dict[str, dict[str, Any]]:
     return approved
 
 
+def find_event_db(runtime_dir: Path, explicit: str | None = None) -> Path | None:
+    candidates: list[Path] = []
+    if explicit:
+        candidates.append(Path(explicit))
+    root = runtime_dir.parent
+    candidates.extend(
+        [
+            runtime_dir / "event_store.sqlite3",
+            root / "server_logs_tencent" / "runtime" / "event_store.sqlite3",
+        ]
+    )
+    for path in candidates:
+        if path.exists():
+            return path
+    return None
+
+
+def payload_float(payload: dict[str, Any], keys: tuple[str, ...]) -> float:
+    for key in keys:
+        if key in payload:
+            return to_float(payload.get(key))
+    return 0.0
+
+
+def summarize_post_approval_windows(db_path: Path | None, approvals: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    if not db_path or not approvals:
+        return {}
+    now = datetime.now(CST)
+    out: dict[str, dict[str, Any]] = {}
+    try:
+        conn = sqlite3.connect(str(db_path))
+        conn.row_factory = sqlite3.Row
+    except Exception:
+        return out
+    try:
+        cache: dict[str, list[sqlite3.Row]] = {}
+        for candidate_id, approval in approvals.items():
+            strategy = str(approval.get("base_strategy") or approval.get("strategy") or "")
+            approved_at = parse_date(approval.get("approved_at") or approval.get("applied_at"))
+            if not strategy or not approved_at:
+                continue
+            if strategy not in cache:
+                cache[strategy] = list(
+                    conn.execute(
+                        """
+                        select ts, strategy, symbol, event_type, category, side, payload_json
+                        from events
+                        where strategy = ?
+                        """,
+                        (strategy,),
+                    )
+                )
+            windows: dict[str, dict[str, Any]] = {}
+            for hours in POST_APPROVAL_WINDOWS_HOURS:
+                start = max(approved_at, now - timedelta(hours=hours))
+                seen: set[tuple[str, str, str, str, str]] = set()
+                metrics = {
+                    "window_hours": hours,
+                    "status": "ready" if now - approved_at >= timedelta(hours=hours) else "maturing",
+                    "since": start.isoformat(timespec="seconds"),
+                    "opens": 0,
+                    "closes": 0,
+                    "forced_closes": 0,
+                    "open_failed": 0,
+                    "close_failed": 0,
+                    "open_skipped": 0,
+                    "realized_pnl_usdt": 0.0,
+                    "latest_event_ts": "",
+                }
+                for row in cache[strategy]:
+                    ts_text = str(row["ts"] or "")
+                    event_dt = parse_date(ts_text)
+                    if not event_dt or event_dt < start:
+                        continue
+                    event_type = str(row["event_type"] or "")
+                    key = (
+                        ts_text,
+                        str(row["symbol"] or ""),
+                        event_type,
+                        str(row["side"] or ""),
+                        str(row["category"] or ""),
+                    )
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    if ts_text > str(metrics["latest_event_ts"]):
+                        metrics["latest_event_ts"] = ts_text
+                    if event_type == "OPEN":
+                        metrics["opens"] += 1
+                    elif event_type == "CLOSE":
+                        metrics["closes"] += 1
+                    elif event_type == "FORCED_CLOSE":
+                        metrics["forced_closes"] += 1
+                    elif event_type == "OPEN_FAILED":
+                        metrics["open_failed"] += 1
+                    elif event_type in {"CLOSE_FAILED", "FORCED_CLOSE_FAILED"}:
+                        metrics["close_failed"] += 1
+                    elif event_type == "OPEN_SKIPPED":
+                        metrics["open_skipped"] += 1
+                    if event_type in {"CLOSE", "FORCED_CLOSE"}:
+                        try:
+                            payload = json.loads(row["payload_json"] or "{}")
+                        except Exception:
+                            payload = {}
+                        metrics["realized_pnl_usdt"] += payload_float(payload, ("pnl_usd", "pnl_usdt", "realized_pnl_usdt", "pnl"))
+                metrics["realized_pnl_usdt"] = round(float(metrics["realized_pnl_usdt"]), 4)
+                windows[f"{hours}h"] = metrics
+            out[candidate_id] = {
+                "approved_at": approved_at.isoformat(timespec="seconds"),
+                "strategy": strategy,
+                "windows": windows,
+            }
+    finally:
+        conn.close()
+    return out
+
+
 def rollback_watch_verdict(
     results: list[dict[str, Any]],
     account_risk: dict[str, Any],
+    post_approval: dict[str, Any] | None = None,
 ) -> tuple[str, list[str]]:
     triggers: list[str] = []
     priority = ""
@@ -366,6 +486,18 @@ def rollback_watch_verdict(
     if account_risk.get("risk_count"):
         priority = "P0"
         triggers.append(f"硬顶风险 {account_risk.get('risk_count')}")
+    if post_approval:
+        for label, metrics in (post_approval.get("windows") or {}).items():
+            close_failed = to_int(metrics.get("close_failed"))
+            if close_failed:
+                priority = "P0"
+                triggers.append(f"{label} 关闭确认失败 {close_failed}")
+                break
+        day_window = (post_approval.get("windows") or {}).get("24h") or {}
+        day_open_failed = to_int(day_window.get("open_failed"))
+        if day_open_failed >= ROLLBACK_OPEN_FAILED_THRESHOLD:
+            priority = priority or "P1"
+            triggers.append(f"24h OPEN_FAILED {day_open_failed}")
     if to_float(account_risk.get("unrealized_pnl_usdt")) <= -ROLLBACK_ACCOUNT_LOSS_USDT:
         priority = priority or "P1"
         triggers.append(f"策略账户浮亏 {to_float(account_risk.get('unrealized_pnl_usdt')):.2f} USDT")
@@ -404,6 +536,7 @@ def classify_decision(
     cf_status: str,
     account_risk: dict[str, Any],
     full_live_approval: dict[str, Any] | None = None,
+    post_approval: dict[str, Any] | None = None,
 ) -> tuple[str, str, list[str]]:
     blockers: list[str] = []
     win = window_status(results)
@@ -412,7 +545,7 @@ def classify_decision(
     promotion_status = str((review or {}).get("promotion_status") or latest.get("promotion_status") or candidate.get("status") or "")
 
     if full_live_approval:
-        rollback_priority, rollback_triggers = rollback_watch_verdict(results, account_risk)
+        rollback_priority, rollback_triggers = rollback_watch_verdict(results, account_risk, post_approval)
         if rollback_priority == "P0":
             return "rollback_required", "review_or_rollback_live_change", rollback_triggers
         if rollback_priority == "P1":
@@ -523,11 +656,13 @@ def build_decisions(
     counterfactual: dict[str, Any] | None,
     account_snapshot: dict[str, Any] | None,
     full_live_approvals: dict[str, dict[str, Any]] | None = None,
+    post_approval_windows: dict[str, dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     experiments_by_key = group_by_key(experiments)
     review_by_key = {row_key(r): r for r in reviews if row_key(r)}
     account_by_strategy = account_risk_by_strategy(account_snapshot)
     full_live_approvals = full_live_approvals or {}
+    post_approval_windows = post_approval_windows or {}
 
     records: dict[str, dict[str, Any]] = {}
     for candidate in candidates:
@@ -560,7 +695,8 @@ def build_decisions(
         strategy = str(candidate.get("strategy") or candidate.get("base_strategy") or "")
         acc_risk = account_by_strategy.get(strategy, {})
         full_live_approval = full_live_approvals.get(key)
-        status, action, blockers = classify_decision(candidate, results, review, cf_status, acc_risk, full_live_approval)
+        post_approval = post_approval_windows.get(key)
+        status, action, blockers = classify_decision(candidate, results, review, cf_status, acc_risk, full_live_approval, post_approval)
         win = window_status(results)
         latest = results[-1] if results else {}
         ev_score = evidence_score(results, cf_status, win)
@@ -601,6 +737,7 @@ def build_decisions(
                 "manual_review": review or {},
                 "approved_full_live": bool(full_live_approval),
                 "full_live_approval": full_live_approval or {},
+                "post_approval_live": post_approval or {},
             }
         )
 
@@ -619,9 +756,11 @@ def build_payload(args: argparse.Namespace) -> dict[str, Any]:
         experiments = read_jsonl(experiments_dir / "results" / "latest.jsonl")
     reviews = read_jsonl(memory_dir / "promotions" / "reviews_latest.jsonl")
     full_live_approvals = load_full_live_approvals(memory_dir)
+    db_path = find_event_db(runtime_dir, args.db)
+    post_approval_windows = summarize_post_approval_windows(db_path, full_live_approvals)
     counterfactual = read_json(reports_dir / "counterfactual_open_skips_latest.json")
     account_snapshot = read_json(runtime_dir / "account_snapshot_latest.json")
-    decisions = build_decisions(candidates, experiments, reviews, counterfactual, account_snapshot, full_live_approvals)
+    decisions = build_decisions(candidates, experiments, reviews, counterfactual, account_snapshot, full_live_approvals, post_approval_windows)
     counts = {p: sum(1 for d in decisions if d.get("priority") == p) for p in ("P0", "P1", "P2", "P3", "REJECT")}
     top = next((d for d in decisions if d.get("priority") in {"P0", "P1", "P2"}), None)
     return {
@@ -633,6 +772,7 @@ def build_payload(args: argparse.Namespace) -> dict[str, Any]:
             "reviews": str(memory_dir / "promotions" / "reviews_latest.jsonl"),
             "counterfactual": str(reports_dir / "counterfactual_open_skips_latest.json"),
             "account_snapshot": str(runtime_dir / "account_snapshot_latest.json"),
+            "event_db": str(db_path or ""),
         },
         "summary": {
             "candidate_count": len(candidates),
@@ -644,6 +784,7 @@ def build_payload(args: argparse.Namespace) -> dict[str, Any]:
             "top_status": top.get("status") if top else "none",
             "full_live_watch_count": sum(1 for d in decisions if d.get("approved_full_live")),
             "rollback_watch_count": sum(1 for d in decisions if d.get("status") in {"rollback_required", "rollback_watch"}),
+            "post_approval_window_count": sum(1 for d in decisions if d.get("post_approval_live")),
         },
         "decisions": decisions,
     }
@@ -657,6 +798,7 @@ def render_md(payload: dict[str, Any]) -> str:
         f"- 候选: {payload['summary']['candidate_count']}，实验记录: {payload['summary']['experiment_count']}，门禁结论: {payload['summary']['decision_count']}",
         f"- 优先级: {payload['summary']['counts']}",
         f"- Full-live 观察: {payload['summary'].get('full_live_watch_count', 0)}，回滚观察/要求: {payload['summary'].get('rollback_watch_count', 0)}",
+        f"- 放开后实盘窗口: {payload['summary'].get('post_approval_window_count', 0)} 个候选已生成 24h/72h/168h 观察窗",
         "",
         "| 优先级 | 状态 | 策略 | 候选 | 证据分 | 风险分 | 建议动作 | 关键阻塞 |",
         "|---|---|---|---|---:|---:|---|---|",
@@ -698,6 +840,7 @@ def render_html(payload: dict[str, Any]) -> str:
     <dt>影子PnL</dt><dd>{float((d.get('latest_experiment') or {}).get('original_pnl') or 0):+.2f} -> {float((d.get('latest_experiment') or {}).get('shadow_pnl') or 0):+.2f}</dd>
     <dt>反事实</dt><dd>{h((d.get('counterfactual') or {}).get('status'))} / samples={h((d.get('counterfactual') or {}).get('samples'))} / pnl={float((d.get('counterfactual') or {}).get('pnl') or 0):+.2f}</dd>
     <dt>窗口</dt><dd>{h(json.dumps(d.get('windows') or {}, ensure_ascii=False))}</dd>
+    <dt>放开后实盘</dt><dd>{h(json.dumps((d.get('post_approval_live') or {}).get('windows') or {}, ensure_ascii=False))}</dd>
   </dl>
 </article>
 """.strip()
@@ -757,6 +900,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--experiments-dir", default=str(EXPERIMENTS_DIR))
     parser.add_argument("--reports-dir", default=str(REPORTS_DIR))
     parser.add_argument("--runtime-dir", default=str(RUNTIME_DIR))
+    parser.add_argument("--db", default="", help="Optional event_store.sqlite3 path for post-approval live windows")
     args = parser.parse_args(argv)
     reports_dir = Path(args.reports_dir)
     runtime_dir = Path(args.runtime_dir)

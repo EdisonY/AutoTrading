@@ -12,6 +12,7 @@
 - 常规同步方案已落地：`shadow_sync_from_tencent.py` 现在默认只同步 3 日 bounded SQLite mirror，写入项目内 `server_logs_tencent`，并强制 quick_check/新鲜度校验；`sync_aliyun_reports_to_tencent.py` 现在优先同步 index、counterfactual、research-store、runtime 关键文件，默认短超时/重试/错误上限，市场日报等大文件改为可选。2026-05-31 18:03 CST live pull：六服务 active，账户浮盈约 `+19.15 USDT`，13 持仓，attention `P0=0/P1=0/P2=5`；入口页显示 24h 反事实完成样本 `506`，60m 模拟 PnL `-0.79 USDT`。
 - N4 灰度/回滚化进化门禁开始落地：`strategy_evolution_gate.py` 会读取 full-live 手工批准记录，已全量放开的候选不再从视野里消失，而是进入 `full_live_monitoring`。如果出现尺寸违规、硬顶风险、策略账户大浮亏、影子/扣费后表现弱于原版、硬顶触发增加或 OPEN_FAILED 压力，会升级成 `rollback_watch`/`rollback_required`；`decision_attention.py` 会把这类项作为“策略回滚”重新推到入口页。自动代码回滚、24h/72h/7d 实盘窗口和 regime 分层仍是后续 N4 工作。
 - 跨云同步继续收敛：2026-05-31 19:46 CST 验证发现 3 日同步在当前链路上仍可能超过 180s，而 1 日 bounded sync（5000 条哨兵、500 条账户快照）能稳定完成且数据新鲜约 0.04h。因此小时级入口刷新应走 1 日小镜像；每日 shadow review 可以先试 3 日，失败后自动降级 1 日，避免整条报告链卡死。
+- N4 又补一层：`strategy_evolution_gate.py` 现在会从事件库为 full-live 候选生成 post-approval 24h/72h/168h 实盘观察窗，统计开仓、平仓、强平、OPEN_FAILED、CLOSE_FAILED、OPEN_SKIPPED 和已实现 PnL。关闭确认失败会直接触发 `rollback_required/P0`，24h OPEN_FAILED 达阈值会触发 `rollback_watch/P1`。后续还要补 regime 分层、窗口收益质量阈值和自动回滚执行。
 
 ## 2026-05-31 B/v16 全量放开与 C/v14 扩样
 - 用户明确要求“放开”，核心原因是当前样本量太少，无法有效优化策略；同时要求解决 C/v14 开仓少，并保证 A/v11 无异常。

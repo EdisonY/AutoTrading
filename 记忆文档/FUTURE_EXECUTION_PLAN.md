@@ -68,7 +68,8 @@
 - [ ] 加入费用/滑点/未成交模拟。
 - [ ] 每个候选必须有 24h/72h/7d 观察窗口和最低样本数。
 - [x] 放开后自动生成第一版 rollback watch：已批准 full-live 候选默认进入 `full_live_monitoring`，触发尺寸异常、硬止损风险、账户大亏、扣费后劣化、硬止损增加、OPEN_FAILED 压力时升 `rollback_watch/P1` 或 `rollback_required/P0`。
-- [ ] 补 post-approval 24h/72h/7d 实盘窗口、regime 分层、关闭确认失败独立统计和自动代码回滚动作。
+- [x] 补 post-approval 24h/72h/7d 实盘窗口雏形：`strategy_evolution_gate.py` 从事件库按 full-live approval 生成 24h/72h/168h 实盘观察窗，统计 OPEN/CLOSE/FORCED_CLOSE/OPEN_FAILED/CLOSE_FAILED/OPEN_SKIPPED 和已实现 PnL。
+- [ ] 补 regime 分层、关闭确认失败更细归因、窗口收益质量阈值和自动代码回滚动作。
 - [ ] 首页最高优先级展示“已验证更优方案”或“已放开候选正在劣化”。
 
 验收：

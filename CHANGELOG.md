@@ -2,6 +2,14 @@
 
 This is the durable reason-and-outcome ledger for every material design, code, configuration, deployment, rollback, optimization, or live operational change.
 
+## 2026-05-31 20:05 CST - Add post-approval live windows to evolution gate
+- Trigger / reason: Continue N4 after rollback-watch deployment. Approved full-live candidates need explicit 24h/72h/7d real live windows, not only shadow/experiment evidence.
+- Completed: `strategy_evolution_gate.py` now locates the event-store SQLite DB, reads full-live approvals, and builds post-approval live windows for 24h, 72h, and 168h per approved candidate. The windows de-duplicate event-store mirror rows and count `OPEN`, `CLOSE`, `FORCED_CLOSE`, `OPEN_FAILED`, `CLOSE_FAILED`/`FORCED_CLOSE_FAILED`, `OPEN_SKIPPED`, latest event time, and realized close PnL. Close-confirm failures in any post-approval window now trigger `rollback_required/P0`; 24h `OPEN_FAILED` above threshold triggers `rollback_watch/P1`. Gate JSON/MD/HTML now expose the post-approval live-window summary.
+- Not completed / remaining: Regime split, stricter window PnL/PF quality thresholds, and automatic code rollback are still future N4 work.
+- Verification: Pending local/remote validation and deployment.
+- Live impact / deployment: Pending. Read-side gate/report behavior only; no scanner, order, threshold, or risk behavior changes.
+- Files / release / commit: `部署工具/strategy_evolution_gate.py`, `记忆文档/FUTURE_EXECUTION_PLAN.md`, `记忆文档/MEMORY.md`, `CHANGELOG.md`; Git commit to contain this entry.
+
 ## 2026-05-31 19:58 CST - Bound Aliyun hourly sync and daily fallback
 - Trigger / reason: While verifying the N4 rollback-watch deploy, the full chained remote run stalled because the 3-day Tencent→Aliyun shadow sync exceeded the bounded window. A 1-day bounded sync with smaller sentinel/account limits completed quickly and produced fresh data.
 - Completed: `aliyun_analysis_refresh.sh` now uses a 1-day bounded sync for the every-2-hour command-center refresh: 180s timeout, `--sqlite-days 1`, `--sentinel-limit 5000`, `--account-limit 500`, and `--max-age-hours 8`. Its research-store export/query window now matches the 1-day refresh mirror. `aliyun_shadow_review.sh` still tries the deeper 3-day sync first, but now wraps it in a 300s timeout and falls back to the same 1-day bounded sync if the deeper pull fails or times out.

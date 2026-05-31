@@ -363,12 +363,20 @@ def find_event_db(runtime_dir: Path, explicit: str | None = None) -> Path | None
     root = runtime_dir.parent
     candidates.extend(
         [
-            runtime_dir / "event_store.sqlite3",
             root / "server_logs_tencent" / "runtime" / "event_store.sqlite3",
+            runtime_dir / "event_store.sqlite3",
         ]
     )
     for path in candidates:
-        if path.exists():
+        if not path.exists():
+            continue
+        try:
+            conn = sqlite3.connect(str(path))
+            has_events = conn.execute("select 1 from sqlite_master where type='table' and name='events'").fetchone()
+            conn.close()
+        except Exception:
+            has_events = None
+        if has_events:
             return path
     return None
 

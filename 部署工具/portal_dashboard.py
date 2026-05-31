@@ -501,6 +501,8 @@ def research_store_summary(path: Path | None) -> dict[str, Any]:
         "skip_layers": [],
         "sentinel": [],
         "latest_accounts": [],
+        "kline_coverage": [],
+        "feature_coverage": [],
         "totals": {"events": 0, "signals": 0, "opens": 0, "skipped": 0, "failed": 0},
         "top_skip": {},
     }
@@ -529,6 +531,8 @@ def research_store_summary(path: Path | None) -> dict[str, Any]:
         "skip_layers": skip_layers,
         "sentinel": payload.get("sentinel") if isinstance(payload.get("sentinel"), list) else [],
         "latest_accounts": payload.get("latest_accounts") if isinstance(payload.get("latest_accounts"), list) else [],
+        "kline_coverage": payload.get("kline_coverage") if isinstance(payload.get("kline_coverage"), list) else [],
+        "feature_coverage": payload.get("feature_coverage") if isinstance(payload.get("feature_coverage"), list) else [],
         "totals": totals,
         "top_skip": skip_layers[0] if skip_layers else {},
     }
@@ -1356,7 +1360,8 @@ def function_status_cards(data: dict[str, Any]) -> list[dict[str, str]]:
             "body": (
                 f"{research_store.get('days', 0)}日样本：开仓 {int((research_store.get('totals') or {}).get('opens') or 0)}，"
                 f"跳过 {int((research_store.get('totals') or {}).get('skipped') or 0)}，失败 {int((research_store.get('totals') or {}).get('failed') or 0)}；"
-                f"主否决 {((research_store.get('top_skip') or {}).get('strategy') or '-')}/{((research_store.get('top_skip') or {}).get('gate') or '-')}。"
+                f"主否决 {((research_store.get('top_skip') or {}).get('strategy') or '-')}/{((research_store.get('top_skip') or {}).get('gate') or '-')}；"
+                f"K线周期 {len(research_store.get('kline_coverage') or [])}，特征周期 {len(research_store.get('feature_coverage') or [])}。"
                 if research_store.get("available")
                 else "Parquet/DuckDB 样本漏斗尚未生成，进化判断只能看 SQLite/报表口径。"
             ),
@@ -2032,6 +2037,30 @@ def render_html(out_dir: Path) -> str:
 """.strip()
         for r in (research_store.get("skip_layers") or [])[:8]
     ) or '<tr><td colspan="3">暂无研究仓否决层</td></tr>'
+    research_kline_rows = "".join(
+        f"""
+<tr>
+  <td>{h(r.get('interval'))}</td>
+  <td>{int(r.get('bars') or 0)}</td>
+  <td>{int(r.get('symbols') or 0)}</td>
+  <td>{h(r.get('latest_bar') or '-')}</td>
+</tr>
+""".strip()
+        for r in (research_store.get("kline_coverage") or [])[:6]
+    ) or '<tr><td colspan="4">暂无 K线研究分区</td></tr>'
+    research_feature_rows = "".join(
+        f"""
+<tr>
+  <td>{h(r.get('interval'))}</td>
+  <td>{int(r.get('rows') or 0)}</td>
+  <td>{int(r.get('symbols') or 0)}</td>
+  <td>{float(r.get('avg_abs_return_1_pct') or 0):.4f}%</td>
+  <td>{float(r.get('avg_range_pct') or 0):.4f}%</td>
+  <td>{h(r.get('latest_bar') or '-')}</td>
+</tr>
+""".strip()
+        for r in (research_store.get("feature_coverage") or [])[:6]
+    ) or '<tr><td colspan="6">暂无特征研究分区</td></tr>'
 
     evolution = data.get("strategy_evolution") or {}
     evolution_counts = evolution.get("counts") or {}
@@ -2348,6 +2377,14 @@ th {{ background:#f1f5f9; color:#334155; }}
     <table class="subtable">
       <thead><tr><th>策略</th><th>主要否决层</th><th>数量</th></tr></thead>
       <tbody>{research_skip_rows}</tbody>
+    </table>
+    <table class="subtable">
+      <thead><tr><th>周期</th><th>K线bars</th><th>币种数</th><th>最新K线</th></tr></thead>
+      <tbody>{research_kline_rows}</tbody>
+    </table>
+    <table class="subtable">
+      <thead><tr><th>周期</th><th>特征行</th><th>币种数</th><th>平均1bar波动</th><th>平均振幅</th><th>最新K线</th></tr></thead>
+      <tbody>{research_feature_rows}</tbody>
     </table>
   </section>
 

@@ -25,7 +25,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 ROOT = SCRIPT_DIR.parent if SCRIPT_DIR.name == "部署工具" else SCRIPT_DIR
 CST = timezone(timedelta(hours=8))
 
-TABLES = ("events", "sentinel_scans", "account_snapshots")
+TABLES = ("events", "sentinel_scans", "account_snapshots", "klines", "features")
 
 
 def now_cst() -> datetime:
@@ -85,6 +85,8 @@ def build_summary(con: Any, available: dict[str, bool], days: int) -> dict[str, 
         "skip_layers": [],
         "sentinel": [],
         "latest_accounts": [],
+        "kline_coverage": [],
+        "feature_coverage": [],
     }
     if available.get("events"):
         summary["strategy_funnel"] = query_dicts(
@@ -156,6 +158,41 @@ def build_summary(con: Any, available: dict[str, bool], days: int) -> dict[str, 
             order by account
             """,
         )
+    if available.get("klines"):
+        summary["kline_coverage"] = query_dicts(
+            con,
+            """
+            select
+              interval,
+              count(*) as bars,
+              count(distinct symbol) as symbols,
+              min(open_time) as first_bar,
+              max(open_time) as latest_bar
+            from klines
+            where open_time >= ?
+            group by 1
+            order by bars desc
+            """,
+            [cutoff],
+        )
+    if available.get("features"):
+        summary["feature_coverage"] = query_dicts(
+            con,
+            """
+            select
+              interval,
+              count(*) as rows,
+              count(distinct symbol) as symbols,
+              round(avg(abs(return_1_pct)), 4) as avg_abs_return_1_pct,
+              round(avg(range_pct), 4) as avg_range_pct,
+              max(open_time) as latest_bar
+            from features
+            where open_time >= ?
+            group by 1
+            order by rows desc
+            """,
+            [cutoff],
+        )
     return summary
 
 
@@ -188,6 +225,14 @@ def render_md(payload: dict[str, Any]) -> str:
         ]
         for r in payload.get("latest_accounts", [])
     ]
+    kline_rows = [
+        [r.get("interval"), r.get("bars"), r.get("symbols"), r.get("first_bar"), r.get("latest_bar")]
+        for r in payload.get("kline_coverage", [])
+    ]
+    feature_rows = [
+        [r.get("interval"), r.get("rows"), r.get("symbols"), r.get("avg_abs_return_1_pct"), r.get("avg_range_pct"), r.get("latest_bar")]
+        for r in payload.get("feature_coverage", [])
+    ]
     return "\n\n".join(
         [
             "# Research Store Summary",
@@ -203,6 +248,10 @@ def render_md(payload: dict[str, Any]) -> str:
             md_table(["strategy", "result", "scans", "avg_change", "avg_quote_volume"], sentinel_rows),
             "## Latest Accounts",
             md_table(["account", "upnl", "positions", "available", "ts"], account_rows),
+            "## Kline Coverage",
+            md_table(["interval", "bars", "symbols", "first", "latest"], kline_rows),
+            "## Feature Coverage",
+            md_table(["interval", "rows", "symbols", "avg_abs_ret_1", "avg_range", "latest"], feature_rows),
         ]
     )
 

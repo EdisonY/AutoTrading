@@ -39,6 +39,7 @@ UPLOADS = [
     (ROOT / "部署工具" / "strategy_evolution_gate.py", f"{REMOTE_DIR}/strategy_evolution_gate.py"),
     (ROOT / "部署工具" / "decision_attention.py", f"{REMOTE_DIR}/decision_attention.py"),
     (ROOT / "部署工具" / "research_memory_builder.py", f"{REMOTE_DIR}/research_memory_builder.py"),
+    (ROOT / "部署工具" / "research_kline_features.py", f"{REMOTE_DIR}/research_kline_features.py"),
     (ROOT / "部署工具" / "research_store_export.py", f"{REMOTE_DIR}/research_store_export.py"),
     (ROOT / "部署工具" / "research_store_query.py", f"{REMOTE_DIR}/research_store_query.py"),
     (ROOT / "部署工具" / "research_review_dashboard.py", f"{REMOTE_DIR}/research_review_dashboard.py"),

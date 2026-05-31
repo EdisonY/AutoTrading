@@ -18,6 +18,7 @@
 - N3 研究仓增量导出已推进：`research_store_export.py` manifest 现在记录每个 table/date 分区的 `rows/max_ts/path/status`。下一次导出会先比较 watermark，未变化分区直接 `skipped_unchanged`，减少重复读写 Parquet/JSONL；如需重建可用 `--force`。
 - N3/N4 继续收口：`data_maintenance.py` retention 模式会清理独立 `sentinel_scans` 旧分区，避免哨兵扫描表长期撑大 SQLite；入口页第一屏新增“进化最高优先级”提示条，顺序为回滚/劣化 > 已验证更优方案 > 已放开候选观察质量。`portal_dashboard.py` 账户快照现在只在 JSON 新鲜时优先使用，过期 JSON 会退回 SQLite 或明确标记过期，避免阿里云手动重建入口页时误显示旧账户盈亏。
 - N4 最低实盘样本数已补：已放开候选的 post-approval 24h/72h/168h 窗口分别要求 closed samples `20/50/100`；不足时 quality 为 `maturing`，并在 full_live_monitoring blocker 中显示，不会被误判为足够成熟。
+- N3 `klines/features` 研究数据集第一版已接入：腾讯同步会带上最新 `runtime/kline_cache`，阿里云 `research_kline_features.py` 会把缓存 K线导出为 `research_store/klines`，并生成 `features`（1/3/10 bar return、body、range、quote_volume 等），研究仓摘要和入口页展示 K线/特征覆盖度。它是近期缓存覆盖，不是完整历史 K线仓，后续还要补长历史归档。
 
 ## 2026-05-31 B/v16 全量放开与 C/v14 扩样
 - 用户明确要求“放开”，核心原因是当前样本量太少，无法有效优化策略；同时要求解决 C/v14 开仓少，并保证 A/v11 无异常。

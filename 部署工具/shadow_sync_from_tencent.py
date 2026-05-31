@@ -68,6 +68,8 @@ SQLITE_FILES = [
     "runtime/event_store.sqlite3",
 ]
 
+KLINE_CACHE_DIR = "runtime/kline_cache"
+
 
 def ssh_client() -> paramiko.SSHClient:
     client = paramiko.SSHClient()
@@ -303,6 +305,7 @@ def sync_bundle(
     sentinel_limit: int = 20000,
     account_limit: int = 1500,
     max_age_hours: float = 6.0,
+    kline_limit: int = 500,
 ) -> None:
     LOCAL_DIR.mkdir(parents=True, exist_ok=True)
     days = recent_days(days_back)
@@ -346,6 +349,14 @@ def sync_bundle(
                 account_limit=account_limit,
             )
         )
+    commands.append(f"mkdir -p {shell_quote(f'{tmp_dir}/{KLINE_CACHE_DIR}')} ")
+    commands.append(
+        "if [ -d runtime/kline_cache ]; then "
+        "find runtime/kline_cache -maxdepth 1 -type f -name '*.json' -printf '%T@ %p\\n' 2>/dev/null "
+        f"| sort -nr | head -n {int(kline_limit)} | awk '{{print $2}}' "
+        f"| xargs -r -I{{}} cp {{}} {shell_quote(f'{tmp_dir}/{KLINE_CACHE_DIR}/')} ; "
+        "fi"
+    )
     commands.extend(
         [
             f"tar -czf {shell_quote(archive)} -C {shell_quote(tmp_dir)} .",
@@ -360,7 +371,8 @@ def sync_bundle(
         print(
             "Fast bundle mode: "
             f"{', '.join(days)}; sqlite_days={sqlite_days}; "
-            f"sentinel_limit={sentinel_limit}; account_limit={account_limit}; log_tail={log_tail}"
+            f"sentinel_limit={sentinel_limit}; account_limit={account_limit}; "
+            f"kline_limit={kline_limit}; log_tail={log_tail}"
         )
         rc, out, err = run_remote(client, " && ".join(commands), timeout=300)
         if rc != 0:
@@ -398,6 +410,8 @@ def sync_bundle(
             print(f"[SKIP] {rel}")
             continue
         print(f"[OK] {rel}")
+    kline_count = len(list((LOCAL_DIR / KLINE_CACHE_DIR).glob("*.json")))
+    print(f"[OK] {KLINE_CACHE_DIR}: {kline_count} files")
 
 
 def sync(days_back: int) -> None:
@@ -442,6 +456,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--sentinel-limit", type=int, default=20000, help="Newest sentinel_scans rows to keep in the SQLite mirror")
     parser.add_argument("--account-limit", type=int, default=1500, help="Newest account_snapshots rows to keep in the SQLite mirror")
     parser.add_argument("--max-age-hours", type=float, default=6.0, help="Fail if synced events/sentinel/account tables are older than this")
+    parser.add_argument("--kline-limit", type=int, default=500, help="Newest runtime/kline_cache JSON files to include in the bundle")
     args = parser.parse_args(argv)
     if not args.full:
         sync_bundle(
@@ -452,6 +467,7 @@ def main(argv: list[str] | None = None) -> int:
             sentinel_limit=args.sentinel_limit,
             account_limit=args.account_limit,
             max_age_hours=args.max_age_hours,
+            kline_limit=args.kline_limit,
         )
     else:
         sync(args.days)

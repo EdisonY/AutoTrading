@@ -28,6 +28,7 @@ $PYTHON sentinel_quality_review.py --db $REMOTE_DIR/server_logs_tencent/runtime/
 
 echo "--- Step 1.7: Research store export/query ---"
 $PYTHON research_store_export.py --db $REMOTE_DIR/server_logs_tencent/runtime/event_store.sqlite3 --out-dir $REMOTE_DIR/research_store --days $REFRESH_DAYS --format parquet || echo "[WARN] research store export failed"
+$PYTHON research_kline_features.py --cache-dir $REMOTE_DIR/server_logs_tencent/runtime/kline_cache --out-dir $REMOTE_DIR/research_store --days $REFRESH_DAYS --format parquet || echo "[WARN] kline feature export failed"
 $PYTHON research_store_query.py --store $REMOTE_DIR/research_store --runtime-dir $REMOTE_DIR/runtime --reports-dir $REMOTE_DIR/reports --days $REFRESH_DAYS --format parquet || echo "[WARN] research store query failed"
 
 echo "--- Step 2: Counterfactual evaluation ---"

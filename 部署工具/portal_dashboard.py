@@ -364,6 +364,74 @@ def strategy_evolution_summary(path: Path | None) -> dict[str, Any]:
     }
 
 
+def evolution_action_alert(evolution: dict[str, Any]) -> dict[str, str]:
+    decisions = [d for d in (evolution.get("decisions") or []) if isinstance(d, dict)]
+    priority_rank = {"P0": 0, "P1": 1, "P2": 2, "P3": 3, "REJECT": 9}
+
+    def sort_key(item: dict[str, Any]) -> tuple[int, int]:
+        priority = priority_rank.get(str(item.get("priority") or "P3"), 8)
+        evidence = -int(item.get("evidence_score") or 0)
+        return priority, evidence
+
+    rollback = sorted(
+        [d for d in decisions if str(d.get("status") or "") in {"rollback_required", "rollback_watch"}],
+        key=sort_key,
+    )
+    if rollback:
+        top = rollback[0]
+        level = "bad" if top.get("status") == "rollback_required" or top.get("priority") == "P0" else "warn"
+        return {
+            "level": level,
+            "title": f"{top.get('priority') or 'P1'} 已放开候选劣化：{top.get('strategy') or '-'}",
+            "body": (
+                f"{top.get('candidate_id') or '-'} 进入 {top.get('status') or '-'}；"
+                f"建议 {top.get('recommended_action') or '-'}。"
+            ),
+        }
+
+    ready = sorted(
+        [
+            d for d in decisions
+            if str(d.get("status") or "") == "verified_upgrade_ready"
+            and str(d.get("priority") or "") in {"P0", "P1"}
+        ],
+        key=sort_key,
+    )
+    if ready:
+        top = ready[0]
+        return {
+            "level": "warn",
+            "title": f"{top.get('priority') or 'P1'} 已验证更优方案：{top.get('strategy') or '-'}",
+            "body": (
+                f"{top.get('candidate_id') or '-'}；证据分 {int(top.get('evidence_score') or 0)}，"
+                f"风险分 {int(top.get('risk_score') or 0)}；建议 {top.get('recommended_action') or '-'}。"
+            ),
+        }
+
+    approved = sorted(
+        [d for d in decisions if d.get("approved_full_live")],
+        key=sort_key,
+    )
+    if approved:
+        watched = sum(1 for d in approved if str(d.get("status") or "") == "full_live_monitoring")
+        regime_summary = evolution.get("regime_summary") or {}
+        return {
+            "level": "ok",
+            "title": f"P2 已放开候选观察中：{watched}/{len(approved)} 正常",
+            "body": (
+                f"24h quality {regime_summary.get('quality_counts') or {}}，"
+                f"OPEN_FAILED {int(regime_summary.get('open_failed_24h') or 0)}，"
+                f"CLOSE_FAILED {int(regime_summary.get('close_failed_24h') or 0)}。"
+            ),
+        }
+
+    return {
+        "level": "ok" if evolution.get("fresh") else "warn",
+        "title": "P2 暂无已验证更优方案",
+        "body": f"门禁更新 {evolution.get('age') or '未知'}；无 P0/P1 可批准项或回滚项。",
+    }
+
+
 def attention_summary(path: Path | None) -> dict[str, Any]:
     empty = {
         "available": False,
@@ -1508,6 +1576,7 @@ def build_executive_summary(data: dict[str, Any]) -> dict[str, Any]:
     evolution = data.get("strategy_evolution") or {}
     evolution_counts = evolution.get("counts") or {}
     regime_summary = evolution.get("regime_summary") or {}
+    evolution_alert = evolution_action_alert(evolution)
     truth = data.get("strategy_truth") or {}
     truth_stats = truth.get("strategy_stats") or {}
     decision_rows = data.get("decision_summary") or []
@@ -1579,6 +1648,7 @@ def build_executive_summary(data: dict[str, Any]) -> dict[str, Any]:
         f"账户：实时浮盈亏 {account_upnl:+.2f} USDT，持仓 {positions}，硬顶风险 {risk_count}，尺寸违规 {sizing_count}。",
         f"运行：核心服务 {'正常' if services_ok else '需检查'}，自动告警 {alert_count}，持久关注 P0 {p0} / P1 {p1}。",
         f"进化：{evo_text}；只有门禁通过且用户批准的候选才允许进入实盘。",
+        f"最高进化提示：{evolution_alert.get('title')}；{evolution_alert.get('body')}",
         f"环境：已放开候选 24h regime {regime_summary.get('counts') or {}}，quality {regime_summary.get('quality_counts') or {}}，OPEN_FAILED {int(regime_summary.get('open_failed_24h') or 0)}，CLOSE_FAILED {int(regime_summary.get('close_failed_24h') or 0)}。",
         "扩样决策：不再全局盲目放宽。A/v11保持稳定，B/v16观察已批准全量候选，C/v14维持当前受控扩样窗口。",
     ]
@@ -1595,6 +1665,7 @@ def build_executive_summary(data: dict[str, Any]) -> dict[str, Any]:
     return {
         "level": level,
         "headline": headline,
+        "evolution_alert": evolution_alert,
         "bullets": bullets,
         "next_actions": next_actions[:4],
         "strategy_decisions": strategy_decisions,
@@ -1711,6 +1782,7 @@ def render_html(out_dir: Path) -> str:
     attention_counts = attention_summary_data.get("counts") or {}
     issues_count = sum(1 for f in data.get("findings", []) if f.get("level") in {"bad", "warn"})
     executive = data.get("executive_summary") or {}
+    evolution_alert = executive.get("evolution_alert") or {}
     metrics = [
         ("昨日复盘PnL", f"{data['signal_summary']['total_pnl']:+.2f}", "最新完整复盘周期"),
         (
@@ -1732,6 +1804,12 @@ def render_html(out_dir: Path) -> str:
     )
     executive_bullets = "".join(f"<li>{h(item)}</li>" for item in executive.get("bullets", []))
     executive_actions = "".join(f"<li>{h(item)}</li>" for item in executive.get("next_actions", []))
+    evolution_alert_html = f"""
+    <div class="priority-alert {h(evolution_alert.get('level', 'warn'))}">
+      <b>{h(evolution_alert.get('title', 'P2 暂无最高优先进化事项'))}</b>
+      <span>{h(evolution_alert.get('body', '等待策略进化门禁输出。'))}</span>
+    </div>
+    """.strip()
     executive_strategy_rows = "".join(
         f"""
 <tr>
@@ -2104,6 +2182,12 @@ h1 {{ margin:0; font-size:30px; letter-spacing:0; }}
 .decision-brief h3 {{ margin:14px 0 8px; font-size:14px; color:#334155; }}
 .decision-brief ul,.decision-brief ol {{ margin:8px 0 0; padding-left:20px; color:#344054; line-height:1.65; }}
 .decision-brief table {{ margin-top:14px; min-width:760px; }}
+.priority-alert {{ margin:0 0 14px; border:1px solid var(--line); border-left:6px solid var(--slate); border-radius:8px; padding:12px 14px; background:#f8fafc; }}
+.priority-alert.ok {{ border-left-color:var(--green); background:var(--soft-green); }}
+.priority-alert.warn {{ border-left-color:var(--amber); background:var(--soft-amber); }}
+.priority-alert.bad {{ border-left-color:var(--red); background:#fef2f2; }}
+.priority-alert b,.priority-alert span {{ display:block; }}
+.priority-alert span {{ margin-top:5px; color:#344054; line-height:1.55; }}
 .section {{ margin-top:22px; }}
 .section-head {{ display:flex; justify-content:space-between; align-items:end; gap:12px; margin-bottom:10px; }}
 .section h2 {{ margin:0; font-size:18px; }}
@@ -2164,6 +2248,7 @@ th {{ background:#f1f5f9; color:#334155; }}
   <section class="metrics">{metric_html}</section>
 
   <section class="decision-brief {h(executive.get('level', 'warn'))}">
+    {evolution_alert_html}
     <div class="decision-grid">
       <div>
         <h2>{h(executive.get('headline', '等待决策摘要'))}</h2>

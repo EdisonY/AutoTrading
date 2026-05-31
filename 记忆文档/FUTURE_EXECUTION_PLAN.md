@@ -52,7 +52,7 @@
 - [x] `portal_dashboard.py` 已读取 `runtime/research_store_summary_latest.json`，在入口页功能状态、详情入口和样本漏斗区展示研究仓摘要。
 - [x] 修复 Tencent→Aliyun 常规数据同步：`shadow_sync_from_tencent.py` 默认生成 3 日 bounded SQLite mirror，限制 `sentinel_scans`/`account_snapshots` 行数，并在分析前验证 quick_check、表行数和新鲜度。
 - [x] 修复 Aliyun→Tencent 关键报告反向同步：`sync_aliyun_reports_to_tencent.py` 默认按关键性排序上传 index/counterfactual/research-store/runtime，使用 bounded OpenSSH/base64 单文件上传、短超时、重试、错误上限；市场日报等 bulky detail 需 `--include-optional`。
-- [ ] 数据维护 timer 只保留近期 SQLite 明细，长期研究读 Parquet。
+- [x] 数据维护 timer 只保留近期 SQLite 明细，长期研究读 Parquet。`data_maintenance.py` 会清理旧 raw events、账户快照和独立 `sentinel_scans` 分区，避免哨兵扫描长期撑大 SQLite。
 - [x] 补 watermark 增量导出：`research_store_export.py` 现在把每个 table/date 分区的 `rows/max_ts/path/status` 写入 manifest，下一次导出会跳过未变化分区；`--force` 可强制重写。
 - [ ] 后续补 `klines/features` 研究数据集，避免只依赖事件流做策略研究。
 
@@ -72,7 +72,7 @@
 - [x] 补 post-approval 24h/72h/7d 实盘窗口雏形：`strategy_evolution_gate.py` 从事件库按 full-live approval 生成 24h/72h/168h 实盘观察窗，统计 OPEN/CLOSE/FORCED_CLOSE/OPEN_FAILED/CLOSE_FAILED/OPEN_SKIPPED 和已实现 PnL。
 - [x] 补第一版窗口收益质量阈值：已放开候选窗口在样本足够后，如果扣费后 PnL 低于阈值、强平率过高或开仓失败率过高，会升 `rollback_watch/P1`；关闭确认失败仍升 `rollback_required/P0`。
 - [ ] 补更细 regime 分层、关闭确认失败更细归因、更稳健的窗口 PF 阈值和自动代码回滚动作。
-- [ ] 首页最高优先级展示“已验证更优方案”或“已放开候选正在劣化”。
+- [x] 首页最高优先级展示“已验证更优方案”或“已放开候选正在劣化”。`portal_dashboard.py` 第一屏现在单独生成进化优先提示条：回滚项最高，其次 P0/P1 已验证更优方案，否则展示已放开候选 24h quality/OPEN_FAILED/CLOSE_FAILED。
 
 验收：
 - 不再因为短窗口好运气而升级。

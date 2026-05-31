@@ -179,12 +179,17 @@ def prune_db(
     vacuum: bool,
     retention: bool,
     event_retention_days: int,
+    sentinel_retention_days: int,
 ) -> dict[str, int]:
     if not DB_PATH.exists():
         return {}
     con = sqlite3.connect(DB_PATH, timeout=60)
     counts: dict[str, int] = {}
     try:
+        table_names = {
+            row[0]
+            for row in con.execute("select name from sqlite_master where type='table'")
+        }
         if purge_duplicate_sentinel:
             counts["sentinel_deleted"] = con.execute("delete from events where source='sentinel/events'").rowcount
         if purge_event_store_mirrors:
@@ -200,6 +205,14 @@ def prune_db(
                 "delete from events where source='sentinel/events' and ts < ?",
                 (cutoff_sentinel,),
             ).rowcount
+            cutoff_sentinel_scans = (datetime.now(CST) - timedelta(days=max(1, sentinel_retention_days))).strftime("%Y-%m-%d")
+            if "sentinel_scans" in table_names:
+                counts["sentinel_scans_retention_deleted"] = con.execute(
+                    "delete from sentinel_scans where date < ?",
+                    (cutoff_sentinel_scans,),
+                ).rowcount
+            else:
+                counts["sentinel_scans_retention_deleted"] = 0
             cutoff_events = (datetime.now(CST) - timedelta(days=max(1, event_retention_days))).strftime("%Y-%m-%d")
             counts["raw_event_deleted"] = con.execute(
                 "delete from events where source not like '%/trades' and category != 'trade' and ts < ?",
@@ -313,6 +326,7 @@ def main() -> int:
     parser.add_argument("--purge-event-store-mirrors", action="store_true")
     parser.add_argument("--retention", action="store_true")
     parser.add_argument("--event-retention-days", type=int, default=14)
+    parser.add_argument("--sentinel-retention-days", type=int, default=14)
     parser.add_argument("--vacuum", action="store_true")
     parser.add_argument("--prune-snapshot-html", action="store_true")
     parser.add_argument("--archive-noisy-shards", action="store_true")
@@ -336,6 +350,7 @@ def main() -> int:
             args.vacuum,
             args.retention,
             args.event_retention_days,
+            args.sentinel_retention_days,
         )
     if args.prune_snapshot_html:
         output["snapshot_html_removed"] = prune_snapshot_html()

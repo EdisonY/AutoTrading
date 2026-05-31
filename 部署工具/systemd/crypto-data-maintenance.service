@@ -7,4 +7,4 @@ Type=oneshot
 User=ubuntu
 WorkingDirectory=/opt/crypto-auto-trader
 Environment=PYTHONUNBUFFERED=1
-ExecStart=/opt/crypto-auto-trader/.venv/bin/python /opt/crypto-auto-trader/data_maintenance.py --retention --purge-event-store-mirrors --event-retention-days 14 --prune-snapshot-html --archive-noisy-shards --archive-old-shards --hot-shard-days 7 --prune-archives --archive-days 90 --trim-text-logs --text-log-lines 5000
+ExecStart=/opt/crypto-auto-trader/.venv/bin/python /opt/crypto-auto-trader/data_maintenance.py --retention --purge-event-store-mirrors --event-retention-days 14 --sentinel-retention-days 14 --prune-snapshot-html --archive-noisy-shards --archive-old-shards --hot-shard-days 7 --prune-archives --archive-days 90 --trim-text-logs --text-log-lines 5000

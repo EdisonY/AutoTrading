@@ -2,6 +2,14 @@
 
 This is the durable reason-and-outcome ledger for every material design, code, configuration, deployment, rollback, optimization, or live operational change.
 
+## 2026-06-01 00:08 CST - Add sentinel-scan retention and evolution priority strip
+- Trigger / reason: Continue the next-stage optimization goal after the user asked to stop approval popups and keep moving. Remaining N3/N4 gaps included SQLite growth from the dedicated `sentinel_scans` table and the requirement that the entry page make verified better strategies or degrading approved candidates impossible to miss.
+- Completed: `data_maintenance.py` retention mode now checks for the `sentinel_scans` table and deletes partitions older than `--sentinel-retention-days` (default 14), while preserving compatibility with older DBs that do not have the table. The Tencent maintenance systemd command now passes `--sentinel-retention-days 14` explicitly. `portal_dashboard.py` now computes an evolution priority alert for the first screen: rollback/forced degradation first, then P0/P1 `verified_upgrade_ready`, otherwise approved full-live candidate quality/watch status. Updated future plan, project state, and long memory.
+- Not completed / remaining: Kline/features datasets are still not exported into the research warehouse. Automatic code rollback is still not wired; the entry page now exposes rollback/watch priority but does not execute rollback by itself.
+- Verification: Local `py_compile` passed for `data_maintenance.py` and `portal_dashboard.py`. Local portal generation succeeded and `reports/index.html` contains the new `priority-alert` showing `P2 已放开候选观察中：4/4 正常`. Local maintenance smoke with `--retention --event-retention-days 14 --sentinel-retention-days 14` completed; on the local ignored runtime DB it deleted 18 legacy `sentinel/events` rows and skipped `sentinel_scans` because the local test DB lacks that table.
+- Live impact / deployment: Pending deploy. Maintenance/reporting only; no scanner, order, threshold, or risk behavior changes.
+- Files / release / commit: `部署工具/data_maintenance.py`, `部署工具/portal_dashboard.py`, `部署工具/systemd/crypto-data-maintenance.service`, `PROJECT_STATE.md`, `记忆文档/FUTURE_EXECUTION_PLAN.md`, `记忆文档/MEMORY.md`, `CHANGELOG.md`; Git commit to contain this entry.
+
 ## 2026-05-31 23:56 CST - Add watermark incremental research-store export
 - Trigger / reason: Continue N3. The research store exporter still rewrote every selected date partition on each run, which wastes time and IO as SQLite history grows.
 - Completed: `research_store_export.py` now reads the previous `manifest_latest.json`, records per-table/per-date partition watermarks (`rows`, `max_ts`, `path`, `status`), and skips unchanged partitions when the target file already exists. Added `--force` to rewrite partitions deliberately. Export results now include `skipped_files`, `scanned_rows`, and a `partitions` map, while keeping the prior top-level manifest fields.

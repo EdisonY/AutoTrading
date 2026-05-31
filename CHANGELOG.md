@@ -2,6 +2,14 @@
 
 This is the durable reason-and-outcome ledger for every material design, code, configuration, deployment, rollback, optimization, or live operational change.
 
+## 2026-05-31 19:58 CST - Bound Aliyun hourly sync and daily fallback
+- Trigger / reason: While verifying the N4 rollback-watch deploy, the full chained remote run stalled because the 3-day Tencent→Aliyun shadow sync exceeded the bounded window. A 1-day bounded sync with smaller sentinel/account limits completed quickly and produced fresh data.
+- Completed: `aliyun_analysis_refresh.sh` now uses a 1-day bounded sync for the every-2-hour command-center refresh: 180s timeout, `--sqlite-days 1`, `--sentinel-limit 5000`, `--account-limit 500`, and `--max-age-hours 8`. Its research-store export/query window now matches the 1-day refresh mirror. `aliyun_shadow_review.sh` still tries the deeper 3-day sync first, but now wraps it in a 300s timeout and falls back to the same 1-day bounded sync if the deeper pull fails or times out.
+- Not completed / remaining: This is a reliability fix, not the final cross-cloud data warehouse. The long-window daily experiment path still needs a better incremental/streaming sync so 3/7/14/30-day research windows do not depend on a slow full pull.
+- Verification: Pending deployment and remote refresh verification.
+- Live impact / deployment: Pending. Analysis/report scripts only; no scanner, order, threshold, or risk behavior changes.
+- Files / release / commit: `部署工具/aliyun_analysis_refresh.sh`, `部署工具/aliyun_shadow_review.sh`, `CHANGELOG.md`; Git commit to contain this entry.
+
 ## 2026-05-31 19:21 CST - Add full-live rollback watch to evolution gate
 - Trigger / reason: Continue the next-stage optimization goal. N4 needed approved live changes to remain monitored for degradation instead of disappearing from the decision surface after manual approval.
 - Completed: `strategy_evolution_gate.py` now loads full-live approval records, marks approved candidates with `approved_full_live`, and classifies them as `full_live_monitoring` unless rollback triggers fire. Added rollback states: `rollback_required` → P0 and `rollback_watch` → P1. Triggers include sizing violation, hard-stop risk, large strategy-account loss, fee-adjusted/shadow underperformance versus original, hard-stop increase, and OPEN_FAILED pressure. `decision_attention.py` still suppresses already approved upgrade items, but no longer suppresses approved candidates when they become rollback items; rollback attention items use `rollback:<candidate>` ids and `策略回滚` category. `portal_dashboard.py` labels top rollback findings as `策略回滚观察` instead of upgrade opportunity.

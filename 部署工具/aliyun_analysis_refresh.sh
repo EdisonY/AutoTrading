@@ -7,12 +7,18 @@ export PYTHONIOENCODING=utf-8
 
 PYTHON=/root/miniconda3/bin/python3
 REMOTE_DIR=/opt/crypto-shadow-lab
-SYNC_TIMEOUT=600  # 10 minutes max for sync
+SYNC_TIMEOUT=180  # hourly portal refresh must stay bounded
+REFRESH_DAYS=1
 
 echo "=== [$(date)] Analysis refresh start ==="
 
 echo "--- Step 1: Sync latest data from Tencent (timeout ${SYNC_TIMEOUT}s) ---"
-timeout $SYNC_TIMEOUT $PYTHON shadow_sync_from_tencent.py --days 3 || echo "[WARN] Sync failed or timed out, continuing with local data"
+timeout $SYNC_TIMEOUT $PYTHON shadow_sync_from_tencent.py \
+  --days $REFRESH_DAYS \
+  --sqlite-days $REFRESH_DAYS \
+  --sentinel-limit 5000 \
+  --account-limit 500 \
+  --max-age-hours 8 || echo "[WARN] Sync failed or timed out, continuing with local data"
 
 echo "--- Step 1.5: Strategy Truth Ledger ---"
 $PYTHON strategy_truth_ledger.py --db $REMOTE_DIR/server_logs_tencent/runtime/event_store.sqlite3 --runtime-dir $REMOTE_DIR/runtime --reports-dir $REMOTE_DIR/reports || echo "[WARN] truth ledger failed"
@@ -21,8 +27,8 @@ echo "--- Step 1.6: Sentinel Quality Review ---"
 $PYTHON sentinel_quality_review.py --db $REMOTE_DIR/server_logs_tencent/runtime/event_store.sqlite3 --runtime-dir $REMOTE_DIR/runtime --reports-dir $REMOTE_DIR/reports || echo "[WARN] sentinel review failed"
 
 echo "--- Step 1.7: Research store export/query ---"
-$PYTHON research_store_export.py --db $REMOTE_DIR/server_logs_tencent/runtime/event_store.sqlite3 --out-dir $REMOTE_DIR/research_store --days 3 --format parquet || echo "[WARN] research store export failed"
-$PYTHON research_store_query.py --store $REMOTE_DIR/research_store --runtime-dir $REMOTE_DIR/runtime --reports-dir $REMOTE_DIR/reports --days 3 --format parquet || echo "[WARN] research store query failed"
+$PYTHON research_store_export.py --db $REMOTE_DIR/server_logs_tencent/runtime/event_store.sqlite3 --out-dir $REMOTE_DIR/research_store --days $REFRESH_DAYS --format parquet || echo "[WARN] research store export failed"
+$PYTHON research_store_query.py --store $REMOTE_DIR/research_store --runtime-dir $REMOTE_DIR/runtime --reports-dir $REMOTE_DIR/reports --days $REFRESH_DAYS --format parquet || echo "[WARN] research store query failed"
 
 echo "--- Step 2: Counterfactual evaluation ---"
 $PYTHON counterfactual_open_skips.py --root $REMOTE_DIR --db $REMOTE_DIR/server_logs_tencent/runtime/event_store.sqlite3 || echo "[WARN] counterfactual failed"

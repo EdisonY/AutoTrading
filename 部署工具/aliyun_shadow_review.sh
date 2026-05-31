@@ -9,7 +9,15 @@ REMOTE_DIR=/opt/crypto-shadow-lab
 echo "=== [$(date)] Shadow review start ==="
 
 echo "--- Step 1: Sync data from Tencent ---"
-$PYTHON shadow_sync_from_tencent.py --days 3
+if ! timeout 300s $PYTHON shadow_sync_from_tencent.py --days 3 --max-age-hours 8; then
+  echo "--- Step 1 fallback: bounded 1-day sync after 3-day sync timeout/failure ---"
+  timeout 180s $PYTHON shadow_sync_from_tencent.py \
+    --days 1 \
+    --sqlite-days 1 \
+    --sentinel-limit 5000 \
+    --account-limit 500 \
+    --max-age-hours 8
+fi
 
 echo "--- Step 1.5: Strategy Truth Ledger ---"
 $PYTHON strategy_truth_ledger.py --db $REMOTE_DIR/server_logs_tencent/runtime/event_store.sqlite3 --runtime-dir $REMOTE_DIR/runtime --reports-dir $REMOTE_DIR/reports || true

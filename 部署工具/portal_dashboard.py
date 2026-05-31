@@ -718,6 +718,7 @@ def realtime_account_summary() -> dict[str, Any]:
         "sizing_violations": [],
         "note": "尚未写入实时账户快照。",
     }
+    snapshot_candidate: dict[str, Any] | None = None
     snapshot = read_json(ACCOUNT_SNAPSHOT_PATH)
     if isinstance(snapshot, dict) and isinstance(snapshot.get("accounts"), list):
         summary = snapshot.get("summary") if isinstance(snapshot.get("summary"), dict) else {}
@@ -763,7 +764,7 @@ def realtime_account_summary() -> dict[str, Any]:
         positions = int(summary.get("open_positions") or sum(a["open_positions"] for a in accounts))
         risks = sum(a["risk_count"] for a in accounts)
         sizing_count = sum(a["sizing_violation_count"] for a in accounts)
-        return {
+        snapshot_candidate = {
             "available": True,
             "fresh": fresh,
             "ts": latest_ts,
@@ -779,7 +780,12 @@ def realtime_account_summary() -> dict[str, Any]:
             "sizing_violations": sizing_violations,
             "note": f"实时 JSON 快照覆盖 {len(accounts)} 个账号，当前持仓 {positions}，浮盈亏 {upnl:+.2f} USDT。",
         }
+        if fresh:
+            return snapshot_candidate
     if not EVENT_STORE_DB.exists():
+        if snapshot_candidate:
+            snapshot_candidate["note"] = f"{snapshot_candidate.get('note', '')} JSON 快照已过期，且无 SQLite 账户快照可回退。"
+            return snapshot_candidate
         return empty
     try:
         conn = sqlite3.connect(EVENT_STORE_DB)
@@ -806,6 +812,9 @@ def realtime_account_summary() -> dict[str, Any]:
         except Exception:
             pass
     if not rows:
+        if snapshot_candidate:
+            snapshot_candidate["note"] = f"{snapshot_candidate.get('note', '')} JSON 快照已过期，SQLite 账户快照为空。"
+            return snapshot_candidate
         return empty
     accounts = []
     latest_ts = None

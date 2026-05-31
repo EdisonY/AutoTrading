@@ -89,9 +89,12 @@ def sync_files(
     remote_dir: str,
     filenames: list[str],
     label: str,
+    max_bytes: int,
+    file_timeout: int,
 ) -> int:
     """Upload files from local_dir to remote_dir. Returns count of files uploaded."""
     sftp = client.open_sftp()
+    sftp.get_channel().settimeout(file_timeout)
     uploaded = 0
     try:
         # Ensure remote directory exists
@@ -106,10 +109,14 @@ def sync_files(
             if not local_path.exists():
                 print(f"  [SKIP] {label}/{name} - not found locally")
                 continue
+            size = local_path.stat().st_size
+            if size > max_bytes:
+                print(f"  [SKIP] {label}/{name} - {size} bytes exceeds max {max_bytes}")
+                continue
             remote_path = f"{remote_dir}/{name}"
             try:
                 sftp.put(str(local_path), remote_path)
-                print(f"  [OK]   {label}/{name} -> {remote_path}")
+                print(f"  [OK]   {label}/{name} ({size} bytes) -> {remote_path}")
                 uploaded += 1
             except Exception as exc:
                 print(f"  [ERR]  {label}/{name} - {exc}")
@@ -123,7 +130,10 @@ def main(argv: list[str] | None = None) -> int:
 
     parser = argparse.ArgumentParser(description="Sync Aliyun reports to Tencent")
     parser.add_argument("--dry-run", action="store_true", help="Show what would be synced without uploading")
+    parser.add_argument("--max-file-mb", type=float, default=8.0, help="Skip individual files larger than this")
+    parser.add_argument("--file-timeout", type=int, default=30, help="Per-file SFTP timeout in seconds")
     args = parser.parse_args(argv)
+    max_bytes = int(args.max_file_mb * 1024 * 1024)
 
     print(f"Aliyun reports dir: {ALIYUN_REPORTS}")
     print(f"Tencent target: {TENCENT_HOST}:{TENCENT_REPORTS}")
@@ -149,13 +159,13 @@ def main(argv: list[str] | None = None) -> int:
     try:
         total = 0
         print("--- Syncing runtime ---")
-        total += sync_files(client, ALIYUN_RUNTIME, TENCENT_RUNTIME, RUNTIME_FILES, "runtime")
+        total += sync_files(client, ALIYUN_RUNTIME, TENCENT_RUNTIME, RUNTIME_FILES, "runtime", max_bytes, args.file_timeout)
         print()
         print("--- Syncing research attention ---")
-        total += sync_files(client, ALIYUN_RESEARCH, TENCENT_RESEARCH, RESEARCH_FILES, "research")
+        total += sync_files(client, ALIYUN_RESEARCH, TENCENT_RESEARCH, RESEARCH_FILES, "research", max_bytes, args.file_timeout)
         print()
         print("--- Syncing reports ---")
-        total += sync_files(client, ALIYUN_REPORTS, TENCENT_REPORTS, REPORT_FILES, "reports")
+        total += sync_files(client, ALIYUN_REPORTS, TENCENT_REPORTS, REPORT_FILES, "reports", max_bytes, args.file_timeout)
         print()
         print(f"Total: {total} files uploaded to Tencent")
         return 0

@@ -53,7 +53,8 @@
 - [x] 修复 Tencent→Aliyun 常规数据同步：`shadow_sync_from_tencent.py` 默认生成 3 日 bounded SQLite mirror，限制 `sentinel_scans`/`account_snapshots` 行数，并在分析前验证 quick_check、表行数和新鲜度。
 - [x] 修复 Aliyun→Tencent 关键报告反向同步：`sync_aliyun_reports_to_tencent.py` 默认按关键性排序上传 index/counterfactual/research-store/runtime，使用 bounded OpenSSH/base64 单文件上传、短超时、重试、错误上限；市场日报等 bulky detail 需 `--include-optional`。
 - [ ] 数据维护 timer 只保留近期 SQLite 明细，长期研究读 Parquet。
-- [ ] 后续补 `klines/features` 研究数据集和 watermark 增量导出，避免重复扫描大表。
+- [x] 补 watermark 增量导出：`research_store_export.py` 现在把每个 table/date 分区的 `rows/max_ts/path/status` 写入 manifest，下一次导出会跳过未变化分区；`--force` 可强制重写。
+- [ ] 后续补 `klines/features` 研究数据集，避免只依赖事件流做策略研究。
 
 验收：
 - 30 天策略漏斗查询在秒级完成。

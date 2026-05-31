@@ -2,6 +2,14 @@
 
 This is the durable reason-and-outcome ledger for every material design, code, configuration, deployment, rollback, optimization, or live operational change.
 
+## 2026-05-31 23:56 CST - Add watermark incremental research-store export
+- Trigger / reason: Continue N3. The research store exporter still rewrote every selected date partition on each run, which wastes time and IO as SQLite history grows.
+- Completed: `research_store_export.py` now reads the previous `manifest_latest.json`, records per-table/per-date partition watermarks (`rows`, `max_ts`, `path`, `status`), and skips unchanged partitions when the target file already exists. Added `--force` to rewrite partitions deliberately. Export results now include `skipped_files`, `scanned_rows`, and a `partitions` map, while keeping the prior top-level manifest fields.
+- Not completed / remaining: Kline/features datasets are still not exported into the research warehouse; longer-window research still depends on event/sentinel/account tables plus existing experiment inputs.
+- Verification: Pending deployment. Local `py_compile` passed. Local JSONL smoke against `runtime/event_store.sqlite3` with `--days 10 --tables events account_snapshots` wrote two partitions on the first run and then skipped both unchanged partitions on the second run (`events skipped_files=1`, `account_snapshots skipped_files=1`).
+- Live impact / deployment: Pending. Offline research export only; no scanner, order, threshold, or risk behavior changes.
+- Files / release / commit: `部署工具/research_store_export.py`, `记忆文档/FUTURE_EXECUTION_PLAN.md`, `记忆文档/MEMORY.md`, `CHANGELOG.md`; Git commit to contain this entry.
+
 ## 2026-05-31 23:46 CST - Add post-approval window quality thresholds
 - Trigger / reason: Continue N4. Approved live candidates had post-approval windows and regime labels, but the gate still needed explicit window-quality thresholds for fee-adjusted loss, forced-close rate, and open-failure rate.
 - Completed: `strategy_evolution_gate.py` now adds `quality` to each post-approval 24h/72h/168h window. It estimates fee/slippage using 0.15% on 400 USDT notional per closed trade, computes `realized_pnl_after_cost`, forced-close rate, open-failure rate, and closed sample count. Mature windows become `bad` if fee-adjusted PnL is below threshold, forced-close rate is too high, or open-failure rate is too high. `rollback_watch_verdict()` now upgrades approved full-live candidates to `rollback_watch/P1` when any post-approval window quality is bad; close-confirm failure remains `rollback_required/P0`. `portal_dashboard.py` now exposes approved-candidate 24h `quality_counts` in the executive brief and findings.

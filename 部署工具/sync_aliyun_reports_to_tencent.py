@@ -49,6 +49,9 @@ REPORT_FILES = [
     "sentinel_quality_latest.json",
     "sentinel_quality_latest.md",
     "alerts_latest.md",
+]
+
+OPTIONAL_REPORT_FILES = [
     "market_review_latest.md",
     "market_review_latest.html",
 ]
@@ -182,9 +185,10 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Sync Aliyun reports to Tencent")
     parser.add_argument("--dry-run", action="store_true", help="Show what would be synced without uploading")
     parser.add_argument("--max-file-mb", type=float, default=8.0, help="Skip individual files larger than this")
-    parser.add_argument("--file-timeout", type=int, default=30, help="Per-file upload timeout in seconds")
+    parser.add_argument("--file-timeout", type=int, default=12, help="Per-file upload timeout in seconds")
     parser.add_argument("--method", choices=["ssh", "stream", "sftp"], default="ssh", help="Upload method; ssh uses one OpenSSH/base64 upload per file")
-    parser.add_argument("--max-errors", type=int, default=4, help="Stop a section after this many upload errors")
+    parser.add_argument("--max-errors", type=int, default=2, help="Stop a section after this many upload errors")
+    parser.add_argument("--include-optional", action="store_true", help="Also sync bulky/detail reports such as market review")
     args = parser.parse_args(argv)
     max_bytes = int(args.max_file_mb * 1024 * 1024)
 
@@ -198,6 +202,11 @@ def main(argv: list[str] | None = None) -> int:
             local = ALIYUN_REPORTS / name
             status = "EXISTS" if local.exists() else "MISSING"
             print(f"  [{status}] reports/{name}")
+        if args.include_optional:
+            for name in OPTIONAL_REPORT_FILES:
+                local = ALIYUN_REPORTS / name
+                status = "EXISTS" if local.exists() else "MISSING"
+                print(f"  [{status}] reports/{name}")
         for name in RUNTIME_FILES:
             local = ALIYUN_RUNTIME / name
             status = "EXISTS" if local.exists() else "MISSING"
@@ -215,7 +224,8 @@ def main(argv: list[str] | None = None) -> int:
         total += sync_files(client, ALIYUN_RUNTIME, TENCENT_RUNTIME, RUNTIME_FILES, "runtime", max_bytes, args.file_timeout, args.method, args.max_errors)
         print()
         print("--- Syncing reports ---")
-        total += sync_files(client, ALIYUN_REPORTS, TENCENT_REPORTS, REPORT_FILES, "reports", max_bytes, args.file_timeout, args.method, args.max_errors)
+        report_files = REPORT_FILES + (OPTIONAL_REPORT_FILES if args.include_optional else [])
+        total += sync_files(client, ALIYUN_REPORTS, TENCENT_REPORTS, report_files, "reports", max_bytes, args.file_timeout, args.method, args.max_errors)
         print()
         print("--- Syncing research attention ---")
         total += sync_files(client, ALIYUN_RESEARCH, TENCENT_RESEARCH, RESEARCH_FILES, "research", max_bytes, args.file_timeout, args.method, args.max_errors)

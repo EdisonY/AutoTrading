@@ -17,9 +17,13 @@ $PYTHON strategy_truth_ledger.py --db $REMOTE_DIR/server_logs_tencent/runtime/ev
 echo "--- Step 1.6: Sentinel Quality Review ---"
 $PYTHON sentinel_quality_review.py --db $REMOTE_DIR/server_logs_tencent/runtime/event_store.sqlite3 --runtime-dir $REMOTE_DIR/runtime --reports-dir $REMOTE_DIR/reports || true
 
-echo "--- Step 1.7: Daily market review report ---"
+echo "--- Step 1.7: Research store export/query ---"
+$PYTHON research_store_export.py --db $REMOTE_DIR/server_logs_tencent/runtime/event_store.sqlite3 --out-dir $REMOTE_DIR/research_store --days 3 --format parquet || true
+$PYTHON research_store_query.py --store $REMOTE_DIR/research_store --runtime-dir $REMOTE_DIR/runtime --reports-dir $REMOTE_DIR/reports --days 3 --format parquet || true
+
+echo "--- Step 1.8: Daily market review report ---"
 if ! timeout 900s $PYTHON daily_market_review.py --data-root $REMOTE_DIR/server_logs_tencent --top 15; then
-  echo "--- Step 1.7 fallback: generate daily market review on Tencent and pull reports ---"
+  echo "--- Step 1.8 fallback: generate daily market review on Tencent and pull reports ---"
   TENCENT_HOST=${TENCENT_HOST:-129.226.151.144}
   TENCENT_USER=${TENCENT_USER:-ubuntu}
   timeout 930s ssh -o BatchMode=yes -o ConnectTimeout=12 -o ServerAliveInterval=5 -o ServerAliveCountMax=2 \
@@ -61,6 +65,6 @@ echo "--- Step 10: Portal dashboard ---"
 $PYTHON portal_dashboard.py --out-dir $REMOTE_DIR/reports
 
 echo "--- Step 11: Reverse sync reports to Tencent ---"
-$PYTHON sync_aliyun_reports_to_tencent.py || true
+timeout 180s $PYTHON sync_aliyun_reports_to_tencent.py || true
 
 echo "=== [$(date)] Shadow review complete ==="

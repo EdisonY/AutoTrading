@@ -45,15 +45,17 @@ REPORT_FILES = [
     "counterfactual_open_skips_latest.json",
     "counterfactual_open_skips_latest.md",
     "counterfactual_open_skips_latest.html",
+    "research_store_summary_latest.md",
+    "alerts_latest.md",
     "market_review_latest.md",
     "market_review_latest.html",
-    "alerts_latest.md",
 ]
 
 RUNTIME_FILES = [
     "strategy_evolution_latest.json",
     "strategy_truth_latest.json",
     "sentinel_quality_latest.json",
+    "research_store_summary_latest.json",
 ]
 
 RESEARCH_FILES = [
@@ -146,14 +148,14 @@ def main(argv: list[str] | None = None) -> int:
     client = ssh_client()
     try:
         total = 0
-        print("--- Syncing reports ---")
-        total += sync_files(client, ALIYUN_REPORTS, TENCENT_REPORTS, REPORT_FILES, "reports")
-        print()
         print("--- Syncing runtime ---")
         total += sync_files(client, ALIYUN_RUNTIME, TENCENT_RUNTIME, RUNTIME_FILES, "runtime")
         print()
         print("--- Syncing research attention ---")
         total += sync_files(client, ALIYUN_RESEARCH, TENCENT_RESEARCH, RESEARCH_FILES, "research")
+        print()
+        print("--- Syncing reports ---")
+        total += sync_files(client, ALIYUN_REPORTS, TENCENT_REPORTS, REPORT_FILES, "reports")
         print()
         print(f"Total: {total} files uploaded to Tencent")
         return 0

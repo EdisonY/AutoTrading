@@ -124,6 +124,7 @@ def sync_files(
     file_timeout: int,
     method: str,
     max_errors: int,
+    retries: int,
 ) -> int:
     """Upload files from local_dir to remote_dir. Returns count of files uploaded."""
     sftp = client.open_sftp() if client and method == "sftp" else None
@@ -148,23 +149,30 @@ def sync_files(
                 continue
             remote_path = f"{remote_dir}/{name}"
             try:
-                if method == "sftp":
-                    assert sftp is not None
-                    sftp.put(str(local_path), remote_path)
-                elif method == "ssh":
-                    upload_with_system_ssh(local_path, remote_path, file_timeout)
-                else:
-                    assert client is not None
-                    data = base64.b64encode(local_path.read_bytes())
-                    cmd = f"base64 -d > {shell_quote(remote_path)}"
-                    stdin, stdout, stderr = client.exec_command(cmd, timeout=file_timeout)
-                    stdin.write(data.decode("ascii"))
-                    stdin.channel.shutdown_write()
-                    stdin.close()
-                    rc = stdout.channel.recv_exit_status()
-                    if rc != 0:
-                        err = stderr.read().decode("utf-8", errors="replace")
-                        raise RuntimeError(err or f"remote base64 upload failed rc={rc}")
+                for attempt in range(1, retries + 2):
+                    try:
+                        if method == "sftp":
+                            assert sftp is not None
+                            sftp.put(str(local_path), remote_path)
+                        elif method == "ssh":
+                            upload_with_system_ssh(local_path, remote_path, file_timeout)
+                        else:
+                            assert client is not None
+                            data = base64.b64encode(local_path.read_bytes())
+                            cmd = f"base64 -d > {shell_quote(remote_path)}"
+                            stdin, stdout, stderr = client.exec_command(cmd, timeout=file_timeout)
+                            stdin.write(data.decode("ascii"))
+                            stdin.channel.shutdown_write()
+                            stdin.close()
+                            rc = stdout.channel.recv_exit_status()
+                            if rc != 0:
+                                err = stderr.read().decode("utf-8", errors="replace")
+                                raise RuntimeError(err or f"remote base64 upload failed rc={rc}")
+                        break
+                    except Exception:
+                        if attempt > retries:
+                            raise
+                        print(f"  [RETRY] {label}/{name} attempt {attempt + 1}")
                 print(f"  [OK]   {label}/{name} ({size} bytes) -> {remote_path}")
                 uploaded += 1
             except Exception as exc:
@@ -189,6 +197,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--method", choices=["ssh", "stream", "sftp"], default="ssh", help="Upload method; ssh uses one OpenSSH/base64 upload per file")
     parser.add_argument("--max-errors", type=int, default=2, help="Stop a section after this many upload errors")
     parser.add_argument("--include-optional", action="store_true", help="Also sync bulky/detail reports such as market review")
+    parser.add_argument("--retries", type=int, default=1, help="Retry each file this many times after a timeout/error")
     args = parser.parse_args(argv)
     max_bytes = int(args.max_file_mb * 1024 * 1024)
 
@@ -221,14 +230,14 @@ def main(argv: list[str] | None = None) -> int:
     try:
         total = 0
         print("--- Syncing runtime ---")
-        total += sync_files(client, ALIYUN_RUNTIME, TENCENT_RUNTIME, RUNTIME_FILES, "runtime", max_bytes, args.file_timeout, args.method, args.max_errors)
+        total += sync_files(client, ALIYUN_RUNTIME, TENCENT_RUNTIME, RUNTIME_FILES, "runtime", max_bytes, args.file_timeout, args.method, args.max_errors, args.retries)
         print()
         print("--- Syncing reports ---")
         report_files = REPORT_FILES + (OPTIONAL_REPORT_FILES if args.include_optional else [])
-        total += sync_files(client, ALIYUN_REPORTS, TENCENT_REPORTS, report_files, "reports", max_bytes, args.file_timeout, args.method, args.max_errors)
+        total += sync_files(client, ALIYUN_REPORTS, TENCENT_REPORTS, report_files, "reports", max_bytes, args.file_timeout, args.method, args.max_errors, args.retries)
         print()
         print("--- Syncing research attention ---")
-        total += sync_files(client, ALIYUN_RESEARCH, TENCENT_RESEARCH, RESEARCH_FILES, "research", max_bytes, args.file_timeout, args.method, args.max_errors)
+        total += sync_files(client, ALIYUN_RESEARCH, TENCENT_RESEARCH, RESEARCH_FILES, "research", max_bytes, args.file_timeout, args.method, args.max_errors, args.retries)
         print()
         print(f"Total: {total} files uploaded to Tencent")
         return 0

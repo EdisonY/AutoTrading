@@ -43,6 +43,7 @@ reports/
 experiments/results/
 research_memory/cases/
 research_memory/snapshots/
+research_store/
 
 # OS/editor noise
 .DS_Store

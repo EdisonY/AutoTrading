@@ -5,6 +5,7 @@
 - 已确立下一阶段目标：从“调阈值系统”升级为“策略进化系统”。优先级为：N1 决策者入口页重构，N2 统一 replay/live 同路径，N3 Parquet/DuckDB 研究仓，N4 灰度/回滚化进化门禁，N5 NautilusTrader/Qlib/Freqtrade/vectorbt 小型 PoC。
 - 入场门槛决策：不继续全局盲目放宽。A/v11 稳态监控，不再放宽；B/v16 已全量开放两个已验证候选，先观察；C/v14 已进入受控扩样窗口，先看样本和 PF，不立刻二次放宽。后续如果要更多样本，必须绑定观察窗口、样本门槛和自动回滚条件。
 - report 设计原则：第一屏必须先给结论和下一步动作；详情表、日报、反事实、哨兵、研究审阅台只作为下钻。入口页应把三策略分别标成“稳态监控/观察全量候选/受控扩样/暂停扩展/需要回滚”等可决策状态。
+- N3 也已起步：新增 `部署工具/research_store_export.py`，可把 SQLite `events`、`sentinel_scans`、`account_snapshots` 按日导出到 Git 忽略的 `research_store/`，支持 Parquet/JSONL，并写 `manifest_latest.json`。这只是离线研究仓基础，不影响实盘。
 
 ## 2026-05-31 B/v16 全量放开与 C/v14 扩样
 - 用户明确要求“放开”，核心原因是当前样本量太少，无法有效优化策略；同时要求解决 C/v14 开仓少，并保证 A/v11 无异常。

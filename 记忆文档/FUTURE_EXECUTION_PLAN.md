@@ -45,10 +45,11 @@
 **目标**：SQLite 保留在线当前态和关注项，研究查询迁移到按日 Parquet + DuckDB，提升长期回测和复盘速度。
 
 关键技术节点：
-- [ ] 新增 `research_store/` ignored 数据目录，按日导出 `events`、`sentinel_scans`、`account_snapshots`、`klines/features`。
-- [ ] 新增导出脚本：SQLite 增量导出 Parquet，记录 watermark，避免重复导出。
+- [x] 新增 `research_store/` ignored 数据目录，先按日导出 `events`、`sentinel_scans`、`account_snapshots`。
+- [x] 新增导出脚本：`部署工具/research_store_export.py` 可从 SQLite 只读导出 partitioned Parquet/JSONL，并写 manifest。
 - [ ] 新增 DuckDB 查询脚本：策略漏斗、OPEN_SKIPPED 反事实、哨兵贡献、策略 PnL 分层。
 - [ ] 数据维护 timer 只保留近期 SQLite 明细，长期研究读 Parquet。
+- [ ] 后续补 `klines/features` 研究数据集和 watermark 增量导出，避免重复扫描大表。
 
 验收：
 - 30 天策略漏斗查询在秒级完成。

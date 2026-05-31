@@ -50,6 +50,7 @@
 - [x] 新增导出脚本：`部署工具/research_store_export.py` 可从 SQLite 只读导出 partitioned Parquet/JSONL，并写 manifest。
 - [x] 新增 DuckDB 查询脚本起点：`部署工具/research_store_query.py` 可从 exported research_store 生成策略漏斗、OPEN_SKIPPED gate、哨兵贡献和最新账户概览。
 - [x] `portal_dashboard.py` 已读取 `runtime/research_store_summary_latest.json`，在入口页功能状态、详情入口和样本漏斗区展示研究仓摘要。
+- [ ] 修复 Tencent→Aliyun 常规数据同步：`shadow_sync_from_tencent.py` 全量路径在大 DB/弱链路下仍可能超时，需改成 SQLite slim backup、按表/时间窗口增量或稳定流式传输，并让 timer 自动验证镜像新鲜度。
 - [ ] 数据维护 timer 只保留近期 SQLite 明细，长期研究读 Parquet。
 - [ ] 后续补 `klines/features` 研究数据集和 watermark 增量导出，避免重复扫描大表。
 

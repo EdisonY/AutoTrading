@@ -733,6 +733,7 @@ def alert_summary() -> dict[str, Any]:
         "alert_count": int(payload.get("alert_count") or 0),
         "age": age_text(ts),
         "alerts": payload.get("alerts") or [],
+        "services": payload.get("services") or {},
         "disk": payload.get("disk") or {},
         "timers": payload.get("timers") or {},
     }
@@ -1384,6 +1385,106 @@ def build_findings(data: dict[str, Any]) -> list[dict[str, str]]:
     return findings
 
 
+def build_executive_summary(data: dict[str, Any]) -> dict[str, Any]:
+    """Build the first-screen decision brief for a human decision maker."""
+    realtime_account = data.get("realtime_account") or {}
+    alerts = data.get("alerts") or {}
+    attention = data.get("attention") or {}
+    attention_counts = ((attention.get("summary") or {}).get("counts") or {})
+    evolution = data.get("strategy_evolution") or {}
+    evolution_counts = evolution.get("counts") or {}
+    truth = data.get("strategy_truth") or {}
+    truth_stats = truth.get("strategy_stats") or {}
+    decision_rows = data.get("decision_summary") or []
+
+    p0 = int(attention_counts.get("P0") or 0)
+    p1 = int(attention_counts.get("P1") or 0)
+    alert_count = int(alerts.get("alert_count") or 0)
+    risk_count = int(realtime_account.get("risk_count") or 0)
+    sizing_count = int(realtime_account.get("sizing_violation_count") or 0)
+    account_upnl = float(realtime_account.get("unrealized_pnl_usdt") or 0)
+    positions = int(realtime_account.get("open_positions") or 0)
+    service_states = alerts.get("services") if isinstance(alerts.get("services"), dict) else {}
+    services_ok = bool(service_states) and all(str(v) == "active" for v in service_states.values())
+    if not service_states:
+        services_ok = all(s.get("ok") for s in data.get("strategies", []))
+
+    if p0 or alert_count or risk_count or sizing_count:
+        level = "bad"
+        headline = "需要先处理风险，再讨论策略扩张"
+    elif p1:
+        level = "warn"
+        headline = "系统可运行，但有高优先级策略/关注项待决策"
+    else:
+        level = "ok"
+        headline = "系统可继续运行，重点进入受控扩样和策略进化"
+
+    def strategy_line(name: str) -> dict[str, str]:
+        row = next((r for r in decision_rows if r.get("name") == name), {}) or {}
+        stats = (truth_stats.get(name) or {}) if isinstance(truth_stats, dict) else {}
+        closed = int(stats.get("closed_trades") or row.get("closed") or 0)
+        pf = stats.get("profit_factor", "-")
+        pnl = float(stats.get("net_pnl_usd") or row.get("pnl") or 0)
+        opens = int(row.get("opens") or 0)
+        last_open = row.get("last_open") or "无"
+        if name == "A/v11":
+            decision = "稳态监控"
+            reason = "不继续放宽，守住100 USDT尺寸、同币禁叠和替换保护。"
+        elif name == "B/v16":
+            decision = "观察全量候选"
+            reason = "已放开ATR分档止损和85过热封顶，重点看新样本PnL与硬止损率。"
+        else:
+            decision = "受控扩样"
+            reason = "已放宽确认与赛道/周期上限，先看转化率和PF，不再立刻二次放宽。"
+        return {
+            "name": name,
+            "decision": decision,
+            "pnl": f"{pnl:+.2f}",
+            "pf": str(pf),
+            "closed": str(closed),
+            "opens": str(opens),
+            "last_open": str(last_open),
+            "reason": reason,
+        }
+
+    strategy_decisions = [strategy_line(name) for name in ("A/v11", "B/v16", "C/v14")]
+    evo_p0 = int(evolution_counts.get("P0") or 0)
+    evo_p1 = int(evolution_counts.get("P1") or 0)
+    actionable_evo = p0 + p1
+    evo_top = evolution.get("top") or {}
+    if actionable_evo:
+        evo_text = (
+            f"首页待决策 P0/P1 {actionable_evo}；原始门禁 P0 {evo_p0} / P1 {evo_p1}"
+            + (f"，最高项 {evo_top.get('strategy') or '-'} {evo_top.get('candidate_id') or '-'}" if evo_top else "")
+        )
+    else:
+        evo_text = f"暂无需要立即批准的进化项；原始门禁 P0 {evo_p0} / P1 {evo_p1} 仅作下钻审计"
+
+    bullets = [
+        f"账户：实时浮盈亏 {account_upnl:+.2f} USDT，持仓 {positions}，硬顶风险 {risk_count}，尺寸违规 {sizing_count}。",
+        f"运行：核心服务 {'正常' if services_ok else '需检查'}，自动告警 {alert_count}，持久关注 P0 {p0} / P1 {p1}。",
+        f"进化：{evo_text}；只有门禁通过且用户批准的候选才允许进入实盘。",
+        "扩样决策：不再全局盲目放宽。A/v11保持稳定，B/v16观察已批准全量候选，C/v14维持当前受控扩样窗口。",
+    ]
+
+    next_actions: list[str] = []
+    if level == "bad":
+        next_actions.append("先处理P0/告警/尺寸/强平闭环，不新增策略风险。")
+    if positions < 8 and not (alert_count or risk_count or sizing_count):
+        next_actions.append("允许B/v16与C/v14按当前规则继续收集样本，不额外加仓位尺寸。")
+    if actionable_evo:
+        next_actions.append("查看策略进化门禁最高项，确认是否进入灰度或回滚。")
+    next_actions.append("下一阶段优先建设统一replay和Parquet/DuckDB研究仓，而不是继续手调阈值。")
+
+    return {
+        "level": level,
+        "headline": headline,
+        "bullets": bullets,
+        "next_actions": next_actions[:4],
+        "strategy_decisions": strategy_decisions,
+    }
+
+
 def build_data() -> dict[str, Any]:
     market_review = newest(REPORTS_DIR / "market_review_latest.html", REVIEW_DIR / "market_review_latest.html")
     market_review_md = latest_file(REPORTS_DIR, "market_review_*.md")
@@ -1449,6 +1550,7 @@ def build_data() -> dict[str, Any]:
     data["strategy_truth_html"] = STRATEGY_TRUTH_MD
     data["function_status"] = function_status_cards(data)
     data["findings"] = build_findings(data)
+    data["executive_summary"] = build_executive_summary(data)
     return data
 
 
@@ -1490,6 +1592,7 @@ def render_html(out_dir: Path) -> str:
     attention_summary_data = attention.get("summary") or {}
     attention_counts = attention_summary_data.get("counts") or {}
     issues_count = sum(1 for f in data.get("findings", []) if f.get("level") in {"bad", "warn"})
+    executive = data.get("executive_summary") or {}
     metrics = [
         ("昨日复盘PnL", f"{data['signal_summary']['total_pnl']:+.2f}", "最新完整复盘周期"),
         (
@@ -1509,6 +1612,22 @@ def render_html(out_dir: Path) -> str:
     metric_html = "".join(
         f"<article><span>{h(k)}</span><b>{h(v)}</b><em>{h(desc)}</em></article>" for k, v, desc in metrics
     )
+    executive_bullets = "".join(f"<li>{h(item)}</li>" for item in executive.get("bullets", []))
+    executive_actions = "".join(f"<li>{h(item)}</li>" for item in executive.get("next_actions", []))
+    executive_strategy_rows = "".join(
+        f"""
+<tr>
+  <td>{h(r.get('name'))}</td>
+  <td><b>{h(r.get('decision'))}</b></td>
+  <td class="num {'pos' if str(r.get('pnl', '')).startswith('+') else 'neg'}">{h(r.get('pnl'))}</td>
+  <td>{h(r.get('pf'))}</td>
+  <td>{h(r.get('opens'))}</td>
+  <td>{h(r.get('last_open'))}</td>
+  <td>{h(r.get('reason'))}</td>
+</tr>
+""".strip()
+        for r in executive.get("strategy_decisions", [])
+    ) or '<tr><td colspan="7">暂无策略决策摘要</td></tr>'
 
     decision_rows = "".join(
         f"""
@@ -1723,7 +1842,7 @@ def render_html(out_dir: Path) -> str:
   <span>{h(item['body'])}</span>
 </article>
 """.strip()
-        for item in data.get("findings", [])
+        for item in data.get("findings", [])[:6]
     )
 
     routes = [
@@ -1825,6 +1944,14 @@ h1 {{ margin:0; font-size:30px; letter-spacing:0; }}
 .metrics article {{ padding:14px; min-height:92px; }}
 .metrics span,.metrics em {{ display:block; color:var(--muted); font-size:12px; font-style:normal; }}
 .metrics b {{ display:block; margin:8px 0; font-size:24px; color:#0f172a; }}
+.decision-brief {{ background:var(--panel); border:1px solid var(--line); border-left:6px solid var(--green); border-radius:8px; padding:18px; margin:18px 0; }}
+.decision-brief.warn {{ border-left-color:var(--amber); }}
+.decision-brief.bad {{ border-left-color:var(--red); }}
+.decision-grid {{ display:grid; grid-template-columns:1fr .86fr; gap:16px; }}
+.decision-brief h2 {{ margin:0 0 8px; font-size:21px; }}
+.decision-brief h3 {{ margin:14px 0 8px; font-size:14px; color:#334155; }}
+.decision-brief ul,.decision-brief ol {{ margin:8px 0 0; padding-left:20px; color:#344054; line-height:1.65; }}
+.decision-brief table {{ margin-top:14px; min-width:760px; }}
 .section {{ margin-top:22px; }}
 .section-head {{ display:flex; justify-content:space-between; align-items:end; gap:12px; margin-bottom:10px; }}
 .section h2 {{ margin:0; font-size:18px; }}
@@ -1865,7 +1992,7 @@ th {{ background:#f1f5f9; color:#334155; }}
 .pill {{ display:inline-flex; border-radius:999px; padding:4px 8px; font-size:12px; font-weight:800; }}
 .pill.ok {{ color:#166534; background:var(--soft-green); }}
 .pill.warn {{ color:#92400e; background:var(--soft-amber); }}
-@media (max-width:1180px) {{ .routes {{ grid-template-columns:repeat(2,1fr); }} .metrics,.findings,.status-grid {{ grid-template-columns:repeat(2,1fr); }} .summary {{ grid-template-columns:1fr; }} }}
+@media (max-width:1180px) {{ .routes {{ grid-template-columns:repeat(2,1fr); }} .metrics,.findings,.status-grid {{ grid-template-columns:repeat(2,1fr); }} .summary,.decision-grid {{ grid-template-columns:1fr; }} }}
 @media (max-width:700px) {{ .shell {{ padding:14px; }} .hero,.routes,.metrics,.findings,.status-grid {{ grid-template-columns:1fr; }} .time {{ margin-top:8px; }} }}
 .ack-btn {{ padding:4px 10px; border:none; border-radius:4px; background:#6366f1; color:#fff; font-size:12px; cursor:pointer; }}
 .ack-btn:hover {{ background:#4f46e5; }}
@@ -1883,6 +2010,23 @@ th {{ background:#f1f5f9; color:#334155; }}
   </section>
 
   <section class="metrics">{metric_html}</section>
+
+  <section class="decision-brief {h(executive.get('level', 'warn'))}">
+    <div class="decision-grid">
+      <div>
+        <h2>{h(executive.get('headline', '等待决策摘要'))}</h2>
+        <ul>{executive_bullets}</ul>
+      </div>
+      <div>
+        <h3>下一步</h3>
+        <ol>{executive_actions}</ol>
+      </div>
+    </div>
+    <table>
+      <thead><tr><th>策略</th><th>当前决策</th><th>主动PnL</th><th>PF</th><th>开仓</th><th>最近开仓</th><th>判断</th></tr></thead>
+      <tbody>{executive_strategy_rows}</tbody>
+    </table>
+  </section>
 
   <section class="section">
     <div class="section-head"><h2>当前总结</h2><small>昨天 00:00 到当前镜像 + 最新完整复盘。</small></div>

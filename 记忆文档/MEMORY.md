@@ -10,6 +10,7 @@
 - N2/N3 又推进一步：`counterfactual_open_skips.py` 已开始通过 `core.replay` 归一 OPEN_SKIPPED 并把 `replay_gate` 写入反事实 JSON/DB payload；同时它已修正为读取去重后的 `*/events` 权威来源，不再只看旧 `*/decisions` 镜像。`portal_dashboard.py` 已把研究仓摘要接入入口页，用于快速看样本漏斗、主要否决层和 DuckDB/Parquet 是否新鲜。剩余重点是把 A/B/C 实盘门控抽成纯函数、让 replay 与 live 真正同路径。
 - 线上验证发现并处理：阿里云分析镜像一度停在 2026-05-29，`shadow_sync_from_tencent.py` 全量同步会超时。已用 SQLite slim/tiny 快照 + SSH/base64 有界传输恢复本轮报告链路；2026-05-31 12:22 CST 入口页已显示新鲜反事实：24h OPEN_SKIPPED `474`、完成样本 `464`、60m 模拟 PnL `+905.10 USDT`，并显示研究仓样本漏斗。后续必须把常规 Tencent→Aliyun 同步改成稳定的 slim/增量流式方案。
 - 常规同步方案已落地：`shadow_sync_from_tencent.py` 现在默认只同步 3 日 bounded SQLite mirror，写入项目内 `server_logs_tencent`，并强制 quick_check/新鲜度校验；`sync_aliyun_reports_to_tencent.py` 现在优先同步 index、counterfactual、research-store、runtime 关键文件，默认短超时/重试/错误上限，市场日报等大文件改为可选。2026-05-31 18:03 CST live pull：六服务 active，账户浮盈约 `+19.15 USDT`，13 持仓，attention `P0=0/P1=0/P2=5`；入口页显示 24h 反事实完成样本 `506`，60m 模拟 PnL `-0.79 USDT`。
+- N4 灰度/回滚化进化门禁开始落地：`strategy_evolution_gate.py` 会读取 full-live 手工批准记录，已全量放开的候选不再从视野里消失，而是进入 `full_live_monitoring`。如果出现尺寸违规、硬顶风险、策略账户大浮亏、影子/扣费后表现弱于原版、硬顶触发增加或 OPEN_FAILED 压力，会升级成 `rollback_watch`/`rollback_required`；`decision_attention.py` 会把这类项作为“策略回滚”重新推到入口页。自动代码回滚、24h/72h/7d 实盘窗口和 regime 分层仍是后续 N4 工作。
 
 ## 2026-05-31 B/v16 全量放开与 C/v14 扩样
 - 用户明确要求“放开”，核心原因是当前样本量太少，无法有效优化策略；同时要求解决 C/v14 开仓少，并保证 A/v11 无异常。

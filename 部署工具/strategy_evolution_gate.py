@@ -253,11 +253,15 @@ def window_status(results: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
 
 
 def priority_from(status: str) -> str:
+    if status == "rollback_required":
+        return "P0"
+    if status == "rollback_watch":
+        return "P1"
     if status == "verified_upgrade_ready":
         return "P0"
     if status == "ready_for_review":
         return "P1"
-    if status in {"small_live_monitoring", "shadow_validating", "counterfactual_supported"}:
+    if status in {"full_live_monitoring", "small_live_monitoring", "shadow_validating", "counterfactual_supported"}:
         return "P2"
     if status == "rejected":
         return "REJECT"
@@ -320,18 +324,103 @@ def check_rollback_triggers(
     return triggers
 
 
+def load_full_live_approvals(memory_dir: Path) -> dict[str, dict[str, Any]]:
+    approval_dir = memory_dir / "approvals"
+    rows: list[dict[str, Any]] = []
+    for path in (approval_dir / "manual_actions.jsonl", approval_dir / "manual_actions_latest.jsonl"):
+        rows.extend(read_jsonl(path))
+    if approval_dir.exists():
+        for path in approval_dir.glob("approve_full_live_*.json"):
+            payload = read_json(path)
+            if isinstance(payload, dict):
+                rows.append(payload)
+    approved: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        if str(row.get("manual_action") or "") != "approve_full_live":
+            continue
+        if str(row.get("approved_scope") or "") != "full_live":
+            continue
+        ids: list[Any] = []
+        ids.extend(row.get("candidate_ids") or [])
+        ids.extend(row.get("experiment_ids") or [])
+        for key in ("candidate_id", "experiment_id"):
+            value = row.get(key)
+            if value:
+                ids.append(value)
+        for candidate_id in ids:
+            text = str(candidate_id or "").strip()
+            if text:
+                approved[text] = row
+    return approved
+
+
+def rollback_watch_verdict(
+    results: list[dict[str, Any]],
+    account_risk: dict[str, Any],
+) -> tuple[str, list[str]]:
+    triggers: list[str] = []
+    priority = ""
+    if account_risk.get("sizing_violation_count"):
+        priority = "P0"
+        triggers.append(f"尺寸违规 {account_risk.get('sizing_violation_count')}")
+    if account_risk.get("risk_count"):
+        priority = "P0"
+        triggers.append(f"硬顶风险 {account_risk.get('risk_count')}")
+    if to_float(account_risk.get("unrealized_pnl_usdt")) <= -ROLLBACK_ACCOUNT_LOSS_USDT:
+        priority = priority or "P1"
+        triggers.append(f"策略账户浮亏 {to_float(account_risk.get('unrealized_pnl_usdt')):.2f} USDT")
+    if results:
+        latest = results[-1]
+        sample = to_int(latest.get("sample_trades"))
+        if sample >= MIN_SAMPLE_TRADES:
+            original = to_float(latest.get("original_pnl"))
+            shadow = to_float(latest.get("shadow_pnl"))
+            adjusted_shadow = adjust_pnl_for_fees(shadow, sample)
+            if original > 0 and shadow < original * ROLLBACK_PF_DECAY_RATIO:
+                priority = priority or "P1"
+                triggers.append(f"影子PnL {shadow:.2f} < 原版 {original:.2f} × {ROLLBACK_PF_DECAY_RATIO}")
+            if adjusted_shadow < 0 and shadow < original:
+                priority = priority or "P1"
+                triggers.append(f"扣费后影子PnL {adjusted_shadow:.2f} 且弱于原版 {original:.2f}")
+            hs_before = to_int(latest.get("hard_stop_before"))
+            hs_after = to_int(latest.get("hard_stop_after"))
+            if hs_before > 0 and hs_after > hs_before * ROLLBACK_HARD_STOP_RATIO:
+                priority = priority or "P1"
+                triggers.append(f"硬顶触发率增加 {hs_before}→{hs_after}")
+            if hs_before == 0 and hs_after >= 3:
+                priority = priority or "P1"
+                triggers.append(f"新增硬顶触发 {hs_after}")
+            open_failed = to_int(latest.get("open_failed_after") or latest.get("open_failed"))
+            if open_failed >= ROLLBACK_OPEN_FAILED_THRESHOLD:
+                priority = priority or "P1"
+                triggers.append(f"OPEN_FAILED {open_failed}")
+    return priority, triggers
+
+
 def classify_decision(
     candidate: dict[str, Any],
     results: list[dict[str, Any]],
     review: dict[str, Any] | None,
     cf_status: str,
     account_risk: dict[str, Any],
+    full_live_approval: dict[str, Any] | None = None,
 ) -> tuple[str, str, list[str]]:
     blockers: list[str] = []
     win = window_status(results)
     latest = results[-1] if results else {}
     exp_status, exp_notes = experiment_verdict(latest) if latest else ("missing", ["无影子实验结果"])
     promotion_status = str((review or {}).get("promotion_status") or latest.get("promotion_status") or candidate.get("status") or "")
+
+    if full_live_approval:
+        rollback_priority, rollback_triggers = rollback_watch_verdict(results, account_risk)
+        if rollback_priority == "P0":
+            return "rollback_required", "review_or_rollback_live_change", rollback_triggers
+        if rollback_priority == "P1":
+            return "rollback_watch", "investigate_live_degradation", rollback_triggers
+        sample = to_int(latest.get("sample_trades")) if latest else 0
+        if sample < MIN_SAMPLE_TRADES:
+            blockers.append(f"全量放开后样本继续收集中 {sample}/{MIN_SAMPLE_TRADES}")
+        return "full_live_monitoring", "keep_full_live_monitoring", blockers
 
     # Rollback triggers
     rollback_triggers = check_rollback_triggers(results, account_risk)
@@ -433,10 +522,12 @@ def build_decisions(
     reviews: list[dict[str, Any]],
     counterfactual: dict[str, Any] | None,
     account_snapshot: dict[str, Any] | None,
+    full_live_approvals: dict[str, dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     experiments_by_key = group_by_key(experiments)
     review_by_key = {row_key(r): r for r in reviews if row_key(r)}
     account_by_strategy = account_risk_by_strategy(account_snapshot)
+    full_live_approvals = full_live_approvals or {}
 
     records: dict[str, dict[str, Any]] = {}
     for candidate in candidates:
@@ -468,7 +559,8 @@ def build_decisions(
         cf_status, cf_metrics, cf_notes = counterfactual_verdict(candidate, cf_rows)
         strategy = str(candidate.get("strategy") or candidate.get("base_strategy") or "")
         acc_risk = account_by_strategy.get(strategy, {})
-        status, action, blockers = classify_decision(candidate, results, review, cf_status, acc_risk)
+        full_live_approval = full_live_approvals.get(key)
+        status, action, blockers = classify_decision(candidate, results, review, cf_status, acc_risk, full_live_approval)
         win = window_status(results)
         latest = results[-1] if results else {}
         ev_score = evidence_score(results, cf_status, win)
@@ -507,6 +599,8 @@ def build_decisions(
                 "account_risk": acc_risk,
                 "blockers": blockers[:5],
                 "manual_review": review or {},
+                "approved_full_live": bool(full_live_approval),
+                "full_live_approval": full_live_approval or {},
             }
         )
 
@@ -524,9 +618,10 @@ def build_payload(args: argparse.Namespace) -> dict[str, Any]:
     if not experiments:
         experiments = read_jsonl(experiments_dir / "results" / "latest.jsonl")
     reviews = read_jsonl(memory_dir / "promotions" / "reviews_latest.jsonl")
+    full_live_approvals = load_full_live_approvals(memory_dir)
     counterfactual = read_json(reports_dir / "counterfactual_open_skips_latest.json")
     account_snapshot = read_json(runtime_dir / "account_snapshot_latest.json")
-    decisions = build_decisions(candidates, experiments, reviews, counterfactual, account_snapshot)
+    decisions = build_decisions(candidates, experiments, reviews, counterfactual, account_snapshot, full_live_approvals)
     counts = {p: sum(1 for d in decisions if d.get("priority") == p) for p in ("P0", "P1", "P2", "P3", "REJECT")}
     top = next((d for d in decisions if d.get("priority") in {"P0", "P1", "P2"}), None)
     return {
@@ -547,6 +642,8 @@ def build_payload(args: argparse.Namespace) -> dict[str, Any]:
             "top_priority": top.get("priority") if top else "P3",
             "top_candidate_id": top.get("candidate_id") if top else "",
             "top_status": top.get("status") if top else "none",
+            "full_live_watch_count": sum(1 for d in decisions if d.get("approved_full_live")),
+            "rollback_watch_count": sum(1 for d in decisions if d.get("status") in {"rollback_required", "rollback_watch"}),
         },
         "decisions": decisions,
     }
@@ -559,6 +656,7 @@ def render_md(payload: dict[str, Any]) -> str:
         f"- 生成时间: {payload.get('generated_at')}",
         f"- 候选: {payload['summary']['candidate_count']}，实验记录: {payload['summary']['experiment_count']}，门禁结论: {payload['summary']['decision_count']}",
         f"- 优先级: {payload['summary']['counts']}",
+        f"- Full-live 观察: {payload['summary'].get('full_live_watch_count', 0)}，回滚观察/要求: {payload['summary'].get('rollback_watch_count', 0)}",
         "",
         "| 优先级 | 状态 | 策略 | 候选 | 证据分 | 风险分 | 建议动作 | 关键阻塞 |",
         "|---|---|---|---|---:|---:|---|---|",

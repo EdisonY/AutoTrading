@@ -1318,7 +1318,14 @@ def build_findings(data: dict[str, Any]) -> list[dict[str, str]]:
     if evolution.get("available") and evo_top:
         priority = str(evo_top.get("priority") or "P3")
         if priority in {"P0", "P1", "P2"}:
-            title_kind = "策略升级机会" if priority in {"P0", "P1"} else "策略进化观察"
+            status_text = str(evo_top.get("status") or "")
+            title_kind = (
+                "策略回滚观察"
+                if status_text in {"rollback_required", "rollback_watch"}
+                else "策略升级机会"
+                if priority in {"P0", "P1"}
+                else "策略进化观察"
+            )
             findings.append(
                 {
                     "level": "warn" if priority in {"P0", "P1"} else "ok",

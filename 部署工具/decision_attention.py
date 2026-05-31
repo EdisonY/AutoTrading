@@ -347,7 +347,9 @@ def detect_strategy_evolution_items() -> list[dict[str, Any]]:
         if priority not in {"P0", "P1", "P2"}:
             continue
         candidate_id = str(decision.get("candidate_id") or decision.get("experiment_id") or decision.get("status") or "unknown")
-        if candidate_id in full_live_approved:
+        status = str(decision.get("status") or "")
+        is_rollback = status in {"rollback_required", "rollback_watch"}
+        if candidate_id in full_live_approved and not is_rollback:
             continue
         strategy = str(decision.get("strategy") or "-")
         blockers = "; ".join(str(x) for x in (decision.get("blockers") or []) if x)
@@ -355,13 +357,19 @@ def detect_strategy_evolution_items() -> list[dict[str, Any]]:
             f"状态 {decision.get('status') or '-'}；证据分 {int(decision.get('evidence_score') or 0)}；"
             f"风险分 {int(decision.get('risk_score') or 0)}；阻塞 {blockers or '-'}"
         )
-        action = str(decision.get("recommended_action") or "继续收集样本，未达 P0/P1 前不自动升级。")
+        action = str(
+            decision.get("recommended_action")
+            or ("检查已放开参数，必要时回滚到上一个稳定版本。" if is_rollback else "继续收集样本，未达 P0/P1 前不自动升级。")
+        )
+        item_prefix = "rollback" if is_rollback else "evolution"
+        category = "策略回滚" if is_rollback else "策略进化"
+        title_prefix = "回滚观察" if is_rollback else priority
         out.append(
             make_item(
-                item_id=f"evolution:{slug(candidate_id)}",
+                item_id=f"{item_prefix}:{slug(candidate_id)}",
                 priority=priority,
-                category="策略进化",
-                title=f"{priority} {strategy} {candidate_id}",
+                category=category,
+                title=f"{priority} {strategy} {title_prefix} {candidate_id}",
                 evidence=evidence,
                 recommended_action=action,
                 source=str(STRATEGY_EVOLUTION_JSON),

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import sqlite3
 import subprocess
 import tarfile
 import sys
@@ -143,24 +144,33 @@ def remote_jsonl_filter_command(rel: str, days: list[str], output: str | None = 
     )
 
 
-def remote_sqlite_backup_command(rel: str, output: str) -> str:
+def remote_sqlite_backup_command(
+    rel: str,
+    output: str,
+    sqlite_days: int,
+    sentinel_limit: int,
+    account_limit: int,
+) -> str:
     code = (
         "import pathlib, sqlite3\n"
         "from datetime import datetime, timedelta, timezone\n"
         f"src = pathlib.Path({rel!r})\n"
         f"dst = pathlib.Path({output!r})\n"
+        f"sqlite_days = {int(sqlite_days)!r}\n"
+        f"sentinel_limit = {int(sentinel_limit)!r}\n"
+        f"account_limit = {int(account_limit)!r}\n"
         "if not src.exists():\n"
         "    raise SystemExit(0)\n"
         "dst.parent.mkdir(parents=True, exist_ok=True)\n"
         "tmp = dst.with_suffix(dst.suffix + '.tmp')\n"
         "tmp.unlink(missing_ok=True)\n"
         "cst = timezone(timedelta(hours=8))\n"
-        "cutoff_30d = (datetime.now(cst) - timedelta(days=30)).isoformat(timespec='seconds')\n"
+        "cutoff = (datetime.now(cst) - timedelta(days=sqlite_days)).isoformat(timespec='seconds')\n"
         "snapshot_rules = {\n"
-        "    'events': (\"ts >= ? and event_type not in ('EVENT','SIGNAL','SENTINEL_SCANNED')\", (cutoff_30d,)),\n"
-        "    'sentinel_scans': ('id in (select id from sentinel_scans order by id desc limit 20000)', ()),\n"
-        "    'account_snapshots': ('id in (select id from account_snapshots order by id desc limit 240)', ()),\n"
-        "    'baseline_runs': ('ts >= ?', (cutoff_30d,)),\n"
+        "    'events': (\"ts >= ? and event_type not in ('EVENT','SENTINEL_SCANNED')\", (cutoff,)),\n"
+        "    'sentinel_scans': (f'id in (select id from sentinel_scans order by id desc limit {sentinel_limit})', ()),\n"
+        "    'account_snapshots': (f'id in (select id from account_snapshots order by id desc limit {account_limit})', ()),\n"
+        "    'baseline_runs': ('ts >= ?', (cutoff,)),\n"
         "}\n"
         "src_con = sqlite3.connect(f'file:{src}?mode=ro', uri=True, timeout=30)\n"
         "dst_con = sqlite3.connect(str(tmp), timeout=30)\n"
@@ -195,6 +205,53 @@ def remote_sqlite_backup_command(rel: str, output: str) -> str:
         "tmp.replace(dst)\n"
     )
     return f"python3 -c {shell_quote(code)}"
+
+
+def parse_ts(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    text = str(value).replace("Z", "+00:00").split(" [")[0]
+    for candidate in (text, text[:26], text[:19]):
+        try:
+            dt = datetime.fromisoformat(candidate)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=CST)
+            return dt.astimezone(CST)
+        except Exception:
+            continue
+    return None
+
+
+def validate_local_sqlite(db_path: Path, max_age_hours: float) -> None:
+    if not db_path.exists():
+        raise RuntimeError(f"SQLite mirror missing: {db_path}")
+    with sqlite3.connect(db_path) as conn:
+        check = conn.execute("pragma quick_check").fetchone()[0]
+        if check != "ok":
+            raise RuntimeError(f"SQLite mirror quick_check failed: {check}")
+        rows: list[tuple[str, int, str | None]] = []
+        for table in ("events", "sentinel_scans", "account_snapshots"):
+            exists = conn.execute(
+                "select 1 from sqlite_master where type='table' and name=?",
+                (table,),
+            ).fetchone()
+            if not exists:
+                raise RuntimeError(f"SQLite mirror missing table: {table}")
+            count, latest = conn.execute(f"select count(*), max(ts) from {table}").fetchone()
+            rows.append((table, int(count or 0), latest))
+    now = datetime.now(CST)
+    print(f"[SQLITE] quick_check ok: {db_path}")
+    for table, count, latest in rows:
+        latest_dt = parse_ts(latest)
+        age_hours = (now - latest_dt).total_seconds() / 3600 if latest_dt else None
+        age_text = f"{age_hours:.2f}h" if age_hours is not None else "unknown"
+        print(f"[SQLITE] {table}: rows={count} latest={latest or '-'} age={age_text}")
+        if count <= 0:
+            raise RuntimeError(f"SQLite mirror table empty: {table}")
+        if age_hours is None or age_hours > max_age_hours:
+            raise RuntimeError(
+                f"SQLite mirror stale: {table} latest={latest or '-'} age={age_text}, max={max_age_hours}h"
+            )
 
 
 def fetch_archive_with_scp(remote_archive: str, local_archive: Path, timeout: int = 180) -> None:
@@ -237,9 +294,18 @@ def fetch_archive_with_cat(client: paramiko.SSHClient, remote_archive: str, loca
         raise
 
 
-def sync_bundle(days_back: int, log_tail: int = 300, include_jsonl: bool = False) -> None:
+def sync_bundle(
+    days_back: int,
+    log_tail: int = 300,
+    include_jsonl: bool = False,
+    sqlite_days: int | None = None,
+    sentinel_limit: int = 20000,
+    account_limit: int = 1500,
+    max_age_hours: float = 6.0,
+) -> None:
     LOCAL_DIR.mkdir(parents=True, exist_ok=True)
     days = recent_days(days_back)
+    sqlite_days = sqlite_days or days_back
     stamp = int(time.time())
     tmp_dir = f"/tmp/autotrading_shadow_sync_{stamp}"
     archive = f"{tmp_dir}.tgz"
@@ -270,7 +336,15 @@ def sync_bundle(days_back: int, log_tail: int = 300, include_jsonl: bool = False
     for rel in SQLITE_FILES:
         parent = Path(rel).parent.as_posix()
         commands.append(f"mkdir -p {shell_quote(f'{tmp_dir}/{parent}')} ")
-        commands.append(remote_sqlite_backup_command(rel, f"{tmp_dir}/{rel}"))
+        commands.append(
+            remote_sqlite_backup_command(
+                rel,
+                f"{tmp_dir}/{rel}",
+                sqlite_days=sqlite_days,
+                sentinel_limit=sentinel_limit,
+                account_limit=account_limit,
+            )
+        )
     commands.extend(
         [
             f"tar -czf {shell_quote(archive)} -C {shell_quote(tmp_dir)} .",
@@ -282,7 +356,11 @@ def sync_bundle(days_back: int, log_tail: int = 300, include_jsonl: bool = False
     client = ssh_client()
     try:
         print(f"Connected to Tencent {TENCENT_HOST}")
-        print(f"Fast bundle mode: {', '.join(days)}; log_tail={log_tail}")
+        print(
+            "Fast bundle mode: "
+            f"{', '.join(days)}; sqlite_days={sqlite_days}; "
+            f"sentinel_limit={sentinel_limit}; account_limit={account_limit}; log_tail={log_tail}"
+        )
         rc, out, err = run_remote(client, " && ".join(commands), timeout=300)
         if rc != 0:
             raise RuntimeError(f"remote bundle failed rc={rc}: {err or out}")
@@ -309,6 +387,8 @@ def sync_bundle(days_back: int, log_tail: int = 300, include_jsonl: bool = False
     with tarfile.open(local_archive, "r:gz") as tar:
         tar.extractall(LOCAL_DIR)
     local_archive.unlink(missing_ok=True)
+
+    validate_local_sqlite(LOCAL_DIR / "runtime" / "event_store.sqlite3", max_age_hours=max_age_hours)
 
     expected_files = (JSONL_FILES if include_jsonl else []) + TEXT_FILES + REPORT_FILES + SQLITE_FILES
     for rel in expected_files:
@@ -357,9 +437,21 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--full", action="store_true", help="Use the older file-by-file sync mode")
     parser.add_argument("--include-jsonl", action="store_true", help="Include recent legacy JSONL shards in fast bundle mode")
     parser.add_argument("--log-tail", type=int, default=300, help="Lines to keep from large text logs in fast mode")
+    parser.add_argument("--sqlite-days", type=int, help="Days of SQLite events/baseline rows to keep in the shadow mirror; defaults to --days")
+    parser.add_argument("--sentinel-limit", type=int, default=20000, help="Newest sentinel_scans rows to keep in the SQLite mirror")
+    parser.add_argument("--account-limit", type=int, default=1500, help="Newest account_snapshots rows to keep in the SQLite mirror")
+    parser.add_argument("--max-age-hours", type=float, default=6.0, help="Fail if synced events/sentinel/account tables are older than this")
     args = parser.parse_args(argv)
     if not args.full:
-        sync_bundle(args.days, log_tail=args.log_tail, include_jsonl=args.include_jsonl)
+        sync_bundle(
+            args.days,
+            log_tail=args.log_tail,
+            include_jsonl=args.include_jsonl,
+            sqlite_days=args.sqlite_days,
+            sentinel_limit=args.sentinel_limit,
+            account_limit=args.account_limit,
+            max_age_hours=args.max_age_hours,
+        )
     else:
         sync(args.days)
     print(f"Local shadow mirror updated at {LOCAL_DIR}")

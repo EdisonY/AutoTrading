@@ -2,6 +2,14 @@
 
 This is the durable reason-and-outcome ledger for every material design, code, configuration, deployment, rollback, optimization, or live operational change.
 
+## 2026-06-01 15:50 CST - Explain rollback-watch causes on the homepage
+- Trigger / reason: After controlled-expansion readiness was surfaced, the command center correctly showed `P1 已放开候选劣化`, but the first screen still did not explain whether the watch came from PnL quality, OPEN_FAILED pressure, forced closes, or close-confirm failures.
+- Completed: Updated `portal_dashboard.py` so `evolution_action_alert()` includes the top rollback blockers in its body. Added a first-screen rollback-watch brief that lists up to four affected approved candidates with blocker text plus 24h opens, closed samples, OPEN_FAILED, forced closes, and after-cost PnL. This makes A/v11/B/v16 degradation reasons visible without opening the full gate table.
+- Not completed / remaining: This is report/decision-surface work only. It does not automatically roll back A/v11/B/v16 or change live thresholds; user-facing next decision remains whether to investigate/rollback the watched full-live candidates after reviewing the evidence.
+- Verification: Pending in this work session.
+- Live impact / deployment: Pending deploy. Reporting only; no scanner, order, sizing, or risk-gate behavior changes.
+- Files / release / commit: `部署工具/portal_dashboard.py`, `CHANGELOG.md`.
+
 ## 2026-06-01 14:42 CST - Add controlled-expansion readiness to evolution gate
 - Trigger / reason: Continue the next-stage optimization goal: the command center already showed approved full-live candidates and post-approval windows, but the decision-maker first screen still did not directly answer whether sample expansion is mature, still collecting, or should pause for quality/close-loop review.
 - Completed: Added `expansion_readiness` to `strategy_evolution_gate.py`. It summarizes approved full-live candidates from post-approval 24h windows, including mature count, still-sampling count, pause/review count, missing closed-sample count, OPEN_FAILED/CLOSE_FAILED pressure, 24h after-cost PnL, and a per-candidate action such as `continue_controlled_sampling`, `ready_for_quality_review`, or `pause_expansion_review_quality`. The gate now also creates decision records directly from full-live approval files when the matching experiment/candidate row is absent on a node, so approved live changes cannot disappear from the report because a research file is stale. Updated `portal_dashboard.py` so the first-screen executive brief shows this controlled-expansion maturity line and turns it into a next action. Also fixed the homepage findings block to choose the top persistent-attention item from `status=open` only, preventing archived/cleared P0 items from contradicting the P0/P1 counters.

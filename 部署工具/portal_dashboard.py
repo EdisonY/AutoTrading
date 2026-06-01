@@ -384,12 +384,13 @@ def evolution_action_alert(evolution: dict[str, Any]) -> dict[str, str]:
     if rollback:
         top = rollback[0]
         level = "bad" if top.get("status") == "rollback_required" or top.get("priority") == "P0" else "warn"
+        reasons = "; ".join(str(x) for x in (top.get("blockers") or [])[:2]) or "未给出阻塞原因"
         return {
             "level": level,
             "title": f"{top.get('priority') or 'P1'} 已放开候选劣化：{top.get('strategy') or '-'}",
             "body": (
                 f"{top.get('candidate_id') or '-'} 进入 {top.get('status') or '-'}；"
-                f"建议 {top.get('recommended_action') or '-'}。"
+                f"原因 {reasons}；建议 {top.get('recommended_action') or '-'}。"
             ),
         }
 
@@ -434,6 +435,30 @@ def evolution_action_alert(evolution: dict[str, Any]) -> dict[str, str]:
         "title": "P2 暂无已验证更优方案",
         "body": f"门禁更新 {evolution.get('age') or '未知'}；无 P0/P1 可批准项或回滚项。",
     }
+
+
+def rollback_watch_brief(evolution: dict[str, Any]) -> str:
+    decisions = [d for d in (evolution.get("decisions") or []) if isinstance(d, dict)]
+    watched = [
+        d for d in decisions
+        if str(d.get("status") or "") in {"rollback_required", "rollback_watch"}
+    ]
+    if not watched:
+        return ""
+    parts: list[str] = []
+    for d in watched[:4]:
+        blockers = "; ".join(str(x) for x in (d.get("blockers") or [])[:2]) or "-"
+        window = (((d.get("post_approval_live") or {}).get("windows") or {}).get("24h") or {})
+        quality = window.get("quality") or {}
+        metrics = (
+            f"24h开仓 {int(window.get('opens') or 0)}，"
+            f"平仓 {int((quality.get('closed_samples') or window.get('closes') or 0))}，"
+            f"OPEN_FAILED {int(window.get('open_failed') or 0)}，"
+            f"强平 {int(window.get('forced_closes') or 0)}，"
+            f"扣费后PnL {float(quality.get('realized_pnl_after_cost') or 0):+.2f}"
+        )
+        parts.append(f"{d.get('strategy') or '-'} {d.get('candidate_id') or '-'}：{blockers}；{metrics}")
+    return "回滚观察明细：" + " | ".join(parts)
 
 
 def attention_summary(path: Path | None) -> dict[str, Any]:
@@ -1654,6 +1679,7 @@ def build_executive_summary(data: dict[str, Any]) -> dict[str, Any]:
     regime_summary = evolution.get("regime_summary") or {}
     expansion = evolution.get("expansion_readiness") or {}
     evolution_alert = evolution_action_alert(evolution)
+    rollback_brief = rollback_watch_brief(evolution)
     truth = data.get("strategy_truth") or {}
     truth_stats = truth.get("strategy_stats") or {}
     decision_rows = data.get("decision_summary") or []
@@ -1726,6 +1752,7 @@ def build_executive_summary(data: dict[str, Any]) -> dict[str, Any]:
         f"运行：核心服务 {'正常' if services_ok else '需检查'}，自动告警 {alert_count}，持久关注 P0 {p0} / P1 {p1}。",
         f"进化：{evo_text}；只有门禁通过且用户批准的候选才允许进入实盘。",
         f"最高进化提示：{evolution_alert.get('title')}；{evolution_alert.get('body')}",
+        rollback_brief,
         f"环境：已放开候选 24h regime {regime_summary.get('counts') or {}}，quality {regime_summary.get('quality_counts') or {}}，OPEN_FAILED {int(regime_summary.get('open_failed_24h') or 0)}，CLOSE_FAILED {int(regime_summary.get('close_failed_24h') or 0)}。",
         (
             f"扩样成熟度：已放开 {int(expansion.get('approved_count') or 0)} 个，"
@@ -1734,6 +1761,7 @@ def build_executive_summary(data: dict[str, Any]) -> dict[str, Any]:
         ),
         "扩样决策：不再全局盲目放宽。A/v11保持稳定，B/v16观察已批准全量候选，C/v14维持当前受控扩样窗口。",
     ]
+    bullets = [b for b in bullets if b]
 
     next_actions: list[str] = []
     if level == "bad":

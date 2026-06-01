@@ -77,7 +77,7 @@ def build_dataset(con: Any, days: int) -> list[dict[str, Any]]:
       select
         id as event_id,
         ts as event_ts,
-        try_cast(ts as timestamptz) as event_dt,
+        try_cast(ts as timestamp) as event_dt,
         strategy,
         symbol,
         event_type,
@@ -126,13 +126,13 @@ def build_dataset(con: Any, days: int) -> list[dict[str, Any]]:
               when f.interval='1h' then 3
               else 9
             end,
-            try_cast(f.open_time as timestamptz) desc
+            try_cast(f.open_time as timestamp) desc
         ) as rn
       from event_rows e
       left join features f
         on f.symbol = e.symbol
-       and try_cast(f.open_time as timestamptz) <= e.event_dt
-       and try_cast(f.open_time as timestamptz) >= e.event_dt - interval 2 day
+        and try_cast(f.open_time as timestamp) <= e.event_dt
+        and try_cast(f.open_time as timestamp) >= e.event_dt - interval 2 day
     )
     select *
     from candidates

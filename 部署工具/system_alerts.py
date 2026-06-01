@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import shutil
 import sqlite3
 import subprocess
@@ -35,6 +36,9 @@ ALERT_LOG = ROOT / "logs" / "alerts.jsonl"
 ALERT_MD = ROOT / "reports" / "alerts_latest.md"
 CST = timezone(timedelta(hours=8))
 ATTENTION_STALE_SECONDS = 150 * 60
+API_RATE_LIMIT_WINDOW_MINUTES = 30
+BINANCE_BAN_UNTIL_RE = re.compile(r"banned until\s+(\d{12,})", re.IGNORECASE)
+API_RATE_LIMIT_MARKERS = ("HTTP 418", "HTTP 429", "-1003", "Way too many requests", "Too many requests")
 
 SERVICES = [
     "crypto-market-data-cache.service",
@@ -104,7 +108,21 @@ def read_account_error() -> dict[str, Any]:
 
 
 def account_retry_at(payload: dict[str, Any]) -> datetime | None:
-    return parse_dt(payload.get("retry_at"))
+    parsed = parse_dt(payload.get("retry_at"))
+    if parsed:
+        return parsed
+    return retry_at_from_text(str(payload.get("error") or ""))
+
+
+def retry_at_from_text(text: str) -> datetime | None:
+    match = BINANCE_BAN_UNTIL_RE.search(text or "")
+    if not match:
+        return None
+    try:
+        raw_ms = int(match.group(1))
+    except ValueError:
+        return None
+    return datetime.fromtimestamp(raw_ms / 1000, CST)
 
 
 def service_states() -> dict[str, str]:
@@ -152,6 +170,52 @@ def recent_oom_lines() -> list[str]:
         if "out of memory" in lower or "oom-kill" in lower or "killed process" in lower:
             lines.append(line.strip())
     return lines[-5:]
+
+
+def recent_api_rate_limits(now: datetime) -> dict[str, Any]:
+    empty = {"total": 0, "by_service": {}, "latest": "", "latest_ts": None, "ban_until": None}
+    if not sys.platform.startswith("linux"):
+        return empty
+    by_service: dict[str, int] = {}
+    latest = ""
+    latest_ts: datetime | None = None
+    ban_until: datetime | None = None
+    since = f"{API_RATE_LIMIT_WINDOW_MINUTES} minutes ago"
+    for service in SERVICES:
+        try:
+            proc = subprocess.run(
+                ["journalctl", "-u", service, "--since", since, "--no-pager", "-n", "260"],
+                capture_output=True,
+                text=True,
+                timeout=4,
+            )
+        except Exception:
+            continue
+        count = 0
+        for line in (proc.stdout or "").splitlines():
+            if not any(marker in line for marker in API_RATE_LIMIT_MARKERS):
+                continue
+            count += 1
+            latest = line.strip()[-260:]
+            maybe_retry = retry_at_from_text(line)
+            if maybe_retry and (ban_until is None or maybe_retry > ban_until):
+                ban_until = maybe_retry
+            parts = line.split()
+            if len(parts) >= 3:
+                raw_ts = f"{now.year}-{parts[0]}-{parts[1]} {parts[2]}"
+                parsed = parse_dt(raw_ts)
+                if parsed:
+                    latest_ts = parsed
+        if count:
+            by_service[service] = count
+    total = sum(by_service.values())
+    return {
+        "total": total,
+        "by_service": by_service,
+        "latest": latest,
+        "latest_ts": latest_ts.isoformat() if latest_ts else None,
+        "ban_until": ban_until.isoformat() if ban_until else None,
+    }
 
 
 def recent_failed_close_alerts(now: datetime) -> list[dict[str, str]]:
@@ -212,6 +276,7 @@ def collect_alerts() -> dict[str, Any]:
     account_error_payload = read_account_error()
     account_retry = account_retry_at(account_error_payload)
     account_resume_timer_state = unit_states([ACCOUNT_RESUME_TIMER]).get(ACCOUNT_RESUME_TIMER, "")
+    api_rate_limits = recent_api_rate_limits(now)
     account_in_cooldown = bool(
         (account_retry and account_retry > now)
         or account_resume_timer_state == "active"
@@ -340,6 +405,24 @@ def collect_alerts() -> dict[str, Any]:
         except Exception as exc:
             alerts.append({"level": "warn", "title": "账户快照错误记录读取失败", "body": str(exc)})
 
+    if int(api_rate_limits.get("total") or 0) > 0:
+        by_service = api_rate_limits.get("by_service") or {}
+        offenders = sorted(by_service.items(), key=lambda item: int(item[1]), reverse=True)
+        offender_text = "，".join(f"{name}:{count}" for name, count in offenders[:4])
+        only_account_snapshot = set(by_service) <= {"crypto-account-snapshot.service"}
+        level = "warn" if account_in_cooldown and only_account_snapshot else "bad"
+        ban_until = api_rate_limits.get("ban_until") or (account_retry.isoformat() if account_retry else "")
+        ban_note = f"；封禁到 {ban_until}" if ban_until else ""
+        latest_note = f"；最新 {str(api_rate_limits.get('latest') or '')[:180]}" if api_rate_limits.get("latest") else ""
+        alerts.append({
+            "level": level,
+            "title": "Binance API限流/封禁",
+            "body": (
+                f"近{API_RATE_LIMIT_WINDOW_MINUTES}分钟 {int(api_rate_limits.get('total') or 0)} 条；"
+                f"来源 {offender_text or '-'}{ban_note}{latest_note}"
+            ),
+        })
+
     if ATTENTION_LATEST.exists():
         try:
             attention_payload = json.loads(ATTENTION_LATEST.read_text(encoding="utf-8", errors="replace"))
@@ -389,6 +472,7 @@ def collect_alerts() -> dict[str, Any]:
         "timers": timers,
         "disk": disk_payload,
         "memory": memory_payload,
+        "api_rate_limits": api_rate_limits,
     }
 
 

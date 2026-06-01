@@ -916,6 +916,7 @@ def alert_summary() -> dict[str, Any]:
         "services": payload.get("services") or {},
         "disk": payload.get("disk") or {},
         "timers": payload.get("timers") or {},
+        "api_rate_limits": payload.get("api_rate_limits") or {},
     }
 
 
@@ -1269,6 +1270,17 @@ def function_status_cards(data: dict[str, Any]) -> list[dict[str, str]]:
     market_cache = data.get("market_cache") or {}
     realtime_account = data.get("realtime_account") or {}
     alerts = data.get("alerts") or {}
+    api_rate_limits = alerts.get("api_rate_limits") or {}
+    api_rate_total = int(api_rate_limits.get("total") or 0)
+    api_rate_sources = ", ".join(
+        f"{name}:{count}"
+        for name, count in sorted((api_rate_limits.get("by_service") or {}).items(), key=lambda item: int(item[1]), reverse=True)[:3]
+    )
+    api_rate_note = (
+        f"；API限流 {api_rate_total} 条，来源 {api_rate_sources or '-'}"
+        if api_rate_total
+        else ""
+    )
     counterfactual = data.get("counterfactual") or {}
     research_store = data.get("research_store") or {}
     replay_feature = data.get("replay_feature") or {}
@@ -1355,7 +1367,7 @@ def function_status_cards(data: dict[str, Any]) -> list[dict[str, str]]:
             "name": "自动告警",
             "value": f"{int(alerts.get('alert_count') or 0)} 条",
             "body": (
-                f"最近巡检 {alerts.get('age', '无')}；磁盘已用 {alerts.get('disk', {}).get('used_pct', '-')}%，剩余 {alerts.get('disk', {}).get('free_gb', '-')}GB。"
+                f"最近巡检 {alerts.get('age', '无')}；磁盘已用 {alerts.get('disk', {}).get('used_pct', '-')}%，剩余 {alerts.get('disk', {}).get('free_gb', '-')}GB{api_rate_note}。"
                 if alerts.get("available")
                 else "告警巡检尚未生成。"
             ),

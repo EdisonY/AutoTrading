@@ -137,6 +137,7 @@
 - 所有变更必须同步 Git + CHANGELOG.md
 - 2026-06-01：当前运行环境已改为无需确认提权；后续操作应直接执行短超时命令，避免弹窗确认导致卡住。新增 replay 特征对齐数据集作为 N2/N3 桥梁，后续继续抽 A/B/C 纯策略门控与完整 replay 引擎。
 - 2026-06-01：腾讯账号快照出现 Binance testnet `HTTP 418 / -1003 Way too many requests`，曾导致入口页拉到误导性 0 仓快照。已将账号快照改为 API 错误时不覆盖最新有效快照，并解析 `banned until` 自动退避；告警显示为“账户快照API冷却中”。后续仍需继续做 API budget/websocket 化。
+- 2026-06-01：系统告警补强 Binance API 压力来源识别。`system_alerts.py` 会按最近 30 分钟 systemd journal 统计 418/429/-1003/Too-many-requests 并按服务聚合，入口页“自动告警”卡直接显示 API 限流次数和来源，避免只看到账户冷却而不知道是否有 scanner 也在触发限流。
 
 ---
 ## 2026-05-29 全局运行自检与账户方向口径修复

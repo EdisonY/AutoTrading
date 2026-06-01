@@ -42,6 +42,8 @@ STRATEGY_TRUTH_JSON = ROOT / "runtime" / "strategy_truth_latest.json"
 STRATEGY_TRUTH_MD = REPORTS_DIR / "strategy_truth_latest.md"
 RESEARCH_STORE_JSON = ROOT / "runtime" / "research_store_summary_latest.json"
 RESEARCH_STORE_MD = REPORTS_DIR / "research_store_summary_latest.md"
+REPLAY_FEATURE_JSON = ROOT / "runtime" / "replay_feature_dataset_latest.json"
+REPLAY_FEATURE_MD = REPORTS_DIR / "replay_feature_dataset_latest.md"
 CST = timezone(timedelta(hours=8))
 
 
@@ -535,6 +537,28 @@ def research_store_summary(path: Path | None) -> dict[str, Any]:
         "feature_coverage": payload.get("feature_coverage") if isinstance(payload.get("feature_coverage"), list) else [],
         "totals": totals,
         "top_skip": skip_layers[0] if skip_layers else {},
+    }
+
+
+def replay_feature_summary(path: Path | None) -> dict[str, Any]:
+    empty = {
+        "available": False,
+        "path": REPLAY_FEATURE_MD,
+        "age": "No replay dataset",
+        "fresh": False,
+        "summary": {"events": 0, "matched_features": 0, "match_rate": 0},
+    }
+    payload = read_json(path) if path else None
+    if not isinstance(payload, dict):
+        return empty
+    generated_at = parse_dt(payload.get("generated_at"))
+    summary = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
+    return {
+        "available": True,
+        "path": REPLAY_FEATURE_MD,
+        "age": age_text(generated_at),
+        "fresh": bool(generated_at and (datetime.now(CST) - generated_at).total_seconds() < 4 * 3600),
+        "summary": summary,
     }
 
 
@@ -1247,6 +1271,8 @@ def function_status_cards(data: dict[str, Any]) -> list[dict[str, str]]:
     alerts = data.get("alerts") or {}
     counterfactual = data.get("counterfactual") or {}
     research_store = data.get("research_store") or {}
+    replay_feature = data.get("replay_feature") or {}
+    replay_summary = replay_feature.get("summary") or {}
     evolution = data.get("strategy_evolution") or {}
     evo_counts = evolution.get("counts") or {}
     attention = data.get("attention") or {}
@@ -1364,6 +1390,27 @@ def function_status_cards(data: dict[str, Any]) -> list[dict[str, str]]:
                 f"K线周期 {len(research_store.get('kline_coverage') or [])}，特征周期 {len(research_store.get('feature_coverage') or [])}。"
                 if research_store.get("available")
                 else "Parquet/DuckDB 样本漏斗尚未生成，进化判断只能看 SQLite/报表口径。"
+            ),
+        },
+        {
+            "level": (
+                "ok"
+                if replay_feature.get("fresh") and float(replay_summary.get("match_rate") or 0) >= 65
+                else "warn"
+            ),
+            "name": "Replay feature align",
+            "value": (
+                f"{int(replay_summary.get('events') or 0)} events"
+                if replay_feature.get("available")
+                else "not built"
+            ),
+            "body": (
+                f"matched {int(replay_summary.get('matched_features') or 0)} / "
+                f"{int(replay_summary.get('events') or 0)}; "
+                f"match {float(replay_summary.get('match_rate') or 0):.1f}%; "
+                f"updated {replay_feature.get('age')}."
+                if replay_feature.get("available")
+                else "Replay/live feature alignment dataset missing; full gate parity still partial."
             ),
         },
     ]
@@ -1751,6 +1798,8 @@ def build_data() -> dict[str, Any]:
     data["strategy_truth_html"] = STRATEGY_TRUTH_MD
     data["research_store"] = research_store_summary(RESEARCH_STORE_JSON)
     data["research_store_html"] = RESEARCH_STORE_MD
+    data["replay_feature"] = replay_feature_summary(REPLAY_FEATURE_JSON)
+    data["replay_feature_html"] = REPLAY_FEATURE_MD
     data["function_status"] = function_status_cards(data)
     data["findings"] = build_findings(data)
     data["executive_summary"] = build_executive_summary(data)

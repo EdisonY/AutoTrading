@@ -40,6 +40,7 @@ REPORT_FILES = [
     "counterfactual_open_skips_latest.md",
     "counterfactual_open_skips_latest.html",
     "research_store_summary_latest.md",
+    "replay_feature_dataset_latest.md",
     "portal_latest.html",
     "strategy_evolution_latest.json",
     "strategy_evolution_latest.md",
@@ -61,6 +62,7 @@ RUNTIME_FILES = [
     "strategy_truth_latest.json",
     "sentinel_quality_latest.json",
     "research_store_summary_latest.json",
+    "replay_feature_dataset_latest.json",
 ]
 
 RESEARCH_FILES = [

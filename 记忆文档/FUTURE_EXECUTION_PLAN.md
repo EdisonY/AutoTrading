@@ -31,6 +31,7 @@
 
 关键技术节点：
 - [x] 定义统一事件模型起点：`core/replay.py` 提供 `ReplayEvent`、`ReplayDecision`、事件类型归一和初始 gate 分类。
+- [x] 新增 replay 特征对齐数据集：`replay_feature_dataset.py` 从 DuckDB research-store 读取 `events` + `features`，把 A/B/C 的 OPEN、OPEN_SKIPPED、OPEN_FAILED、SIGNAL 对齐到最近同币种历史特征行，并输出 `research_store/replay_features`、`runtime/replay_feature_dataset_latest.json`、`reports/replay_feature_dataset_latest.md`。
 - [ ] A/B/C 抽出纯策略函数和门控函数，实盘 scanner 只负责编排和下单。
 - [ ] replay 引擎从 SQLite/Parquet 读取历史事件、K线、哨兵上下文，重放 OPEN_SKIPPED/OPEN/CLOSE。
 - [x] `counterfactual_open_skips.py` 已先把 OPEN_SKIPPED 归一到 `core.replay.ReplayEvent` / `ReplayDecision`，反事实过滤层分组优先使用统一 replay gate。

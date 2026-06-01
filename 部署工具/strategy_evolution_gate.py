@@ -8,8 +8,10 @@ one decision feed for the portal. It never changes live strategy code or orders.
 from __future__ import annotations
 
 import argparse
+import collections
 import html
 import json
+import re
 import sqlite3
 import sys
 from datetime import datetime, timedelta, timezone
@@ -398,6 +400,38 @@ def payload_float(payload: dict[str, Any], keys: tuple[str, ...]) -> float:
     return 0.0
 
 
+BINANCE_CODE_RE = re.compile(r'"code"\s*:\s*(-?\d+)|code[=:]\s*(-?\d+)', re.IGNORECASE)
+
+
+def compact_reason(text: Any, limit: int = 120) -> str:
+    clean = " ".join(str(text or "").replace("\\n", " ").split())
+    if len(clean) <= limit:
+        return clean
+    return clean[: limit - 3] + "..."
+
+
+def open_failed_reason(payload: dict[str, Any]) -> str:
+    raw = (
+        payload.get("reason")
+        or payload.get("entry_reason")
+        or payload.get("error")
+        or payload.get("msg")
+        or payload.get("message")
+        or payload.get("detail")
+        or payload.get("status")
+        or "unknown"
+    )
+    text = str(raw)
+    match = BINANCE_CODE_RE.search(text)
+    if match:
+        code = match.group(1) or match.group(2)
+        return f"binance_code_{code}"
+    code = payload.get("code")
+    if code:
+        return f"code_{code}"
+    return compact_reason(text, 80) or "unknown"
+
+
 def classify_regime(metrics: dict[str, Any]) -> dict[str, Any]:
     event_count = max(1, to_int(metrics.get("event_count")))
     avg_abs_change = to_float(metrics.get("abs_change_sum")) / event_count
@@ -520,6 +554,7 @@ def summarize_post_approval_windows(db_path: Path | None, approvals: dict[str, d
                     "closes": 0,
                     "forced_closes": 0,
                     "open_failed": 0,
+                    "open_failed_reasons": collections.Counter(),
                     "close_failed": 0,
                     "open_skipped": 0,
                     "realized_pnl_usdt": 0.0,
@@ -576,6 +611,7 @@ def summarize_post_approval_windows(db_path: Path | None, approvals: dict[str, d
                         metrics["forced_closes"] += 1
                     elif event_type == "OPEN_FAILED":
                         metrics["open_failed"] += 1
+                        metrics["open_failed_reasons"][open_failed_reason(payload)] += 1
                     elif event_type in {"CLOSE_FAILED", "FORCED_CLOSE_FAILED"}:
                         metrics["close_failed"] += 1
                     elif event_type == "OPEN_SKIPPED":
@@ -583,6 +619,12 @@ def summarize_post_approval_windows(db_path: Path | None, approvals: dict[str, d
                     if event_type in {"CLOSE", "FORCED_CLOSE"}:
                         metrics["realized_pnl_usdt"] += payload_float(payload, ("pnl_usd", "pnl_usdt", "realized_pnl_usdt", "pnl"))
                 metrics["realized_pnl_usdt"] = round(float(metrics["realized_pnl_usdt"]), 4)
+                failed_counter = metrics.get("open_failed_reasons")
+                if isinstance(failed_counter, collections.Counter):
+                    metrics["open_failed_reasons"] = [
+                        {"reason": reason, "count": count}
+                        for reason, count in failed_counter.most_common(5)
+                    ]
                 metrics["regime"] = classify_regime(metrics)
                 metrics["quality"] = classify_window_quality(metrics)
                 for key in ("abs_change_sum", "abs_velocity_sum", "quote_volume_sum"):

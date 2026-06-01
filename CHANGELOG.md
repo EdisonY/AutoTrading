@@ -2,6 +2,14 @@
 
 This is the durable reason-and-outcome ledger for every material design, code, configuration, deployment, rollback, optimization, or live operational change.
 
+## 2026-06-01 15:58 CST - Add OPEN_FAILED reason attribution to rollback watch
+- Trigger / reason: The homepage now shows B/v16 rollback-watch pressure from `OPEN_FAILED 5`, but the decision-maker still cannot see whether that means exchange position-limit errors, API errors, preflight bugs, or another execution cause without opening raw event logs.
+- Completed: Updated `strategy_evolution_gate.py` to classify and count `OPEN_FAILED` reasons inside post-approval windows, extracting Binance error codes from raw reason/msg text when available and storing the top reasons in each window. Updated `portal_dashboard.py` rollback-watch brief to append the top failure reasons beside 24h opens/closes/OPEN_FAILED/forced-close/PnL metrics.
+- Not completed / remaining: This only attributes failure causes in the report. It does not yet fix the underlying B/v16 failure source or roll back any candidate.
+- Verification: Pending in this work session.
+- Live impact / deployment: Pending deploy. Reporting/evolution-gate output only; no scanner/order/risk behavior changed.
+- Files / release / commit: `部署工具/strategy_evolution_gate.py`, `部署工具/portal_dashboard.py`, `CHANGELOG.md`.
+
 ## 2026-06-01 15:50 CST - Explain rollback-watch causes on the homepage
 - Trigger / reason: After controlled-expansion readiness was surfaced, the command center correctly showed `P1 已放开候选劣化`, but the first screen still did not explain whether the watch came from PnL quality, OPEN_FAILED pressure, forced closes, or close-confirm failures.
 - Completed: Updated `portal_dashboard.py` so `evolution_action_alert()` includes the top rollback blockers in its body. Added a first-screen rollback-watch brief that lists up to four affected approved candidates with blocker text plus 24h opens, closed samples, OPEN_FAILED, forced closes, and after-cost PnL. This makes A/v11/B/v16 degradation reasons visible without opening the full gate table.

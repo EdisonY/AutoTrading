@@ -450,12 +450,19 @@ def rollback_watch_brief(evolution: dict[str, Any]) -> str:
         blockers = "; ".join(str(x) for x in (d.get("blockers") or [])[:2]) or "-"
         window = (((d.get("post_approval_live") or {}).get("windows") or {}).get("24h") or {})
         quality = window.get("quality") or {}
+        failed_reasons = ", ".join(
+            f"{row.get('reason')}×{int(row.get('count') or 0)}"
+            for row in (window.get("open_failed_reasons") or [])[:3]
+            if isinstance(row, dict)
+        )
+        failed_note = f"，失败原因 {failed_reasons}" if failed_reasons else ""
         metrics = (
             f"24h开仓 {int(window.get('opens') or 0)}，"
             f"平仓 {int((quality.get('closed_samples') or window.get('closes') or 0))}，"
             f"OPEN_FAILED {int(window.get('open_failed') or 0)}，"
             f"强平 {int(window.get('forced_closes') or 0)}，"
             f"扣费后PnL {float(quality.get('realized_pnl_after_cost') or 0):+.2f}"
+            f"{failed_note}"
         )
         parts.append(f"{d.get('strategy') or '-'} {d.get('candidate_id') or '-'}：{blockers}；{metrics}")
     return "回滚观察明细：" + " | ".join(parts)

@@ -456,6 +456,7 @@ def attention_summary(path: Path | None) -> dict[str, Any]:
     ]
     priority_rank = {"P0": 0, "P1": 1, "P2": 2, "P3": 3}
     visible.sort(key=lambda item: (priority_rank.get(str(item.get("priority") or "P3"), 9), str(item.get("title") or "")))
+    open_visible = [item for item in visible if item.get("status") == "open"]
     return {
         "available": True,
         "path": ATTENTION_HTML,
@@ -463,7 +464,7 @@ def attention_summary(path: Path | None) -> dict[str, Any]:
         "fresh": bool(generated_at and (datetime.now(CST) - generated_at).total_seconds() < 10 * 60),
         "summary": payload.get("summary") or empty["summary"],
         "items": visible,
-        "top": visible[0] if visible else {},
+        "top": open_visible[0] if open_visible else {},
     }
 
 

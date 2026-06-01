@@ -63,6 +63,7 @@ This file is the long-lived project memory for multi-location development. Daily
 ## Current Open Attention
 
 - A/v11 sizing/risk must remain watched from real-time account snapshots and automatic alerts.
+- 2026-06-01 live note: Binance testnet returned `HTTP 418 / -1003 Way too many requests` during account snapshot collection. Treat any sudden zero-wallet/zero-position account snapshot during that window as an API-failure artifact unless a later clean snapshot confirms it. Snapshot collection should now preserve the last valid snapshot on API error and surface the error through system alerts.
 - B/v16's legacy close-confirm alert cleared by the 2026-05-30 check; the code still must surface any new close-confirm or open-sizing mismatch failures as bad alerts.
 - Strategy evolution attention should treat the two B/v16 2026-05-27 candidates as resolved after the 2026-05-31 full-live approval. The two A/v11 trailing-pullback candidates are resolved from the attention ledger after full-live approval, and `EXP-20260523-v11-replacement-quality` remains a guarded/small-live monitoring item rather than a full-rollout approval.
 - User-confirmed archived P0 system items: `入口页刷新失败`, `总入口页面偏旧`, and the 2026-05-26 21:56 CST OOM alert. They remain in SQLite acknowledgement history but no longer occupy P0.

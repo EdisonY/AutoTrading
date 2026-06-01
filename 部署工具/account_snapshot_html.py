@@ -71,6 +71,15 @@ def parse_balance(bal):
     return 0.0, 0.0, 0.0
 
 
+def api_error_payload(payload) -> str | None:
+    if not isinstance(payload, dict):
+        return None
+    code = str(payload.get("code") or "")
+    if not code or code in {"0", "200"}:
+        return None
+    return f"{code}: {payload.get('msg') or payload}"
+
+
 def position_row(p):
     amt = float(p.get("positionAmt", 0) or 0)
     side, side_source = infer_position_side(p)
@@ -104,8 +113,16 @@ def collect():
     for key, version, desc, module_name, class_name, hard in ACCOUNTS:
         module = __import__(module_name)
         client = getattr(module, class_name)()
-        wallet, available, margin = parse_balance(client.get_balance())
-        rows = [position_row(p) for p in client.get_positions() if abs(float(p.get("positionAmt", 0) or 0)) > 0.0001]
+        balance_payload = client.get_balance()
+        balance_error = api_error_payload(balance_payload)
+        if balance_error:
+            raise RuntimeError(f"{key}/{version} balance query failed: {balance_error}")
+        wallet, available, margin = parse_balance(balance_payload)
+        raw_positions = client.get_positions()
+        position_error = getattr(client, "_last_positions_error", None)
+        if position_error:
+            raise RuntimeError(f"{key}/{version} position query failed: {position_error}")
+        rows = [position_row(p) for p in raw_positions if abs(float(p.get("positionAmt", 0) or 0)) > 0.0001]
         rows.sort(key=lambda x: x["upnl"])
         accounts.append({
             "key": key,

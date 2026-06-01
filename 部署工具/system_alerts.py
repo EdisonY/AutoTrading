@@ -26,6 +26,7 @@ EVENT_STORE_DB = ROOT / "runtime" / "event_store.sqlite3"
 MARKET_CACHE = ROOT / "runtime" / "market_data_cache.json"
 PORTAL_HTML = ROOT / "reports" / "portal_latest.html"
 ACCOUNT_LATEST = ROOT / "runtime" / "account_snapshot_latest.json"
+ACCOUNT_ERROR_LATEST = ROOT / "runtime" / "account_snapshot_error_latest.json"
 PORTAL_REFRESH_STATUS = ROOT / "runtime" / "portal_refresh_latest.json"
 STRATEGY_EVOLUTION_LATEST = ROOT / "runtime" / "strategy_evolution_latest.json"
 ATTENTION_LATEST = ROOT / "research_memory" / "attention" / "open_items.json"
@@ -291,6 +292,21 @@ def collect_alerts() -> dict[str, Any]:
                 })
         except Exception as exc:
             alerts.append({"level": "warn", "title": "账户仓位尺寸检查失败", "body": str(exc)})
+
+    if ACCOUNT_ERROR_LATEST.exists():
+        try:
+            err_payload = json.loads(ACCOUNT_ERROR_LATEST.read_text(encoding="utf-8", errors="replace"))
+            err_ts = parse_dt(err_payload.get("ts"))
+            err_text = str(err_payload.get("error") or "")
+            if err_ts and (now - err_ts).total_seconds() <= 30 * 60:
+                level = "bad" if ("418" in err_text or "-1003" in err_text or "Way too many" in err_text) else "warn"
+                alerts.append({
+                    "level": level,
+                    "title": "账户快照采集失败",
+                    "body": f"{err_ts.isoformat()}: {err_text[:240]}",
+                })
+        except Exception as exc:
+            alerts.append({"level": "warn", "title": "账户快照错误记录读取失败", "body": str(exc)})
 
     if ATTENTION_LATEST.exists():
         try:

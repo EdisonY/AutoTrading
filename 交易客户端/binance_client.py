@@ -218,6 +218,8 @@ class BinanceClient:
         self._account_cache_ttl = 2.0
         self._balance_cache = None
         self._positions_cache = None
+        self._last_balance_error = None
+        self._last_positions_error = None
         logger.info("BinanceClient 初始化完成")
 
     def _cache_valid(self, cached) -> bool:
@@ -235,6 +237,7 @@ class BinanceClient:
         if self._cache_valid(self._balance_cache):
             return self._balance_cache[1]
         data = _get("/fapi/v2/account")
+        self._last_balance_error = data if isinstance(data, dict) and str(data.get("code") or "") not in {"", "0", "200"} else None
         self._balance_cache = (time.time(), data)
         return data
 
@@ -555,11 +558,13 @@ class BinanceClient:
             positions = data
         elif isinstance(data, dict) and "code" in data and str(data.get("code")) not in ("200", "0", ""):
             logger.error(f"持仓查询失败: {data}")
+            self._last_positions_error = data
             return []
         else:
             positions = data if isinstance(data, list) else []
 
         open_positions = [pos for pos in positions if float(pos.get("positionAmt", 0)) != 0]
+        self._last_positions_error = None
         self._positions_cache = (time.time(), open_positions)
         if symbol:
             return [pos for pos in open_positions if pos.get("symbol") == symbol]

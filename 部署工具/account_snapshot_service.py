@@ -34,6 +34,8 @@ CST = timezone(timedelta(hours=8))
 EVENT_STORE_DB = ROOT / "runtime" / "event_store.sqlite3"
 REPORT_DIR = ROOT / "复盘报告"
 LOG_PATH = ROOT / "logs" / "account_snapshots.jsonl"
+ERROR_PATH = ROOT / "runtime" / "account_snapshot_error_latest.json"
+ERROR_LOG_PATH = ROOT / "logs" / "account_snapshot_errors.jsonl"
 A_V11_TARGET_MARGIN_USDT = 100.0
 A_V11_MARGIN_TOLERANCE_PCT = 0.05
 
@@ -128,6 +130,18 @@ def collect_once() -> list[dict[str, Any]]:
     return rows
 
 
+def write_snapshot_error(exc: Exception) -> None:
+    payload = {
+        "ts": datetime.now(CST).isoformat(),
+        "status": "error",
+        "error": str(exc),
+    }
+    ERROR_PATH.parent.mkdir(parents=True, exist_ok=True)
+    ERROR_PATH.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    ERROR_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    write_jsonl_with_daily_shard(ERROR_LOG_PATH, payload)
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="实时账户快照入库服务")
     parser.add_argument("--interval", type=int, default=30)
@@ -141,6 +155,7 @@ def main(argv: list[str] | None = None) -> int:
         try:
             collect_once()
         except Exception as exc:
+            write_snapshot_error(exc)
             print(json.dumps({"status": "error", "error": str(exc), "ts": datetime.now(CST).isoformat()}, ensure_ascii=False), flush=True)
         if args.once:
             return 0

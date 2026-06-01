@@ -1888,7 +1888,20 @@ def route_card(title: str, when: str, why: str, path: Path | None, action: str, 
 def render_html(out_dir: Path) -> str:
     data = build_data()
     now = datetime.now(CST).strftime("%Y-%m-%d %H:%M")
-    all_ok = all(s["ok"] for s in data["strategies"])
+    alert_services = (((data.get("alerts") or {}).get("services") or {}) if isinstance(data.get("alerts"), dict) else {})
+    scanner_services = {
+        "crypto-scanner.service",
+        "crypto-scanner-v16.service",
+        "crypto-scanner-v14.service",
+    }
+    scanner_service_states = {
+        name: state for name, state in alert_services.items()
+        if name in scanner_services
+    }
+    all_ok = (
+        bool(scanner_service_states)
+        and all(str(state) == "active" for state in scanner_service_states.values())
+    ) or (not scanner_service_states and all(s["ok"] for s in data["strategies"]))
     account_fresh = data["account_snapshot"].exists()
     binance_ok = account_fresh
     realtime_account = data.get("realtime_account") or {}
@@ -1913,7 +1926,11 @@ def render_html(out_dir: Path) -> str:
             f"{account_upnl:+.2f}" if realtime_account.get("available") else "暂无",
             f"持仓 {account_positions} / 快照 {realtime_account.get('age', '无')}",
         ),
-        ("策略运行", "正常" if all_ok else "需检查", "三套服务心跳/扫描统计"),
+        (
+            "策略运行",
+            "正常" if all_ok else "需检查",
+            "systemd服务状态" if scanner_service_states else "三套服务心跳/扫描统计",
+        ),
         (
             "持久关注",
             f"P0 {int(attention_counts.get('P0') or 0)} / P1 {int(attention_counts.get('P1') or 0)}"

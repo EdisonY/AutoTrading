@@ -2,6 +2,14 @@
 
 This is the durable reason-and-outcome ledger for every material design, code, configuration, deployment, rollback, optimization, or live operational change.
 
+## 2026-06-01 16:23 CST - Align homepage strategy-running metric with live systemd state
+- Trigger / reason: Live context showed all six core Tencent services active and the executive brief said `核心服务 正常`, but the top metric card still showed `策略运行=需检查` because it used an older heartbeat/log freshness fallback. This contradicted the decision-maker first screen.
+- Completed: Updated `portal_dashboard.py` so the top `策略运行` metric prefers live `alerts.services` systemd states for `crypto-scanner.service`, `crypto-scanner-v16.service`, and `crypto-scanner-v14.service`. It falls back to the older strategy heartbeat only when systemd service state is unavailable.
+- Not completed / remaining: None for this display mismatch. This is a report口径 fix only.
+- Verification: Pending in this work session.
+- Live impact / deployment: Pending deploy. Reporting only; no scanner/order/risk behavior changed.
+- Files / release / commit: `部署工具/portal_dashboard.py`, `CHANGELOG.md`.
+
 ## 2026-06-01 16:08 CST - Guard Binance -4164 min-notional rejects before OPEN_FAILED
 - Trigger / reason: The rollback-watch homepage now attributes recent A/v11 and B/v16 `OPEN_FAILED` pressure to Binance `-4164` (`Order's notional must be no smaller than 5`). This is an execution-rule issue, not a strategy-signal-quality failure, and should not keep polluting expansion/rollback samples as ordinary `OPEN_FAILED`.
 - Completed: Added a shared Binance USDM minimum-notional floor of `5.05` USDT in `core/binance_order_rules.py` so quantity validation still enforces Binance's practical minimum even when exchangeInfo parsing returns `0` or stale data. Updated `core/execution_engine.py` so any residual exchange `-4164` response is classified as `preflight_exchange_rule`; scanners that already handle `preflight_rejected` will log it as `OPEN_SKIPPED/execution_preflight` instead of `OPEN_FAILED`.

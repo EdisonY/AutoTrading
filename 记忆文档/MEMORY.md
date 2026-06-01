@@ -6,6 +6,8 @@
 - `system_alerts.py` 已读取 `binance_api_guard_state.json`，入口页可看到 API guard cooldown、最近 account/method/path 和 top signed REST 路径。本轮线上状态：`system_alerts.py --once` 为 `ok/0`，无 418/429，guard top path 主要是 `B/v16 GET /fapi/v2/positionRisk`。
 - 2026-06-01 21:02 CST live pull：六个核心服务 active，账户快照全 fresh，账户浮盈 `+32.9555`，持仓 `5`，attention `P0=0/P1=4/P2=6`。B/C 账户当前 0 仓，A/v11 当前 5 仓且 sizing violation 为 0。
 - 仍未完成的 API 长线任务：把账户余额/仓位从轮询迁到 user-data-stream，减少 open/close confirmation 中重复 `positionRisk`，为 guard 增加滚动窗口预算/每服务预算，而不是只有全局最小间隔和 ban 窗口。
+- 追加进展：三套 Binance client 的账户/仓位缓存 TTL 从固定 `2s` 改成 `BINANCE_ACCOUNT_CACHE_TTL_SEC`，默认 `5s`；订单提交后仍会 `invalidate_account_snapshot()`，所以不会用旧仓位确认开平仓结果。2026-06-01 21:12 CST 复验：六服务 active，system alerts `ok/0`，账户浮盈 `+27.5109`，持仓 `4`，P0=0。
+- 操作教训：同一目标服务器上会上传相同 `core/*` 的组件不要并行 deploy。一次 A/B 并行部署导致 B 的 SFTP `size mismatch`，已立刻顺序重跑成功；后续同目标共享 core 的 strategy/account/sentinel 部署必须顺序执行。
 
 ## 2026-06-01 A/v11 replay gate 归因补齐 + B/v16 false P0 收敛
 - 中长期计划当前完成度：N1 决策者入口页、N3 Parquet/DuckDB 研究仓、N4 灰度/回滚门禁已经进入可用状态；N2 已完成事件模型、特征对齐、反事实 gate 归一和 replay/live gate audit，但还没有完成 A/B/C 纯策略门控函数和完整 replay 引擎；N5 开源框架 PoC 仍未开始。粗略看，当前阶段约完成 65%-70%，剩余主要是更深的架构抽象和 API/数据底座。

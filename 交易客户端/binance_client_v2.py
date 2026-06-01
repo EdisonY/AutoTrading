@@ -217,7 +217,7 @@ class BinanceClientV2:
         self.api_key = API_KEY
         self.api_secret = API_SECRET
         self.base_url = BASE_URL
-        self._account_cache_ttl = 2.0
+        self._account_cache_ttl = float(os.environ.get("BINANCE_ACCOUNT_CACHE_TTL_SEC", "5"))
         self._balance_cache = None
         self._positions_cache = None
         self._last_balance_error = None

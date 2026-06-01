@@ -219,7 +219,7 @@ class BinanceClient:
             raise RuntimeError("Missing BINANCE_A_API_KEY / BINANCE_A_API_SECRET")
         self._ctval_cache: dict[str, float] = {}
         self._markets = get_markets()
-        self._account_cache_ttl = 2.0
+        self._account_cache_ttl = float(os.environ.get("BINANCE_ACCOUNT_CACHE_TTL_SEC", "5"))
         self._balance_cache = None
         self._positions_cache = None
         self._last_balance_error = None

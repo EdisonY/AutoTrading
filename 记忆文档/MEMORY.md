@@ -7,7 +7,7 @@
 - 2026-06-01 21:02 CST live pull：六个核心服务 active，账户快照全 fresh，账户浮盈 `+32.9555`，持仓 `5`，attention `P0=0/P1=4/P2=6`。B/C 账户当前 0 仓，A/v11 当前 5 仓且 sizing violation 为 0。
 - 仍未完成的 API 长线任务：把账户余额/仓位从轮询迁到 user-data-stream，减少 open/close confirmation 中重复 `positionRisk`，为 guard 增加滚动窗口预算/每服务预算，而不是只有全局最小间隔和 ban 窗口。
 - 追加进展：三套 Binance client 的账户/仓位缓存 TTL 从固定 `2s` 改成 `BINANCE_ACCOUNT_CACHE_TTL_SEC`，默认 `5s`；订单提交后仍会 `invalidate_account_snapshot()`，所以不会用旧仓位确认开平仓结果。2026-06-01 21:12 CST 复验：六服务 active，system alerts `ok/0`，账户浮盈 `+27.5109`，持仓 `4`，P0=0。
-- 再追加进展：API guard 已加入 60 秒滚动预算，`BINANCE_API_GUARD_MAX_REQUESTS_PER_MIN` 默认 `120`。达到预算时全进程等待到最旧请求滑出窗口；`system_alerts.py` 会展示 `rolling_count_60s/max_requests_per_min/top_paths_60s`。2026-06-01 21:22 CST 复验：六服务 active，system alerts `ok/0`，账户浮盈 `+43.8036`，持仓 `5`，P0=0。
+- 再追加进展：API guard 已加入 60 秒滚动预算，`BINANCE_API_GUARD_MAX_REQUESTS_PER_MIN` 默认 `120`，`BINANCE_API_GUARD_MAX_ACCOUNT_REQUESTS_PER_MIN` 默认 `80`。达到预算时全进程等待到最旧请求滑出窗口；`system_alerts.py` 会展示 `rolling_count_60s/max_requests_per_min/max_account_requests_per_min/top_paths_60s`。2026-06-01 21:38 CST 复验：六服务 active，system alerts `ok/0`，账户浮盈 `+51.5834`，持仓 `4`，P0=0；guard 60s 总请求 `10/120`，单账户 `3/80`，无 cooldown。
 - 操作教训：同一目标服务器上会上传相同 `core/*` 的组件不要并行 deploy。一次 A/B 并行部署导致 B 的 SFTP `size mismatch`，已立刻顺序重跑成功；后续同目标共享 core 的 strategy/account/sentinel 部署必须顺序执行。
 
 ## 2026-06-01 A/v11 replay gate 归因补齐 + B/v16 false P0 收敛

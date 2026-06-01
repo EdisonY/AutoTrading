@@ -40,6 +40,10 @@ def _max_requests_per_minute() -> int:
     return max(1, int(os.environ.get("BINANCE_API_GUARD_MAX_REQUESTS_PER_MIN", "120")))
 
 
+def _max_requests_per_account_per_minute() -> int:
+    return max(1, int(os.environ.get("BINANCE_API_GUARD_MAX_ACCOUNT_REQUESTS_PER_MIN", "80")))
+
+
 def _load_state() -> dict[str, Any]:
     try:
         return json.loads(STATE_PATH.read_text(encoding="utf-8"))
@@ -94,11 +98,15 @@ def wait_before_request(account: str, method: str, path: str) -> float:
                     item for item in state.get("recent_requests", [])
                     if now - int(item.get("ts_ms") or 0) <= 60_000
                 ]
-                if len(recent) >= _max_requests_per_minute():
-                    oldest = min(int(item.get("ts_ms") or now) for item in recent)
+                account_recent = [item for item in recent if str(item.get("account") or "") == account]
+                if len(recent) >= _max_requests_per_minute() or len(account_recent) >= _max_requests_per_account_per_minute():
+                    budget_rows = recent if len(recent) >= _max_requests_per_minute() else account_recent
+                    oldest = min(int(item.get("ts_ms") or now) for item in budget_rows)
                     sleep_seconds = min(10.0, max(1.0, (oldest + 60_000 - now) / 1000))
                     state["recent_requests"] = recent
                     state["rolling_count_60s"] = len(recent)
+                    state["rolling_account_count_60s"] = len(account_recent)
+                    state["rolling_limited_account"] = account if len(account_recent) >= _max_requests_per_account_per_minute() else ""
                     _write_state(state)
                 else:
                     wait_ms = _min_interval_ms() - (now - last_request_ms)
@@ -113,7 +121,9 @@ def wait_before_request(account: str, method: str, path: str) -> float:
                         recent.append({"ts_ms": now, "account": account, "method": method, "path": path})
                         state["recent_requests"] = recent[-_max_requests_per_minute():]
                         state["rolling_count_60s"] = len(state["recent_requests"])
+                        state["rolling_account_count_60s"] = len(account_recent) + 1
                         state["max_requests_per_min"] = _max_requests_per_minute()
+                        state["max_account_requests_per_min"] = _max_requests_per_account_per_minute()
                         stats = state.setdefault("stats", {})
                         key = f"{account}:{method}:{path}"
                         stats[key] = int(stats.get(key) or 0) + 1

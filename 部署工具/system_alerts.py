@@ -254,7 +254,10 @@ def read_binance_api_guard(now: datetime) -> dict[str, Any]:
         "banned_until": banned_until.isoformat() if banned_until else "",
         "in_cooldown": bool(banned_until and banned_until > now),
         "rolling_count_60s": int(payload.get("rolling_count_60s") or len(recent)),
+        "rolling_account_count_60s": int(payload.get("rolling_account_count_60s") or 0),
+        "rolling_limited_account": payload.get("rolling_limited_account") or "",
         "max_requests_per_min": int(payload.get("max_requests_per_min") or 0),
+        "max_account_requests_per_min": int(payload.get("max_account_requests_per_min") or 0),
         "top_paths_60s": sorted(
             ({"name": str(name), "count": int(count or 0)} for name, count in recent_counts.items()),
             key=lambda item: item["count"],

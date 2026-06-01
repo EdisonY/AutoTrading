@@ -440,6 +440,11 @@ def payload_float(payload: dict[str, Any], keys: tuple[str, ...]) -> float:
     for key in keys:
         if key in payload:
             return to_float(payload.get(key))
+    raw = payload.get("raw")
+    if isinstance(raw, dict):
+        for key in keys:
+            if key in raw:
+                return to_float(raw.get(key))
     return 0.0
 
 
@@ -473,6 +478,36 @@ def open_failed_reason(payload: dict[str, Any]) -> str:
     if code:
         return f"code_{code}"
     return compact_reason(text, 80) or "unknown"
+
+
+def resolved_open_failed_reason(payload: dict[str, Any]) -> str:
+    reason = open_failed_reason(payload)
+    if reason == "binance_code_-4164":
+        return "exchange_min_notional_preflight"
+    text_parts = [
+        payload.get("reason"),
+        payload.get("entry_reason"),
+        payload.get("error"),
+        payload.get("msg"),
+        payload.get("message"),
+        payload.get("detail"),
+    ]
+    raw = payload.get("raw")
+    if isinstance(raw, dict):
+        text_parts.extend(
+            [
+                raw.get("reason"),
+                raw.get("entry_reason"),
+                raw.get("error"),
+                raw.get("msg"),
+                raw.get("message"),
+                raw.get("detail"),
+            ]
+        )
+    text = " ".join(str(part or "") for part in text_parts).lower()
+    if "notional must be no smaller than 5" in text or "minnotional" in text or "min_notional" in text:
+        return "exchange_min_notional_preflight"
+    return ""
 
 
 def classify_regime(metrics: dict[str, Any]) -> dict[str, Any]:
@@ -601,8 +636,11 @@ def summarize_post_approval_windows(
                     "opens": 0,
                     "closes": 0,
                     "forced_closes": 0,
+                    "raw_open_failed": 0,
                     "open_failed": 0,
+                    "resolved_open_failed": 0,
                     "open_failed_reasons": collections.Counter(),
+                    "resolved_open_failed_reasons": collections.Counter(),
                     "close_failed": 0,
                     "raw_close_failed": 0,
                     "resolved_close_failed": 0,
@@ -660,8 +698,14 @@ def summarize_post_approval_windows(
                     elif event_type == "FORCED_CLOSE":
                         metrics["forced_closes"] += 1
                     elif event_type == "OPEN_FAILED":
-                        metrics["open_failed"] += 1
-                        metrics["open_failed_reasons"][open_failed_reason(payload)] += 1
+                        metrics["raw_open_failed"] += 1
+                        resolved_reason = resolved_open_failed_reason(payload)
+                        if resolved_reason:
+                            metrics["resolved_open_failed"] += 1
+                            metrics["resolved_open_failed_reasons"][resolved_reason] += 1
+                        else:
+                            metrics["open_failed"] += 1
+                            metrics["open_failed_reasons"][open_failed_reason(payload)] += 1
                     elif event_type in {"CLOSE_FAILED", "FORCED_CLOSE_FAILED"}:
                         metrics["raw_close_failed"] += 1
                         if close_failed_still_open(open_positions_by_strategy, strategy, row["symbol"], row["side"]):
@@ -678,6 +722,12 @@ def summarize_post_approval_windows(
                     metrics["open_failed_reasons"] = [
                         {"reason": reason, "count": count}
                         for reason, count in failed_counter.most_common(5)
+                    ]
+                resolved_counter = metrics.get("resolved_open_failed_reasons")
+                if isinstance(resolved_counter, collections.Counter):
+                    metrics["resolved_open_failed_reasons"] = [
+                        {"reason": reason, "count": count}
+                        for reason, count in resolved_counter.most_common(5)
                     ]
                 metrics["regime"] = classify_regime(metrics)
                 metrics["quality"] = classify_window_quality(metrics)

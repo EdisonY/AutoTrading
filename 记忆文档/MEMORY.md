@@ -1,5 +1,13 @@
 # MEMORY.md - 长期记忆
 
+## 2026-06-01 rollback-watch 复核：修正 PnL/OPEN_FAILED 归因
+- 用户要求继续未完成任务。本轮从 live context 复核开始：`2026-06-01T22:04:14+08:00` 拉取显示六个腾讯核心服务 active，系统告警 `ok/0`，账户浮盈约 `+21.16 USDT`，5 仓，attention `P0=0/P1=4/P2=6`。
+- 关键发现：A/v11/B/v16 的 post-approval 实盘窗口原先把很多 `CLOSE/FORCED_CLOSE` 的已实现 PnL 算成 `0.0`，因为事件 payload 的 `pnl_usd` 常在 `payload.raw` 中，不在顶层。已修 `strategy_evolution_gate.py payload_float()`，现在同时读顶层和 `raw`。
+- 另一个关键发现：B/v16 的 P1 主要来自历史 Binance `-4164` min-notional `OPEN_FAILED`。这些是执行层规则拒单，且 16:08 已上线 min-notional floor/preflight 修复，未来应走 `OPEN_SKIPPED/execution_preflight`。已在 gate 中把 deterministic `-4164/minNotional` 计为 `raw_open_failed/resolved_open_failed`，不再进入策略质量 `open_failed_rate`。
+- 线上重新生成 gate/attention/portal 后：`P0=0/P1=2/P2=6`。B/v16 两个已批准候选回到 full-live monitoring/P2；A/v11 两个 trailing-pullback 候选仍为 P1 rollback-watch，但这是读取真实 PnL 后的 72h after-cost 亏损压力，不再是缺字段假亏。
+- 部署记录：Tencent research release `20260601-221232-research-02bcd46`，Aliyun shadow release `20260601-221430-shadow-02bcd46`。未重启 scanner，未改阈值/仓位/下单逻辑，未自动回滚。
+- 最终复验：`2026-06-01T22:16:20+08:00` live pull 显示六服务 active，账户浮盈 `+24.9590`，7 仓，attention `P0=0/P1=2/P2=6`。下一步应围绕 A/v11 真实 P1 判断是否继续观察、收窄 trailing 参数或人工回滚。
+
 ## 2026-06-01 Binance API 全局闸门上线
 - 用户要求剩余任务继续推进且必须考虑服务器压力、Binance API 接口限制。本轮先落地最直接的防护：`core/binance_api_guard.py` 作为三策略 + 账户快照共享的 signed REST 文件级闸门。
 - A/v11、B/v16、C/v14 三套 Binance client 现在每次 signed REST 前都会经过 `wait_before_request()`，全进程共享最小请求间隔；遇到 `HTTP 418/429/-1003/too many requests` 会把 `banned_until_ms` 写入 `runtime/binance_api_guard_state.json`，其他进程自动等待，避免账户快照或某个 scanner 把 IP ban 继续延长。

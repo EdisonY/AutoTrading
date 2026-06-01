@@ -1,5 +1,12 @@
 # MEMORY.md - 长期记忆
 
+## 2026-06-01 账户快照抗单账户失败与入口页状态修复
+- 入口页 `策略运行` 顶部卡片已改为优先使用 systemd 服务状态，避免六个核心服务 active 时仍因旧 heartbeat 口径显示“需检查”。2026-06-01 16:39 CST live pull：六服务 active，`策略运行=正常/systemd服务状态`。
+- 账户快照服务已改成逐账户采集。单个账户被 Binance 418/429 或仓位查询失败拖住时，会回退该账户最后有效 SQLite 快照并标记 `stale/快照回退`，不会再让三账户快照整体断流；成功账户仍继续入库。stale fallback 不作为新鲜 SQLite 行插入。
+- 本轮 Binance 冷却在 `2026-06-01 16:33:57 +08` 后自动恢复，`2026-06-01 16:34:30 +08` 快照显示 `fresh_accounts=3`、持仓 `12`、浮盈 `+117.6648`、attention `P0=0/P1=0/P2=2`。之前 `17` 持仓 / `+238.2607` 是旧快照口径，不应再作为当前状态。
+- 哨兵链路复核：market mover watchlist 新鲜，B/v16 已在 `16:37` 重新写入 `sentinel_scans`，所以哨兵扫描入库链路当前可用。若以后看到 `sentinel_scans` 偏旧，要区分“scanner 周期尚未走到哨兵段”和“watchlist 读取失败”。
+- 仍未完成的长期项：Binance API-budget / user-data-stream 替代轮询仍是必要工程。账户快照抗失败只防止报告被单次 API 异常污染，不等于解决 IP 级 REST 压力。
+
 ## 2026-05-31 下一阶段优化目标与 report 决策化
 - 用户要求把整体优化建议作为下一目标记录并开始推进，同时重新梳理 report：决策者需要看到的是经过筛选和思考后的简洁结论，核心关心盈亏、策略是否进化、系统是否有风险、是否有可执行优化。
 - 已确立下一阶段目标：从“调阈值系统”升级为“策略进化系统”。优先级为：N1 决策者入口页重构，N2 统一 replay/live 同路径，N3 Parquet/DuckDB 研究仓，N4 灰度/回滚化进化门禁，N5 NautilusTrader/Qlib/Freqtrade/vectorbt 小型 PoC。

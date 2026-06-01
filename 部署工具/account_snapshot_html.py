@@ -191,14 +191,22 @@ def build_html(accounts):
 
     cards = []
     for a in accounts:
+        stale = bool(a.get("stale"))
+        error_note = html.escape(str(a.get("snapshot_error") or ""))
+        stale_note = (
+            f'<p class="error-note">快照回退：{error_note}</p>'
+            if stale and error_note
+            else ""
+        )
         cards.append(f"""
-        <section class="account">
+        <section class="account{' stale' if stale else ''}">
           <div class="account-head">
             <div>
               <h2>账号 {a['key']} · {a['version']}</h2>
               <p>{html.escape(a['desc'])}</p>
+              {stale_note}
             </div>
-            <div class="status {'bad' if a['over_hard'] else 'ok'}">{'有硬顶风险' if a['over_hard'] else '风控正常'}</div>
+            <div class="status {'bad' if (a['over_hard'] or stale) else 'ok'}">{'快照回退' if stale else '有硬顶风险' if a['over_hard'] else '风控正常'}</div>
           </div>
           <div class="metric-grid compact">
             <div><span>wallet</span><strong>{money(a['wallet'])}</strong></div>
@@ -256,7 +264,9 @@ p {{ margin:0; color:var(--muted); }}
 .metric-grid small {{ display:block; color:var(--muted); margin-top:4px; }}
 .compact {{ grid-template-columns:repeat(6, minmax(0,1fr)); }}
 .account, .rank {{ background:var(--panel2); border:1px solid var(--line); border-radius:8px; padding:16px; margin:16px 0; }}
+.account.stale {{ border-color:rgba(234,179,8,.55); }}
 .account-head {{ display:flex; justify-content:space-between; gap:16px; align-items:center; margin-bottom:12px; }}
+.error-note {{ color:var(--yellow); margin-top:6px; font-size:13px; }}
 .status {{ border-radius:999px; padding:6px 10px; font-size:12px; border:1px solid var(--line); }}
 .status.ok {{ color:var(--up); border-color:rgba(34,197,94,.35); }}
 .status.bad {{ color:var(--down); border-color:rgba(239,68,68,.45); }}

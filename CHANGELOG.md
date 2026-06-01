@@ -2,12 +2,20 @@
 
 This is the durable reason-and-outcome ledger for every material design, code, configuration, deployment, rollback, optimization, or live operational change.
 
+## 2026-06-01 16:34 CST - Make account snapshots resilient to one-account API failures
+- Trigger / reason: Live report recovered the strategy-running card, but current-state pull still showed a P1 attention item: account snapshots were in Binance 418 cooldown and the last valid snapshot was more than two hours old. The account snapshot collector could fail the whole three-account snapshot when A/v11 hit a balance/position API error, making B/v16 and C/v14 disappear from fresh account reporting too.
+- Completed: Updated `account_snapshot_service.py` to collect accounts independently. If one account fails, it falls back to that account's last SQLite `account_snapshots` payload, marks it `stale`, preserves the API error/cooldown record, and still writes fresh rows for accounts that succeeded. Updated `account_snapshot_html.py` to mark stale/fallback accounts visibly as `快照回退` instead of silently presenting them as normal. The service no longer inserts stale fallback rows into SQLite as fresh data.
+- Not completed / remaining: This is a robustness fix for account snapshot/reporting. It does not solve Binance REST pressure permanently; the larger API-budget/user-data-stream migration remains future work before further scanner cadence expansion.
+- Verification: Local `py_compile` passed for account snapshot service/html and portal. Tencent remote `py_compile` passed after deploy. At the Binance retry point the service produced a clean snapshot at `2026-06-01T16:34:30+08:00` with `fresh_accounts=3`, `stale_accounts=[]`, unrealized PnL `+117.6648`, and `12` open positions. Manual remote refresh of `system_alerts.py`, `decision_attention.py`, and `portal_dashboard.py` produced `status=ok`, `alert_count=0`, attention `P0=0/P1=0/P2=2`, and homepage cards `实时账户浮盈亏 +117.66` / `持仓 12` / `快照 60 秒前`. SQLite health check showed `events=66160`, `sentinel_scans=274623`, `account_snapshots=60402`, latest snapshot `2026-06-01T16:34:30.046002+08:00`; a follow-up check confirmed B/v16 had resumed writing current `sentinel_scans` at `16:37`.
+- Live impact / deployment: Deployed Tencent `account` release `20260601-163336-account-e3abaa6`, restarting only `crypto-account-snapshot.service`, which returned active/running. This changes account snapshot/reporting behavior only; no order sizing, entry threshold, scanner cadence, or risk gate changed.
+- Files / release / commit: `部署工具/account_snapshot_service.py`, `部署工具/account_snapshot_html.py`, `CHANGELOG.md`, `记忆文档/MEMORY.md`.
+
 ## 2026-06-01 16:23 CST - Align homepage strategy-running metric with live systemd state
 - Trigger / reason: Live context showed all six core Tencent services active and the executive brief said `核心服务 正常`, but the top metric card still showed `策略运行=需检查` because it used an older heartbeat/log freshness fallback. This contradicted the decision-maker first screen.
 - Completed: Updated `portal_dashboard.py` so the top `策略运行` metric prefers live `alerts.services` systemd states for `crypto-scanner.service`, `crypto-scanner-v16.service`, and `crypto-scanner-v14.service`. It falls back to the older strategy heartbeat only when systemd service state is unavailable.
 - Not completed / remaining: None for this display mismatch. This is a report口径 fix only.
-- Verification: Pending in this work session.
-- Live impact / deployment: Pending deploy. Reporting only; no scanner/order/risk behavior changed.
+- Verification: Local `py_compile` passed. Tencent remote `py_compile` passed for `portal_dashboard.py` and `system_alerts.py`; regenerated `/opt/crypto-auto-trader/reports/index.html` and verified the card now reads `策略运行=正常` with `systemd服务状态`. Final `pull_live_context.py` at `2026-06-01T16:39:03+08:00` showed all six core Tencent services active, account upnl `+117.6648`, positions `12`, attention `P0=0/P1=0/P2=2`.
+- Live impact / deployment: Deployed Tencent `portal` release `20260601-162652-portal-e3abaa6` and Aliyun `shadow` release `20260601-162723-shadow-e3abaa6`. Tencent portal deploy restarted only `crypto-system-alerts.service`, which returned active/running. Reporting only; no scanner/order/risk behavior changed.
 - Files / release / commit: `部署工具/portal_dashboard.py`, `CHANGELOG.md`.
 
 ## 2026-06-01 16:08 CST - Guard Binance -4164 min-notional rejects before OPEN_FAILED

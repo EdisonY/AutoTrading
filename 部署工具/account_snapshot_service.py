@@ -6,6 +6,7 @@ import argparse
 import json
 import os
 import re
+import sqlite3
 import sys
 import time
 from datetime import datetime, timezone, timedelta
@@ -26,7 +27,7 @@ sys.path.insert(0, str(ROOT / "部署工具"))
 if (ROOT / "交易客户端").exists():
     sys.path.insert(0, str(ROOT / "交易客户端"))
 
-from account_snapshot_html import build_html, collect
+from account_snapshot_html import ACCOUNTS, api_error_payload, build_html, parse_balance, position_row
 from core.audit_log import write_jsonl_with_daily_shard
 from core.event_store import insert_account_snapshot
 
@@ -76,11 +77,13 @@ def _snapshot_payload(account: dict[str, Any], ts: datetime) -> dict[str, Any]:
     worst = min(positions, key=lambda p: float(p.get("upnl") or 0), default={})
     best = max(positions, key=lambda p: float(p.get("upnl") or 0), default={})
     return {
-        "ts": ts.isoformat(),
+        "ts": str(account.get("snapshot_ts") or ts.isoformat()),
         "account": account.get("key"),
         "strategy": f"{account.get('key')}/{account.get('version')}",
         "version": account.get("version"),
         "desc": account.get("desc"),
+        "stale": bool(account.get("stale")),
+        "snapshot_error": account.get("snapshot_error") or "",
         "wallet_usdt": float(account.get("wallet") or 0),
         "available_usdt": float(account.get("available") or 0),
         "margin_usdt": float(account.get("margin") or 0),
@@ -106,30 +109,174 @@ def write_html(accounts: list[dict[str, Any]]) -> None:
     (REPORT_DIR / "account_snapshot_latest.html").write_text(html_text, encoding="utf-8")
 
 
+def _empty_error_account(
+    key: str,
+    version: str,
+    desc: str,
+    hard: float,
+    error: str,
+) -> dict[str, Any]:
+    return {
+        "key": key,
+        "version": version,
+        "desc": desc,
+        "hard": hard,
+        "wallet": 0.0,
+        "available": 0.0,
+        "margin": 0.0,
+        "positions": [],
+        "upnl": 0.0,
+        "longs": 0,
+        "shorts": 0,
+        "notional": 0.0,
+        "used_margin": 0.0,
+        "over_hard": 0,
+        "stale": True,
+        "snapshot_error": error,
+    }
+
+
+def _account_from_snapshot(
+    payload: dict[str, Any],
+    *,
+    key: str,
+    version: str,
+    desc: str,
+    hard: float,
+    error: str,
+) -> dict[str, Any]:
+    positions = payload.get("positions") if isinstance(payload.get("positions"), list) else []
+    return {
+        "key": key,
+        "version": str(payload.get("version") or version),
+        "desc": str(payload.get("desc") or desc),
+        "hard": hard,
+        "wallet": float(payload.get("wallet_usdt") or 0),
+        "available": float(payload.get("available_usdt") or 0),
+        "margin": float(payload.get("margin_usdt") or 0),
+        "positions": positions,
+        "upnl": float(payload.get("unrealized_pnl_usdt") or 0),
+        "longs": int(payload.get("longs") or 0),
+        "shorts": int(payload.get("shorts") or 0),
+        "notional": float(payload.get("notional_usdt") or 0),
+        "used_margin": float(payload.get("used_margin_usdt") or 0),
+        "over_hard": int(payload.get("hard_stop_risk_count") or 0),
+        "stale": True,
+        "snapshot_ts": payload.get("ts"),
+        "snapshot_error": error,
+    }
+
+
+def _last_account_snapshot(
+    key: str,
+    version: str,
+    desc: str,
+    hard: float,
+    error: str,
+) -> dict[str, Any]:
+    try:
+        if not EVENT_STORE_DB.exists():
+            return _empty_error_account(key, version, desc, hard, error)
+        with sqlite3.connect(EVENT_STORE_DB) as con:
+            row = con.execute(
+                """
+                select payload_json
+                from account_snapshots
+                where account = ?
+                order by ts desc, id desc
+                limit 1
+                """,
+                (key,),
+            ).fetchone()
+        if not row:
+            return _empty_error_account(key, version, desc, hard, error)
+        payload = json.loads(str(row[0]))
+        if not isinstance(payload, dict):
+            return _empty_error_account(key, version, desc, hard, error)
+        return _account_from_snapshot(payload, key=key, version=version, desc=desc, hard=hard, error=error)
+    except Exception as exc:
+        return _empty_error_account(key, version, desc, hard, f"{error}; fallback failed: {exc}")
+
+
+def _collect_account(key: str, version: str, desc: str, module_name: str, class_name: str, hard: float) -> dict[str, Any]:
+    module = __import__(module_name)
+    client = getattr(module, class_name)()
+    balance_payload = client.get_balance()
+    balance_error = api_error_payload(balance_payload)
+    if balance_error:
+        raise RuntimeError(f"{key}/{version} balance query failed: {balance_error}")
+    wallet, available, margin = parse_balance(balance_payload)
+    raw_positions = client.get_positions()
+    position_error = getattr(client, "_last_positions_error", None)
+    if position_error:
+        raise RuntimeError(f"{key}/{version} position query failed: {position_error}")
+    rows = [position_row(p) for p in raw_positions if abs(float(p.get("positionAmt", 0) or 0)) > 0.0001]
+    rows.sort(key=lambda x: x["upnl"])
+    return {
+        "key": key,
+        "version": version,
+        "desc": desc,
+        "hard": hard,
+        "wallet": wallet,
+        "available": available,
+        "margin": margin,
+        "positions": rows,
+        "upnl": sum(r["upnl"] for r in rows),
+        "longs": sum(1 for r in rows if r["side"] == "LONG"),
+        "shorts": sum(1 for r in rows if r["side"] == "SHORT"),
+        "notional": sum(r["notional"] for r in rows),
+        "used_margin": sum(r["margin"] for r in rows),
+        "over_hard": sum(1 for r in rows if r["loss"] >= hard),
+        "stale": False,
+        "snapshot_error": "",
+    }
+
+
+def collect_accounts_resilient() -> tuple[list[dict[str, Any]], list[str]]:
+    accounts: list[dict[str, Any]] = []
+    errors: list[str] = []
+    for key, version, desc, module_name, class_name, hard in ACCOUNTS:
+        try:
+            accounts.append(_collect_account(key, version, desc, module_name, class_name, hard))
+        except Exception as exc:
+            error = str(exc)
+            errors.append(error)
+            accounts.append(_last_account_snapshot(key, version, desc, hard, error))
+    return accounts, errors
+
+
 def collect_once() -> list[dict[str, Any]]:
     ts = datetime.now(CST)
-    accounts = collect()
+    accounts, errors = collect_accounts_resilient()
     write_html(accounts)
     rows = [_snapshot_payload(account, ts) for account in accounts]
     for row in rows:
+        if row.get("stale"):
+            continue
         insert_account_snapshot(EVENT_STORE_DB, str(row["account"]), row)
         if os.environ.get("ACCOUNT_SNAPSHOT_JSONL_ENABLED", "0").strip().lower() in {"1", "true", "yes"}:
             write_jsonl_with_daily_shard(LOG_PATH, row)
+    stale_accounts = [str(account.get("key")) for account in accounts if account.get("stale")]
     summary = {
         "ts": ts.isoformat(),
         "accounts": len(rows),
+        "fresh_accounts": len(rows) - len(stale_accounts),
+        "stale_accounts": stale_accounts,
         "wallet_usdt": round(sum(float(r["wallet_usdt"]) for r in rows), 4),
         "available_usdt": round(sum(float(r["available_usdt"]) for r in rows), 4),
         "margin_usdt": round(sum(float(r["margin_usdt"]) for r in rows), 4),
         "unrealized_pnl_usdt": round(sum(float(r["unrealized_pnl_usdt"]) for r in rows), 4),
         "open_positions": sum(int(r["open_positions"]) for r in rows),
+        "partial_error_count": len(errors),
     }
     (ROOT / "runtime").mkdir(parents=True, exist_ok=True)
     (ROOT / "runtime" / "account_snapshot_latest.json").write_text(
         json.dumps({"summary": summary, "accounts": rows}, ensure_ascii=False, indent=2, default=str),
         encoding="utf-8",
     )
-    if ERROR_PATH.exists():
+    if errors:
+        write_snapshot_error(RuntimeError("; ".join(errors)))
+    elif ERROR_PATH.exists():
         ERROR_PATH.unlink()
     print(json.dumps(summary, ensure_ascii=False), flush=True)
     return rows

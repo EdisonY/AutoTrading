@@ -2,6 +2,14 @@
 
 This is the durable reason-and-outcome ledger for every material design, code, configuration, deployment, rollback, optimization, or live operational change.
 
+## 2026-06-01 16:08 CST - Guard Binance -4164 min-notional rejects before OPEN_FAILED
+- Trigger / reason: The rollback-watch homepage now attributes recent A/v11 and B/v16 `OPEN_FAILED` pressure to Binance `-4164` (`Order's notional must be no smaller than 5`). This is an execution-rule issue, not a strategy-signal-quality failure, and should not keep polluting expansion/rollback samples as ordinary `OPEN_FAILED`.
+- Completed: Added a shared Binance USDM minimum-notional floor of `5.05` USDT in `core/binance_order_rules.py` so quantity validation still enforces Binance's practical minimum even when exchangeInfo parsing returns `0` or stale data. Updated `core/execution_engine.py` so any residual exchange `-4164` response is classified as `preflight_exchange_rule`; scanners that already handle `preflight_rejected` will log it as `OPEN_SKIPPED/execution_preflight` instead of `OPEN_FAILED`.
+- Not completed / remaining: This prevents future sample pollution and narrows the next failure diagnosis. It does not rewrite historical `OPEN_FAILED` rows or automatically clear current rollback-watch items; those should clear only after new post-change windows no longer show `-4164` pressure.
+- Verification: Local `py_compile` passed for shared order rules, execution engine, and all three scanners. Local smoke verified a synthetic 4.9 USDT notional order is raised to at least `5.05`, and a synthetic `-4164` exchange response becomes `preflight_rejected=True` with code `exchange_min_notional`.
+- Live impact / deployment: Pending deploy. This changes live execution preflight/attribution for A/v11, B/v16, and C/v14 but does not change strategy entry thresholds, target margin, leverage, or max-position rules.
+- Files / release / commit: `core/binance_order_rules.py`, `core/execution_engine.py`, `CHANGELOG.md`, `PROJECT_STATE.md`, `记忆文档/MEMORY.md`.
+
 ## 2026-06-01 15:58 CST - Add OPEN_FAILED reason attribution to rollback watch
 - Trigger / reason: The homepage now shows B/v16 rollback-watch pressure from `OPEN_FAILED 5`, but the decision-maker still cannot see whether that means exchange position-limit errors, API errors, preflight bugs, or another execution cause without opening raw event logs.
 - Completed: Updated `strategy_evolution_gate.py` to classify and count `OPEN_FAILED` reasons inside post-approval windows, extracting Binance error codes from raw reason/msg text when available and storing the top reasons in each window. Updated `portal_dashboard.py` rollback-watch brief to append the top failure reasons beside 24h opens/closes/OPEN_FAILED/forced-close/PnL metrics.

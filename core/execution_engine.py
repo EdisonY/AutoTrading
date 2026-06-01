@@ -61,14 +61,21 @@ class ExecutionResult:
     @property
     def preflight_rejected(self) -> bool:
         return isinstance(self.raw, dict) and (
-            "preflight" in self.raw or "preflight_market_price" in self.raw
+            "preflight" in self.raw
+            or "preflight_market_price" in self.raw
+            or "preflight_exchange_rule" in self.raw
         )
 
     @property
     def preflight_detail(self) -> dict[str, Any]:
         if not isinstance(self.raw, dict):
             return {}
-        detail = self.raw.get("preflight") or self.raw.get("preflight_market_price") or {}
+        detail = (
+            self.raw.get("preflight")
+            or self.raw.get("preflight_market_price")
+            or self.raw.get("preflight_exchange_rule")
+            or {}
+        )
         return detail if isinstance(detail, dict) else {}
 
 
@@ -146,6 +153,25 @@ class ExecutionEngine:
                         message=self._raw_message(raw),
                         raw=raw,
                     )
+            if self._is_exchange_min_notional_reject(raw):
+                return ExecutionResult(
+                    False,
+                    "open",
+                    req.symbol,
+                    req.side,
+                    qty,
+                    code="exchange_min_notional",
+                    message=self._raw_message(raw) or "exchange rejected notional below minimum",
+                    raw={
+                        "preflight_exchange_rule": {
+                            "ok": False,
+                            "code": "exchange_min_notional",
+                            "reason": self._raw_message(raw) or "exchange rejected notional below minimum",
+                            "raw_code": self._raw_code(raw),
+                            "raw": raw,
+                        }
+                    },
+                )
             return ExecutionResult(
                 False,
                 "open",
@@ -403,3 +429,9 @@ class ExecutionEngine:
         code = cls._raw_code(raw)
         msg = cls._raw_message(raw).lower()
         return code == "-1007" or "status unknown" in msg or "execution status unknown" in msg
+
+    @classmethod
+    def _is_exchange_min_notional_reject(cls, raw: Any) -> bool:
+        code = cls._raw_code(raw)
+        msg = cls._raw_message(raw).lower()
+        return code == "-4164" or "notional must be no smaller than 5" in msg

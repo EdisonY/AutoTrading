@@ -139,6 +139,7 @@
 - 2026-06-01：腾讯账号快照出现 Binance testnet `HTTP 418 / -1003 Way too many requests`，曾导致入口页拉到误导性 0 仓快照。已将账号快照改为 API 错误时不覆盖最新有效快照，并解析 `banned until` 自动退避；告警显示为“账户快照API冷却中”。后续仍需继续做 API budget/websocket 化。
 - 2026-06-01：系统告警补强 Binance API 压力来源识别。`system_alerts.py` 会按最近 30 分钟 systemd journal 统计 418/429/-1003/Too-many-requests 并按服务聚合，入口页“自动告警”卡直接显示 API 限流次数和来源，避免只看到账户冷却而不知道是否有 scanner 也在触发限流。
 - 2026-06-01：受控扩样可视化继续推进。`strategy_evolution_gate.py` 新增 `expansion_readiness`，把已全量放开的候选按 24h post-approval 窗口汇总成熟/继续收样/暂停复核、样本缺口和每候选动作；`portal_dashboard.py` 第一屏直接显示“扩样成熟度”，用于判断继续收样还是暂停扩张。门禁还补了 approval-only 决策记录，避免某节点缺少实验行时把已批准 full-live 候选从入口页隐藏。
+- 2026-06-01：`-4164` 下单失败已定位为 Binance min-notional 规则拒单。共享下单规则增加 5.05 USDT min-notional floor，执行层把残余 `-4164` 归为 `preflight_exchange_rule`，后续应记为 `OPEN_SKIPPED/execution_preflight`，不再把可预判交易所规则拒单计入策略劣化的 `OPEN_FAILED`。
 
 ---
 ## 2026-05-29 全局运行自检与账户方向口径修复

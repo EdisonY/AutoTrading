@@ -22,6 +22,8 @@ TRADFI_PERP_BASES = {
     "CRCL",
 }
 
+BINANCE_USDM_MIN_NOTIONAL_FLOOR = 5.05
+
 
 @dataclass(slots=True)
 class SymbolRules:
@@ -167,21 +169,23 @@ def validate_open_quantity(
     if min_qty > 0 and qty < min_qty:
         qty = ceil_to_step(min_qty, step)
 
+    effective_min_notional = max(float(rules.min_notional or 0.0), BINANCE_USDM_MIN_NOTIONAL_FLOOR)
+
     notional = qty * price
-    if rules.min_notional > 0 and notional < rules.min_notional:
+    if effective_min_notional > 0 and notional < effective_min_notional:
         if not allow_raise_to_min_notional:
             return QuantityCheck(
                 False,
                 quantity=qty,
                 code="notional_too_small",
-                reason=f"notional {notional:.6g} < minNotional {rules.min_notional:.6g}",
-                min_notional=rules.min_notional,
+                reason=f"notional {notional:.6g} < minNotional {effective_min_notional:.6g}",
+                min_notional=effective_min_notional,
                 notional=notional,
                 max_qty=rules.max_qty,
                 min_qty=rules.min_qty,
                 step_size=step,
             )
-        qty = ceil_to_step(rules.min_notional / price, step)
+        qty = ceil_to_step(effective_min_notional / price, step)
         if min_qty > 0 and qty < min_qty:
             qty = ceil_to_step(min_qty, step)
         if max_qty > 0 and qty > max_qty:
@@ -190,7 +194,7 @@ def validate_open_quantity(
                 quantity=qty,
                 code="min_notional_exceeds_max_qty",
                 reason="minNotional-required quantity exceeds maxQty",
-                min_notional=rules.min_notional,
+                min_notional=effective_min_notional,
                 notional=qty * price,
                 max_qty=max_qty,
                 min_qty=min_qty,
@@ -219,7 +223,7 @@ def validate_open_quantity(
             quantity=qty,
             code="risk_notional_exceeded",
             reason=f"notional {notional:.6g} exceeds risk budget {max_notional:.6g}",
-            min_notional=rules.min_notional,
+            min_notional=effective_min_notional,
             notional=notional,
             max_qty=rules.max_qty,
             min_qty=rules.min_qty,
@@ -229,7 +233,7 @@ def validate_open_quantity(
         True,
         quantity=round(qty, decimals_from_step(step, rules.quantity_precision)),
         reason="ok",
-        min_notional=rules.min_notional,
+        min_notional=effective_min_notional,
         notional=notional,
         max_qty=max_qty,
         min_qty=min_qty,

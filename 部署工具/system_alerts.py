@@ -37,6 +37,8 @@ ALERT_MD = ROOT / "reports" / "alerts_latest.md"
 CST = timezone(timedelta(hours=8))
 ATTENTION_STALE_SECONDS = 150 * 60
 API_RATE_LIMIT_WINDOW_MINUTES = 30
+ACCOUNT_SNAPSHOT_EXPECTED_INTERVAL_SECONDS = 900
+ACCOUNT_SNAPSHOT_STALE_GRACE_SECONDS = 120
 BINANCE_BAN_UNTIL_RE = re.compile(r"banned until\s+(\d{12,})", re.IGNORECASE)
 API_RATE_LIMIT_MARKERS = ("HTTP 418", "HTTP 429", "-1003", "Way too many requests", "Too many requests")
 
@@ -244,12 +246,36 @@ def recent_failed_close_alerts(now: datetime) -> list[dict[str, str]]:
         con.close()
     except Exception:
         return []
+    live_positions: set[tuple[str, str, str]] = set()
+    live_symbols: set[tuple[str, str]] = set()
+    if ACCOUNT_LATEST.exists():
+        try:
+            account_payload = json.loads(ACCOUNT_LATEST.read_text(encoding="utf-8", errors="replace"))
+            for account in account_payload.get("accounts") or []:
+                strategy = str(account.get("strategy") or f"{account.get('account')}/{account.get('version')}" or "")
+                for pos in account.get("positions") or []:
+                    symbol = str(pos.get("symbol") or "").upper()
+                    side = str(pos.get("side") or "").upper()
+                    if symbol:
+                        live_symbols.add((strategy, symbol))
+                        live_positions.add((strategy, symbol, side))
+        except Exception:
+            live_positions = set()
+            live_symbols = set()
     recent = []
     seen: set[tuple[str, str, str, str, str]] = set()
     for raw_ts, strategy, symbol, side, event_type, reason, payload_json in rows:
         dt = parse_dt(raw_ts)
         if not dt or (now - dt).total_seconds() > 2 * 3600:
             continue
+        strategy_key = str(strategy or "")
+        symbol_key = str(symbol or "").upper()
+        side_key = str(side or "").upper()
+        if live_symbols:
+            if side_key and (strategy_key, symbol_key, side_key) not in live_positions:
+                continue
+            if not side_key and (strategy_key, symbol_key) not in live_symbols:
+                continue
         detail = reason
         try:
             payload = json.loads(payload_json or "{}")
@@ -459,7 +485,11 @@ def collect_alerts() -> dict[str, Any]:
             snapshot_ts = parse_dt(latest_snapshot[0]) if latest_snapshot else None
             if not event_ts or (now - event_ts).total_seconds() > 900:
                 alerts.append({"level": "warn", "title": "策略事件写入偏旧", "body": f"最新非交易事件 {event_ts or '无'}"})
-            stale_threshold = 2 * 3600 if account_in_cooldown else 120
+            stale_threshold = (
+                2 * 3600
+                if account_in_cooldown
+                else ACCOUNT_SNAPSHOT_EXPECTED_INTERVAL_SECONDS * 2 + ACCOUNT_SNAPSHOT_STALE_GRACE_SECONDS
+            )
             if not snapshot_ts or (now - snapshot_ts).total_seconds() > stale_threshold:
                 title = "账户快照冷却中，使用最后有效快照" if account_in_cooldown else "账户快照偏旧"
                 alerts.append({"level": "warn", "title": title, "body": f"最新快照 {snapshot_ts or '无'}"})

@@ -47,6 +47,7 @@ MAIN_FILES = [
     ("reports/counterfactual_open_skips_latest.md", "reports/counterfactual_open_skips_latest.md", False),
     ("reports/research_store_summary_latest.md", "reports/research_store_summary_latest.md", False),
     ("reports/replay_feature_dataset_latest.md", "reports/replay_feature_dataset_latest.md", False),
+    ("reports/replay_gate_audit_latest.md", "reports/replay_gate_audit_latest.md", False),
     ("reports/alerts_latest.md", "reports/alerts_latest.md", False),
     ("reports/market_review_latest.html", "reports/market_review_latest.html", False),
     ("reports/market_review_latest.md", "reports/market_review_latest.md", False),
@@ -58,6 +59,7 @@ MAIN_FILES = [
     ("runtime/strategy_evolution_latest.json", "runtime/strategy_evolution_latest.json", True),
     ("runtime/research_store_summary_latest.json", "runtime/research_store_summary_latest.json", False),
     ("runtime/replay_feature_dataset_latest.json", "runtime/replay_feature_dataset_latest.json", False),
+    ("runtime/replay_gate_audit_latest.json", "runtime/replay_gate_audit_latest.json", False),
     ("research_memory/attention/open_items.json", "runtime/live_attention_latest.json", True),
 ]
 

@@ -44,6 +44,8 @@ RESEARCH_STORE_JSON = ROOT / "runtime" / "research_store_summary_latest.json"
 RESEARCH_STORE_MD = REPORTS_DIR / "research_store_summary_latest.md"
 REPLAY_FEATURE_JSON = ROOT / "runtime" / "replay_feature_dataset_latest.json"
 REPLAY_FEATURE_MD = REPORTS_DIR / "replay_feature_dataset_latest.md"
+REPLAY_GATE_JSON = ROOT / "runtime" / "replay_gate_audit_latest.json"
+REPLAY_GATE_MD = REPORTS_DIR / "replay_gate_audit_latest.md"
 CST = timezone(timedelta(hours=8))
 
 
@@ -594,6 +596,33 @@ def replay_feature_summary(path: Path | None) -> dict[str, Any]:
         "age": age_text(generated_at),
         "fresh": bool(generated_at and (datetime.now(CST) - generated_at).total_seconds() < 4 * 3600),
         "summary": summary,
+    }
+
+
+def replay_gate_summary(path: Path | None) -> dict[str, Any]:
+    empty = {
+        "available": False,
+        "path": REPLAY_GATE_MD,
+        "age": "No replay gate audit",
+        "fresh": False,
+        "days": 0,
+        "summary": {"open_flow_events": 0, "gate_coverage_pct": 0, "unknown_gate": 0, "status": "missing"},
+        "strategies": [],
+    }
+    payload = read_json(path) if path else None
+    if not isinstance(payload, dict):
+        return empty
+    generated_at = parse_dt(payload.get("generated_at"))
+    summary = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
+    strategies = payload.get("strategies") if isinstance(payload.get("strategies"), list) else []
+    return {
+        "available": True,
+        "path": REPLAY_GATE_MD,
+        "age": age_text(generated_at),
+        "fresh": bool(generated_at and (datetime.now(CST) - generated_at).total_seconds() < 4 * 3600),
+        "days": int(payload.get("days") or 0),
+        "summary": summary,
+        "strategies": strategies,
     }
 
 
@@ -1320,6 +1349,8 @@ def function_status_cards(data: dict[str, Any]) -> list[dict[str, str]]:
     research_store = data.get("research_store") or {}
     replay_feature = data.get("replay_feature") or {}
     replay_summary = replay_feature.get("summary") or {}
+    replay_gate = data.get("replay_gate") or {}
+    replay_gate_summary_data = replay_gate.get("summary") or {}
     evolution = data.get("strategy_evolution") or {}
     evo_counts = evolution.get("counts") or {}
     attention = data.get("attention") or {}
@@ -1458,6 +1489,26 @@ def function_status_cards(data: dict[str, Any]) -> list[dict[str, str]]:
                 f"updated {replay_feature.get('age')}."
                 if replay_feature.get("available")
                 else "Replay/live feature alignment dataset missing; full gate parity still partial."
+            ),
+        },
+        {
+            "level": (
+                "ok"
+                if replay_gate.get("fresh") and float(replay_gate_summary_data.get("gate_coverage_pct") or 0) >= 90
+                else "warn"
+            ),
+            "name": "Replay gate audit",
+            "value": (
+                f"{float(replay_gate_summary_data.get('gate_coverage_pct') or 0):.1f}%"
+                if replay_gate.get("available")
+                else "not built"
+            ),
+            "body": (
+                f"open-flow {int(replay_gate_summary_data.get('open_flow_events') or 0)}; "
+                f"unknown gate {int(replay_gate_summary_data.get('unknown_gate') or 0)}; "
+                f"updated {replay_gate.get('age')}."
+                if replay_gate.get("available")
+                else "Live events have not been audited through core.replay yet."
             ),
         },
     ]
@@ -1687,6 +1738,8 @@ def build_executive_summary(data: dict[str, Any]) -> dict[str, Any]:
     expansion = evolution.get("expansion_readiness") or {}
     evolution_alert = evolution_action_alert(evolution)
     rollback_brief = rollback_watch_brief(evolution)
+    replay_gate = data.get("replay_gate") or {}
+    replay_gate_summary_data = replay_gate.get("summary") or {}
     truth = data.get("strategy_truth") or {}
     truth_stats = truth.get("strategy_stats") or {}
     decision_rows = data.get("decision_summary") or []
@@ -1760,6 +1813,14 @@ def build_executive_summary(data: dict[str, Any]) -> dict[str, Any]:
         f"进化：{evo_text}；只有门禁通过且用户批准的候选才允许进入实盘。",
         f"最高进化提示：{evolution_alert.get('title')}；{evolution_alert.get('body')}",
         rollback_brief,
+        (
+            f"Replay门控：live开仓流 {int(replay_gate_summary_data.get('open_flow_events') or 0)} 条，"
+            f"gate覆盖 {float(replay_gate_summary_data.get('gate_coverage_pct') or 0):.1f}%，"
+            f"未知门控 {int(replay_gate_summary_data.get('unknown_gate') or 0)}；"
+            "这是抽纯策略函数前的口径校验。"
+            if replay_gate.get("available")
+            else "Replay门控：尚无审计输出；统一 replay/live 同路径仍不能验收。"
+        ),
         f"环境：已放开候选 24h regime {regime_summary.get('counts') or {}}，quality {regime_summary.get('quality_counts') or {}}，OPEN_FAILED {int(regime_summary.get('open_failed_24h') or 0)}，CLOSE_FAILED {int(regime_summary.get('close_failed_24h') or 0)}。",
         (
             f"扩样成熟度：已放开 {int(expansion.get('approved_count') or 0)} 个，"
@@ -1781,6 +1842,8 @@ def build_executive_summary(data: dict[str, Any]) -> dict[str, Any]:
         next_actions.append("先复核已放开候选质量/关闭闭环，暂停进一步扩样。")
     elif int(expansion.get("maturing_count") or 0):
         next_actions.append("继续按当前受控扩样收集24h/72h样本，不新增风险放宽。")
+    if replay_gate.get("available") and float(replay_gate_summary_data.get("gate_coverage_pct") or 0) < 90:
+        next_actions.append("优先补齐OPEN_SKIPPED/OPEN_FAILED的stage/layer，保证replay能解释live否决。")
     next_actions.append("下一阶段优先建设统一replay和Parquet/DuckDB研究仓，而不是继续手调阈值。")
 
     return {
@@ -1860,6 +1923,8 @@ def build_data() -> dict[str, Any]:
     data["research_store_html"] = RESEARCH_STORE_MD
     data["replay_feature"] = replay_feature_summary(REPLAY_FEATURE_JSON)
     data["replay_feature_html"] = REPLAY_FEATURE_MD
+    data["replay_gate"] = replay_gate_summary(REPLAY_GATE_JSON)
+    data["replay_gate_html"] = REPLAY_GATE_MD
     data["function_status"] = function_status_cards(data)
     data["findings"] = build_findings(data)
     data["executive_summary"] = build_executive_summary(data)
@@ -2187,6 +2252,24 @@ def render_html(out_dir: Path) -> str:
 """.strip()
         for r in (research_store.get("feature_coverage") or [])[:6]
     ) or '<tr><td colspan="6">暂无特征研究分区</td></tr>'
+    replay_gate = data.get("replay_gate") or {}
+    replay_gate_summary_data = replay_gate.get("summary") or {}
+    replay_gate_rows = "".join(
+        f"""
+<tr>
+  <td>{h(r.get('strategy'))}</td>
+  <td>{int(r.get('open_flow_events') or 0)}</td>
+  <td>{int(r.get('accepted_opens') or 0)}</td>
+  <td>{int(r.get('signals') or 0)}</td>
+  <td>{int(r.get('rejected') or 0)}</td>
+  <td>{int(r.get('execution_failed') or 0)}</td>
+  <td>{int(r.get('unknown_gate') or 0)}</td>
+  <td>{float(r.get('gate_coverage_pct') or 0):.1f}%</td>
+  <td>{h(', '.join(f"{g.get('name')}:{g.get('count')}" for g in (r.get('top_gates') or [])[:5]) or '-')}</td>
+</tr>
+""".strip()
+        for r in (replay_gate.get("strategies") or [])
+    ) or '<tr><td colspan="9">暂无 replay gate 审计</td></tr>'
 
     evolution = data.get("strategy_evolution") or {}
     evolution_counts = evolution.get("counts") or {}
@@ -2511,6 +2594,16 @@ th {{ background:#f1f5f9; color:#334155; }}
     <table class="subtable">
       <thead><tr><th>周期</th><th>特征行</th><th>币种数</th><th>平均1bar波动</th><th>平均振幅</th><th>最新K线</th></tr></thead>
       <tbody>{research_feature_rows}</tbody>
+    </table>
+  </section>
+
+  <section class="section panel">
+    <h2>Replay / Live 门控审计</h2>
+    <p class="note">把最近 live 事件库的 SIGNAL、OPEN、OPEN_SKIPPED、OPEN_FAILED 统一送入 `core.replay` 分类。覆盖率越高，说明后续把 A/B/C 抽成纯策略门控函数时，历史样本越能复现当前实盘判断。</p>
+    <p class="note">窗口 {int(replay_gate.get('days') or 0)} 日；open-flow {int(replay_gate_summary_data.get('open_flow_events') or 0)} 条；gate覆盖 {float(replay_gate_summary_data.get('gate_coverage_pct') or 0):.1f}%；未知门控 {int(replay_gate_summary_data.get('unknown_gate') or 0)}；更新 {h(replay_gate.get('age'))}。</p>
+    <table>
+      <thead><tr><th>策略</th><th>开仓流</th><th>OPEN</th><th>SIGNAL</th><th>否决</th><th>失败</th><th>未知门控</th><th>覆盖率</th><th>主要 gate</th></tr></thead>
+      <tbody>{replay_gate_rows}</tbody>
     </table>
   </section>
 

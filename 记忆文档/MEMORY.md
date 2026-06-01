@@ -1,5 +1,12 @@
 # MEMORY.md - 长期记忆
 
+## 2026-06-01 Replay/live 门控审计接入入口页
+- N2 继续推进：新增 `部署工具/replay_gate_audit.py`，把 live SQLite `events` 中的 `SIGNAL/OPEN/OPEN_SKIPPED/OPEN_FAILED` 统一送入 `core.replay` 分类，输出 `runtime/replay_gate_audit_latest.json` 与 `reports/replay_gate_audit_latest.md`。
+- 入口页已新增 `Replay / Live 门控审计` 和功能卡 `Replay gate audit`，首屏摘要也显示 live 开仓流、gate 覆盖率、未知门控数量。当前腾讯 live 审计：open-flow `4816`，gate 覆盖 `95.12%`，状态 `ok`。这证明当前大部分 live 否决/开仓流已能被统一 replay taxonomy 解释，但还不是完整 replay/live 同路径。
+- 当前主要缺口集中在 A/v11：本地拉回 DB 审计中 A/v11 gate 覆盖约 `94.63%`，未知 gate `94` 条；B/v16、C/v14 为 `100%`。后续抽纯策略函数前，优先补 A/v11 `OPEN_SKIPPED/OPEN_FAILED` 的 `stage/layer`。
+- 告警口径同步修复：B/v16 `DEGENUSDT CLOSE_FAILED -4131` 后，最新账户快照已确认 B/v16 无该仓位，因此不应保留 P0。`system_alerts.py` 现在会用最新账户快照复核强平/平仓失败事件，仓位已消失则视为闭环已完成。账户快照 stale 阈值也已按 900 秒采集间隔调整，不再 120 秒误报。
+- 2026-06-01 20:00 CST live pull：六个核心服务 active，账户浮盈 `+209.8295`，持仓 `14`，attention `P0=0/P1=0/P2=5`，入口页已显示 replay gate audit。
+
 ## 2026-06-01 账户快照抗单账户失败与入口页状态修复
 - 入口页 `策略运行` 顶部卡片已改为优先使用 systemd 服务状态，避免六个核心服务 active 时仍因旧 heartbeat 口径显示“需检查”。2026-06-01 16:39 CST live pull：六服务 active，`策略运行=正常/systemd服务状态`。
 - 账户快照服务已改成逐账户采集。单个账户被 Binance 418/429 或仓位查询失败拖住时，会回退该账户最后有效 SQLite 快照并标记 `stale/快照回退`，不会再让三账户快照整体断流；成功账户仍继续入库。stale fallback 不作为新鲜 SQLite 行插入。

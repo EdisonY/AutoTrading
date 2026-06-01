@@ -318,6 +318,7 @@ def strategy_evolution_summary(path: Path | None) -> dict[str, Any]:
         "counts": {"P0": 0, "P1": 0, "P2": 0, "P3": 0, "REJECT": 0},
         "summary": {},
         "regime_summary": {},
+        "expansion_readiness": {},
         "top": {},
         "decisions": [],
     }
@@ -361,6 +362,7 @@ def strategy_evolution_summary(path: Path | None) -> dict[str, Any]:
             "open_failed_24h": live_open_failed,
             "close_failed_24h": live_close_failed,
         },
+        "expansion_readiness": summary.get("expansion_readiness") if isinstance(summary.get("expansion_readiness"), dict) else {},
         "top": top or {},
         "decisions": decisions,
     }
@@ -1649,6 +1651,7 @@ def build_executive_summary(data: dict[str, Any]) -> dict[str, Any]:
     evolution = data.get("strategy_evolution") or {}
     evolution_counts = evolution.get("counts") or {}
     regime_summary = evolution.get("regime_summary") or {}
+    expansion = evolution.get("expansion_readiness") or {}
     evolution_alert = evolution_action_alert(evolution)
     truth = data.get("strategy_truth") or {}
     truth_stats = truth.get("strategy_stats") or {}
@@ -1723,6 +1726,11 @@ def build_executive_summary(data: dict[str, Any]) -> dict[str, Any]:
         f"进化：{evo_text}；只有门禁通过且用户批准的候选才允许进入实盘。",
         f"最高进化提示：{evolution_alert.get('title')}；{evolution_alert.get('body')}",
         f"环境：已放开候选 24h regime {regime_summary.get('counts') or {}}，quality {regime_summary.get('quality_counts') or {}}，OPEN_FAILED {int(regime_summary.get('open_failed_24h') or 0)}，CLOSE_FAILED {int(regime_summary.get('close_failed_24h') or 0)}。",
+        (
+            f"扩样成熟度：已放开 {int(expansion.get('approved_count') or 0)} 个，"
+            f"成熟 {int(expansion.get('ready_count') or 0)}，继续收样 {int(expansion.get('maturing_count') or 0)}，"
+            f"需暂停复核 {int(expansion.get('pause_count') or 0)}，24h样本缺口 {int(expansion.get('missing_samples_24h') or 0)}。"
+        ),
         "扩样决策：不再全局盲目放宽。A/v11保持稳定，B/v16观察已批准全量候选，C/v14维持当前受控扩样窗口。",
     ]
 
@@ -1733,6 +1741,10 @@ def build_executive_summary(data: dict[str, Any]) -> dict[str, Any]:
         next_actions.append("允许B/v16与C/v14按当前规则继续收集样本，不额外加仓位尺寸。")
     if actionable_evo:
         next_actions.append("查看策略进化门禁最高项，确认是否进入灰度或回滚。")
+    if int(expansion.get("pause_count") or 0):
+        next_actions.append("先复核已放开候选质量/关闭闭环，暂停进一步扩样。")
+    elif int(expansion.get("maturing_count") or 0):
+        next_actions.append("继续按当前受控扩样收集24h/72h样本，不新增风险放宽。")
     next_actions.append("下一阶段优先建设统一replay和Parquet/DuckDB研究仓，而不是继续手调阈值。")
 
     return {

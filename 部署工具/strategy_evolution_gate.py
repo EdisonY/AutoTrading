@@ -893,6 +893,58 @@ def build_decisions(
     return sorted(decisions, key=lambda r: (order.get(r["priority"], 9), -int(r.get("evidence_score") or 0), int(r.get("risk_score") or 0)))
 
 
+def summarize_expansion_readiness(decisions: list[dict[str, Any]]) -> dict[str, Any]:
+    items: list[dict[str, Any]] = []
+    for decision in decisions:
+        if not decision.get("approved_full_live"):
+            continue
+        windows = ((decision.get("post_approval_live") or {}).get("windows") or {})
+        day = windows.get("24h") or {}
+        quality = day.get("quality") or {}
+        closed = to_int(quality.get("closed_samples"))
+        required = to_int(quality.get("required_closed_samples"))
+        missing = max(required - closed, 0) if required else 0
+        close_failed = to_int(day.get("close_failed"))
+        open_failed = to_int(day.get("open_failed"))
+        quality_label = str(quality.get("label") or day.get("status") or "unknown")
+        if close_failed:
+            action = "pause_and_review_close_loop"
+        elif quality_label == "bad":
+            action = "pause_expansion_review_quality"
+        elif missing > 0:
+            action = "continue_controlled_sampling"
+        else:
+            action = "ready_for_quality_review"
+        items.append({
+            "strategy": decision.get("strategy") or "",
+            "candidate_id": decision.get("candidate_id") or "",
+            "priority": decision.get("priority") or "",
+            "status": decision.get("status") or "",
+            "quality": quality_label,
+            "closed_samples_24h": closed,
+            "required_samples_24h": required,
+            "missing_samples_24h": missing,
+            "open_failed_24h": open_failed,
+            "close_failed_24h": close_failed,
+            "pnl_after_cost_24h": round(to_float(quality.get("realized_pnl_after_cost")), 4),
+            "action": action,
+        })
+    ready = sum(1 for item in items if item["action"] == "ready_for_quality_review")
+    maturing = sum(1 for item in items if item["action"] == "continue_controlled_sampling")
+    pause = sum(1 for item in items if str(item["action"]).startswith("pause_"))
+    total_missing = sum(int(item.get("missing_samples_24h") or 0) for item in items)
+    top_gap = sorted(items, key=lambda item: int(item.get("missing_samples_24h") or 0), reverse=True)[:3]
+    return {
+        "approved_count": len(items),
+        "ready_count": ready,
+        "maturing_count": maturing,
+        "pause_count": pause,
+        "missing_samples_24h": total_missing,
+        "top_gaps": top_gap,
+        "items": items[:12],
+    }
+
+
 def build_payload(args: argparse.Namespace) -> dict[str, Any]:
     memory_dir = Path(args.memory_dir)
     experiments_dir = Path(args.experiments_dir)
@@ -909,6 +961,7 @@ def build_payload(args: argparse.Namespace) -> dict[str, Any]:
     counterfactual = read_json(reports_dir / "counterfactual_open_skips_latest.json")
     account_snapshot = read_json(runtime_dir / "account_snapshot_latest.json")
     decisions = build_decisions(candidates, experiments, reviews, counterfactual, account_snapshot, full_live_approvals, post_approval_windows)
+    expansion_readiness = summarize_expansion_readiness(decisions)
     counts = {p: sum(1 for d in decisions if d.get("priority") == p) for p in ("P0", "P1", "P2", "P3", "REJECT")}
     top = next((d for d in decisions if d.get("priority") in {"P0", "P1", "P2"}), None)
     return {
@@ -933,6 +986,7 @@ def build_payload(args: argparse.Namespace) -> dict[str, Any]:
             "full_live_watch_count": sum(1 for d in decisions if d.get("approved_full_live")),
             "rollback_watch_count": sum(1 for d in decisions if d.get("status") in {"rollback_required", "rollback_watch"}),
             "post_approval_window_count": sum(1 for d in decisions if d.get("post_approval_live")),
+            "expansion_readiness": expansion_readiness,
         },
         "decisions": decisions,
     }
@@ -947,6 +1001,7 @@ def render_md(payload: dict[str, Any]) -> str:
         f"- 优先级: {payload['summary']['counts']}",
         f"- Full-live 观察: {payload['summary'].get('full_live_watch_count', 0)}，回滚观察/要求: {payload['summary'].get('rollback_watch_count', 0)}",
         f"- 放开后实盘窗口: {payload['summary'].get('post_approval_window_count', 0)} 个候选已生成 24h/72h/168h 观察窗",
+        f"- 扩样成熟度: {payload['summary'].get('expansion_readiness', {})}",
         "",
         "| 优先级 | 状态 | 策略 | 候选 | 证据分 | 风险分 | 建议动作 | 关键阻塞 |",
         "|---|---|---|---|---:|---:|---|---|",

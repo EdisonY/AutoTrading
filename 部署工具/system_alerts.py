@@ -125,6 +125,15 @@ def retry_at_from_text(text: str) -> datetime | None:
     return datetime.fromtimestamp(raw_ms / 1000, CST)
 
 
+def compact_log_line(text: str, limit: int = 260) -> str:
+    clean = " ".join((text or "").strip().split())
+    if len(clean) <= limit:
+        return clean
+    head = max(80, limit // 2 - 5)
+    tail = max(80, limit - head - 5)
+    return f"{clean[:head]} ... {clean[-tail:]}"
+
+
 def service_states() -> dict[str, str]:
     return unit_states(SERVICES)
 
@@ -196,7 +205,7 @@ def recent_api_rate_limits(now: datetime) -> dict[str, Any]:
             if not any(marker in line for marker in API_RATE_LIMIT_MARKERS):
                 continue
             count += 1
-            latest = line.strip()[-260:]
+            latest = compact_log_line(line)
             maybe_retry = retry_at_from_text(line)
             if maybe_retry and (ban_until is None or maybe_retry > ban_until):
                 ban_until = maybe_retry

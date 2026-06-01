@@ -44,6 +44,19 @@ def _max_requests_per_account_per_minute() -> int:
     return max(1, int(os.environ.get("BINANCE_API_GUARD_MAX_ACCOUNT_REQUESTS_PER_MIN", "80")))
 
 
+def _trade_priority_reserve_per_minute() -> int:
+    return max(0, int(os.environ.get("BINANCE_API_GUARD_TRADE_PRIORITY_RESERVE_PER_MIN", "20")))
+
+
+def _request_priority(method: str, path: str) -> str:
+    method_upper = method.upper()
+    if method_upper in {"POST", "DELETE"}:
+        return "trade"
+    if path in {"/fapi/v1/order", "/fapi/v1/leverage", "/fapi/v1/marginType", "/fapi/v1/allOpenOrders"}:
+        return "trade"
+    return "normal"
+
+
 def _load_state() -> dict[str, Any]:
     try:
         return json.loads(STATE_PATH.read_text(encoding="utf-8"))
@@ -85,6 +98,7 @@ def _locked():
 def wait_before_request(account: str, method: str, path: str) -> float:
     """Throttle all signed REST requests across local live processes."""
     total_sleep = 0.0
+    priority = _request_priority(method, path)
     while True:
         with _locked():
             state = _load_state()
@@ -99,14 +113,20 @@ def wait_before_request(account: str, method: str, path: str) -> float:
                     if now - int(item.get("ts_ms") or 0) <= 60_000
                 ]
                 account_recent = [item for item in recent if str(item.get("account") or "") == account]
-                if len(recent) >= _max_requests_per_minute() or len(account_recent) >= _max_requests_per_account_per_minute():
-                    budget_rows = recent if len(recent) >= _max_requests_per_minute() else account_recent
+                max_per_min = _max_requests_per_minute()
+                account_max = _max_requests_per_account_per_minute()
+                reserve = min(_trade_priority_reserve_per_minute(), max(0, max_per_min - 1))
+                normal_limit = max(1, max_per_min - reserve)
+                normal_over_budget = priority != "trade" and len(recent) >= normal_limit
+                if len(recent) >= max_per_min or len(account_recent) >= account_max or normal_over_budget:
+                    budget_rows = recent if (len(recent) >= max_per_min or normal_over_budget) else account_recent
                     oldest = min(int(item.get("ts_ms") or now) for item in budget_rows)
                     sleep_seconds = min(10.0, max(1.0, (oldest + 60_000 - now) / 1000))
                     state["recent_requests"] = recent
                     state["rolling_count_60s"] = len(recent)
                     state["rolling_account_count_60s"] = len(account_recent)
-                    state["rolling_limited_account"] = account if len(account_recent) >= _max_requests_per_account_per_minute() else ""
+                    state["rolling_limited_account"] = account if len(account_recent) >= account_max else ""
+                    state["rolling_limited_priority"] = "normal_reserved" if normal_over_budget else ""
                     _write_state(state)
                 else:
                     wait_ms = _min_interval_ms() - (now - last_request_ms)
@@ -117,13 +137,17 @@ def wait_before_request(account: str, method: str, path: str) -> float:
                         state["last_account"] = account
                         state["last_method"] = method
                         state["last_path"] = path
+                        state["last_priority"] = priority
+                        state["last_status"] = ""
                         state["updated_at_ms"] = now
-                        recent.append({"ts_ms": now, "account": account, "method": method, "path": path})
-                        state["recent_requests"] = recent[-_max_requests_per_minute():]
+                        recent.append({"ts_ms": now, "account": account, "method": method, "path": path, "priority": priority})
+                        state["recent_requests"] = recent[-max_per_min:]
                         state["rolling_count_60s"] = len(state["recent_requests"])
                         state["rolling_account_count_60s"] = len(account_recent) + 1
-                        state["max_requests_per_min"] = _max_requests_per_minute()
-                        state["max_account_requests_per_min"] = _max_requests_per_account_per_minute()
+                        state["max_requests_per_min"] = max_per_min
+                        state["max_account_requests_per_min"] = account_max
+                        state["trade_priority_reserve_per_min"] = reserve
+                        state["normal_priority_limit_per_min"] = normal_limit
                         stats = state.setdefault("stats", {})
                         key = f"{account}:{method}:{path}"
                         stats[key] = int(stats.get(key) or 0) + 1
@@ -157,9 +181,12 @@ def record_response(account: str, method: str, path: str, status_code: int | str
         now = _now_ms()
         state["updated_at_ms"] = now
         state["last_status"] = status
+        state["last_error_at_ms"] = now
         state["last_error_account"] = account
         state["last_error_method"] = method
         state["last_error_path"] = path
+        state["last_error_status"] = status
+        state["last_error_body"] = text[:500]
         if banned_until_ms:
             state["banned_until_ms"] = max(int(state.get("banned_until_ms") or 0), banned_until_ms)
             state["last_ban_reason"] = text[:500]

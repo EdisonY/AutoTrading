@@ -59,9 +59,10 @@
 - [x] API guard 增加 `BINANCE_API_GUARD_MAX_REQUESTS_PER_MIN`，默认 `120/min`，和 `BINANCE_API_GUARD_MAX_ACCOUNT_REQUESTS_PER_MIN`，默认 `80/min`，并输出 `rolling_count_60s/top_paths_60s` 给系统告警。
 - [x] A/v11、B/v16、C/v14 的开仓风控门禁改为单次 `positionRisk` 快照派生总仓位/方向仓位，并单次读取余额；`core/exchange_state.py` 统一解析 active position、side count、symbol lookup、USDT balance。
 - [x] A/v11 平仓提交在执行层已提供 `quantity/order_side` 时不再二次查询 `positionRisk`；A/v11 余额读取切到 `/fapi/v2/balance`；账号快照裸跑缺少 `BINANCE_*` 环境变量时不覆盖最新有效快照。
+- [x] API guard 增加第一版交易关键路径优先级：普通 signed read 在总预算前预留默认 `20/min` 额度给 order/cancel/leverage/margin 等交易路径；系统告警显示 priority counts、normal limit、trade reserve 和 `last_error_*`。
 - [ ] 下一步：把账户余额/仓位迁到 user-data-stream 或更低频的集中账户状态服务，减少 `positionRisk` 轮询。
 - [ ] 下一步：把 open/close confirmation 的重复 positionRisk 合并成带 TTL 的确认快照，避免一个开平仓闭环打出多次 signed GET。
-- [ ] 下一步：guard 增加“只允许交易关键路径突破限速”的优先级队列。
+- [ ] 下一步：guard 升级为独立队列服务或集中 account-state 服务内置限速，进一步替代协作式文件锁。
 
 验收口径：
 - 30 分钟 journal 中 418/429/-1003 为 0。

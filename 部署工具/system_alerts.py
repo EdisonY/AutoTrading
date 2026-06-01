@@ -242,22 +242,35 @@ def read_binance_api_guard(now: datetime) -> dict[str, Any]:
     stats = payload.get("stats") if isinstance(payload.get("stats"), dict) else {}
     recent = payload.get("recent_requests") if isinstance(payload.get("recent_requests"), list) else []
     recent_counts: dict[str, int] = {}
+    priority_counts: dict[str, int] = {}
     for item in recent:
         key = f"{item.get('account')}:{item.get('method')}:{item.get('path')}"
         recent_counts[key] = recent_counts.get(key, 0) + 1
+        priority = str(item.get("priority") or "normal")
+        priority_counts[priority] = priority_counts.get(priority, 0) + 1
     return {
         "updated_at_ms": payload.get("updated_at_ms"),
         "last_account": payload.get("last_account"),
         "last_method": payload.get("last_method"),
         "last_path": payload.get("last_path"),
+        "last_priority": payload.get("last_priority") or "",
         "last_status": payload.get("last_status"),
+        "last_error_at_ms": payload.get("last_error_at_ms"),
+        "last_error_account": payload.get("last_error_account") or "",
+        "last_error_method": payload.get("last_error_method") or "",
+        "last_error_path": payload.get("last_error_path") or "",
+        "last_error_status": payload.get("last_error_status") or "",
         "banned_until": banned_until.isoformat() if banned_until else "",
         "in_cooldown": bool(banned_until and banned_until > now),
         "rolling_count_60s": int(payload.get("rolling_count_60s") or len(recent)),
         "rolling_account_count_60s": int(payload.get("rolling_account_count_60s") or 0),
         "rolling_limited_account": payload.get("rolling_limited_account") or "",
+        "rolling_limited_priority": payload.get("rolling_limited_priority") or "",
         "max_requests_per_min": int(payload.get("max_requests_per_min") or 0),
         "max_account_requests_per_min": int(payload.get("max_account_requests_per_min") or 0),
+        "trade_priority_reserve_per_min": int(payload.get("trade_priority_reserve_per_min") or 0),
+        "normal_priority_limit_per_min": int(payload.get("normal_priority_limit_per_min") or 0),
+        "priority_counts_60s": priority_counts,
         "top_paths_60s": sorted(
             ({"name": str(name), "count": int(count or 0)} for name, count in recent_counts.items()),
             key=lambda item: item["count"],

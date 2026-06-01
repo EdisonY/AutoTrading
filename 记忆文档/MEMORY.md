@@ -181,6 +181,7 @@
 - 2026-06-01：`-4164` 下单失败已定位为 Binance min-notional 规则拒单。共享下单规则增加 5.05 USDT min-notional floor，执行层把残余 `-4164` 归为 `preflight_exchange_rule`，后续应记为 `OPEN_SKIPPED/execution_preflight`，不再把可预判交易所规则拒单计入策略劣化的 `OPEN_FAILED`。
 - 2026-06-02：继续 API 压力优化。新增 `core/exchange_state.py`，A/v11、B/v16、C/v14 开仓风控门禁改为一次仓位快照派生总仓位/方向仓位，一次余额读取，不改任何入场阈值、仓位、杠杆、止损或风险限额。已顺序部署腾讯三策略：`20260602-005138-strategy-a-968b705`、`20260602-005242-strategy-b-968b705`、`20260602-005408-strategy-c-968b705`；远端编译通过，系统告警 ok/0，live context 显示六服务 active、P0/P1 为 0、API guard 无冷却。此前未跟踪的只读 `部署工具/a_v11_rollout_review.py` 已纳入 Git，避免多机开发丢失。
 - 2026-06-02：继续 API 压力第二层。A/v11 平仓提交在执行层已提供 close quantity/order side 时不再重复查 `positionRisk`；A/v11 余额读取从 `/fapi/v2/account` 切到更轻的 `/fapi/v2/balance`；账号快照服务增加保护，裸 SSH 缺少 `BINANCE_*` 环境变量运行时不覆盖最新有效快照。一次裸跑曾短暂写出 stale=3，随后通过 release_manager 重启 account 服务恢复 fresh=3、partial_error=0、system alerts ok/0。
+- 2026-06-02：API guard 加入第一版交易优先级 reserve：普通 signed read 在滚动预算前预留默认 `20/min` 给 order/cancel/leverage/margin 等交易路径；`last_status` 不再残留旧 400，错误改看 `last_error_*`。已部署 A/B/C、account、portal，入口告警 ok，当前 guard 显示 normal/trade priority counts。
 
 ---
 ## 2026-05-29 全局运行自检与账户方向口径修复

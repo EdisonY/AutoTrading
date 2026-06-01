@@ -829,6 +829,17 @@ def build_decisions(
                 "family_id": exp.get("family_id"),
                 "status": exp.get("promotion_status"),
             }
+    for key, approval in full_live_approvals.items():
+        if key and key not in records:
+            records[key] = {
+                "candidate_id": key,
+                "strategy": approval.get("base_strategy") or approval.get("strategy"),
+                "problem": approval.get("decision_reason") or approval.get("manual_action") or "approved_full_live",
+                "proposal": approval.get("selected_live_parameter") or approval.get("manual_action") or "approved_full_live",
+                "change_type": approval.get("change_type") or "approved_full_live",
+                "family_id": approval.get("family_id") or "",
+                "status": approval.get("manual_action") or "approve_full_live",
+            }
 
     decisions: list[dict[str, Any]] = []
     for key, candidate in records.items():

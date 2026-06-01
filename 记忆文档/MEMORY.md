@@ -1,5 +1,12 @@
 # MEMORY.md - 长期记忆
 
+## 2026-06-01 Binance API 全局闸门上线
+- 用户要求剩余任务继续推进且必须考虑服务器压力、Binance API 接口限制。本轮先落地最直接的防护：`core/binance_api_guard.py` 作为三策略 + 账户快照共享的 signed REST 文件级闸门。
+- A/v11、B/v16、C/v14 三套 Binance client 现在每次 signed REST 前都会经过 `wait_before_request()`，全进程共享最小请求间隔；遇到 `HTTP 418/429/-1003/too many requests` 会把 `banned_until_ms` 写入 `runtime/binance_api_guard_state.json`，其他进程自动等待，避免账户快照或某个 scanner 把 IP ban 继续延长。
+- `system_alerts.py` 已读取 `binance_api_guard_state.json`，入口页可看到 API guard cooldown、最近 account/method/path 和 top signed REST 路径。本轮线上状态：`system_alerts.py --once` 为 `ok/0`，无 418/429，guard top path 主要是 `B/v16 GET /fapi/v2/positionRisk`。
+- 2026-06-01 21:02 CST live pull：六个核心服务 active，账户快照全 fresh，账户浮盈 `+32.9555`，持仓 `5`，attention `P0=0/P1=4/P2=6`。B/C 账户当前 0 仓，A/v11 当前 5 仓且 sizing violation 为 0。
+- 仍未完成的 API 长线任务：把账户余额/仓位从轮询迁到 user-data-stream，减少 open/close confirmation 中重复 `positionRisk`，为 guard 增加滚动窗口预算/每服务预算，而不是只有全局最小间隔和 ban 窗口。
+
 ## 2026-06-01 A/v11 replay gate 归因补齐 + B/v16 false P0 收敛
 - 中长期计划当前完成度：N1 决策者入口页、N3 Parquet/DuckDB 研究仓、N4 灰度/回滚门禁已经进入可用状态；N2 已完成事件模型、特征对齐、反事实 gate 归一和 replay/live gate audit，但还没有完成 A/B/C 纯策略门控函数和完整 replay 引擎；N5 开源框架 PoC 仍未开始。粗略看，当前阶段约完成 65%-70%，剩余主要是更深的架构抽象和 API/数据底座。
 - 本轮完成 A/v11 历史 `OPEN_SKIPPED` 未知 gate 归因：`周期池满/无可释放弱仓/方向持仓>=上限` 归 `capacity`，`同币种已有持仓/禁止叠仓` 归 `position`，交易所/preflight/min-notional 类拒单归 `execution`。Tencent live replay gate audit 已从 `95.12%`/`98.85%` 提升到 `100.0%`，A/B/C 未知 gate 均为 `0`。

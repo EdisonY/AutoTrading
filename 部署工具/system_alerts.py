@@ -28,6 +28,7 @@ MARKET_CACHE = ROOT / "runtime" / "market_data_cache.json"
 PORTAL_HTML = ROOT / "reports" / "portal_latest.html"
 ACCOUNT_LATEST = ROOT / "runtime" / "account_snapshot_latest.json"
 ACCOUNT_ERROR_LATEST = ROOT / "runtime" / "account_snapshot_error_latest.json"
+BINANCE_API_GUARD_STATE = ROOT / "runtime" / "binance_api_guard_state.json"
 PORTAL_REFRESH_STATUS = ROOT / "runtime" / "portal_refresh_latest.json"
 STRATEGY_EVOLUTION_LATEST = ROOT / "runtime" / "strategy_evolution_latest.json"
 ATTENTION_LATEST = ROOT / "research_memory" / "attention" / "open_items.json"
@@ -229,6 +230,32 @@ def recent_api_rate_limits(now: datetime) -> dict[str, Any]:
     }
 
 
+def read_binance_api_guard(now: datetime) -> dict[str, Any]:
+    if not BINANCE_API_GUARD_STATE.exists():
+        return {}
+    try:
+        payload = json.loads(BINANCE_API_GUARD_STATE.read_text(encoding="utf-8", errors="replace"))
+    except Exception as exc:
+        return {"error": str(exc)}
+    banned_until_ms = int(payload.get("banned_until_ms") or 0)
+    banned_until = datetime.fromtimestamp(banned_until_ms / 1000, CST) if banned_until_ms else None
+    stats = payload.get("stats") if isinstance(payload.get("stats"), dict) else {}
+    return {
+        "updated_at_ms": payload.get("updated_at_ms"),
+        "last_account": payload.get("last_account"),
+        "last_method": payload.get("last_method"),
+        "last_path": payload.get("last_path"),
+        "last_status": payload.get("last_status"),
+        "banned_until": banned_until.isoformat() if banned_until else "",
+        "in_cooldown": bool(banned_until and banned_until > now),
+        "top_paths": sorted(
+            ({"name": str(name), "count": int(count or 0)} for name, count in stats.items()),
+            key=lambda item: item["count"],
+            reverse=True,
+        )[:6],
+    }
+
+
 def recent_failed_close_alerts(now: datetime) -> list[dict[str, str]]:
     if not EVENT_STORE_DB.exists():
         return []
@@ -312,6 +339,7 @@ def collect_alerts() -> dict[str, Any]:
     account_retry = account_retry_at(account_error_payload)
     account_resume_timer_state = unit_states([ACCOUNT_RESUME_TIMER]).get(ACCOUNT_RESUME_TIMER, "")
     api_rate_limits = recent_api_rate_limits(now)
+    api_guard = read_binance_api_guard(now)
     account_in_cooldown = bool(
         (account_retry and account_retry > now)
         or account_resume_timer_state == "active"
@@ -458,6 +486,18 @@ def collect_alerts() -> dict[str, Any]:
             ),
         })
 
+    if api_guard.get("in_cooldown"):
+        alerts.append({
+            "level": "warn",
+            "title": "Binance API全局闸门冷却中",
+            "body": (
+                f"全进程共享保护已暂停 signed REST 到 {api_guard.get('banned_until')}；"
+                f"最近 {api_guard.get('last_account') or '-'} {api_guard.get('last_method') or ''} {api_guard.get('last_path') or ''}"
+            ),
+        })
+    elif api_guard.get("error"):
+        alerts.append({"level": "warn", "title": "Binance API闸门状态读取失败", "body": str(api_guard.get("error"))})
+
     if ATTENTION_LATEST.exists():
         try:
             attention_payload = json.loads(ATTENTION_LATEST.read_text(encoding="utf-8", errors="replace"))
@@ -512,6 +552,7 @@ def collect_alerts() -> dict[str, Any]:
         "disk": disk_payload,
         "memory": memory_payload,
         "api_rate_limits": api_rate_limits,
+        "api_guard": api_guard,
     }
 
 

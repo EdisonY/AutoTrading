@@ -24,6 +24,7 @@ from core.binance_order_rules import (
     validate_market_price,
     validate_open_quantity,
 )
+from core.binance_api_guard import record_response, wait_before_request
 
 logger = logging.getLogger("binance_client")
 
@@ -99,6 +100,7 @@ def _sign(params: dict) -> str:
 
 def _request(method: str, path: str, params: dict = None) -> dict:
     """发送带签名的请求"""
+    wait_before_request("A/v11", method, path)
     timestamp = int(time.time() * 1000)
     params = params or {}
     params["timestamp"] = timestamp
@@ -121,10 +123,12 @@ def _request(method: str, path: str, params: dict = None) -> dict:
             # 只有 dict 类型才检查 code 字段；list 响应（如公共接口）直接返回
             if isinstance(data, dict) and data.get("code") is not None and str(data.get("code")) != "200":
                 logger.error(f"Binance API错误: {data}")
+                record_response("A/v11", method, path, data.get("code"), json.dumps(data, ensure_ascii=False))
             return data
     except urllib.error.HTTPError as e:
         body = e.read().decode("utf-8", errors="replace")
         logger.error(f"HTTP {e.code}: {body[:500]}")
+        record_response("A/v11", method, path, e.code, body)
         return {"code": str(e.code), "msg": body[:200]}
     except Exception as e:
         logger.error(f"请求异常: {e}")

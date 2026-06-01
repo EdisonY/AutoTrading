@@ -50,6 +50,20 @@
 - 给定同一时间、同一币种、同一上下文，replay 与 live 对入场/否决结论一致。
 - C/v14 的“信号多、开仓少”可被分解到明确门控层。
 
+### 2026-06-01 N2/N6 进展补充：Binance API 全局压力闸门
+
+- [x] 新增 `core/binance_api_guard.py`，让 A/v11、B/v16、C/v14 和账户快照服务共享同一个 signed REST 文件级闸门。
+- [x] 三套 Binance client 已接入 `wait_before_request()` / `record_response()`：每次 signed REST 前全进程限速，遇到 `418/429/-1003/too many requests` 会持久化 `banned_until_ms`，让其他进程自动等待。
+- [x] `system_alerts.py` 已读取 `runtime/binance_api_guard_state.json`，入口页可暴露 API guard cooldown、最近请求路径和 top signed REST 路径。
+- [ ] 下一步：把账户余额/仓位迁到 user-data-stream 或更低频的集中账户状态服务，减少 `positionRisk` 轮询。
+- [ ] 下一步：把 open/close confirmation 的重复 positionRisk 合并成带 TTL 的确认快照，避免一个开平仓闭环打出多次 signed GET。
+- [ ] 下一步：guard 增加滚动窗口预算、每服务预算和“只允许交易关键路径突破限速”的优先级队列。
+
+验收口径：
+- 30 分钟 journal 中 418/429/-1003 为 0。
+- `runtime/binance_api_guard_state.json` 能显示最近请求路径、冷却窗口和 top paths。
+- 即使账户快照遇到 ban，三策略不继续延长 ban；入口页必须显示冷却原因。
+
 ### 新增阶段 N3 - Parquet/DuckDB 研究仓
 
 **目标**：SQLite 保留在线当前态和关注项，研究查询迁移到按日 Parquet + DuckDB，提升长期回测和复盘速度。

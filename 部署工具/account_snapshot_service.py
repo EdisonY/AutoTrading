@@ -245,11 +245,32 @@ def collect_accounts_resilient() -> tuple[list[dict[str, Any]], list[str]]:
     return accounts, errors
 
 
+def all_failures_are_missing_env(errors: list[str], rows: list[dict[str, Any]]) -> bool:
+    if not errors or not rows:
+        return False
+    if any(not row.get("stale") for row in rows):
+        return False
+    return all("Missing BINANCE_" in error for error in errors)
+
+
 def collect_once() -> list[dict[str, Any]]:
     ts = datetime.now(CST)
     accounts, errors = collect_accounts_resilient()
-    write_html(accounts)
     rows = [_snapshot_payload(account, ts) for account in accounts]
+    if all_failures_are_missing_env(errors, rows):
+        write_snapshot_error(RuntimeError("; ".join(errors)))
+        summary = {
+            "ts": ts.isoformat(),
+            "accounts": len(rows),
+            "fresh_accounts": 0,
+            "stale_accounts": [str(row.get("account")) for row in rows],
+            "partial_error_count": len(errors),
+            "status": "env_missing_no_write",
+        }
+        print(json.dumps(summary, ensure_ascii=False), flush=True)
+        return rows
+
+    write_html(accounts)
     for row in rows:
         if row.get("stale"):
             continue

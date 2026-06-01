@@ -240,7 +240,7 @@ class BinanceClient:
         """获取账户余额，直接返回Binance原生响应"""
         if self._cache_valid(self._balance_cache):
             return self._balance_cache[1]
-        data = _get("/fapi/v2/account")
+        data = _get("/fapi/v2/balance")
         self._last_balance_error = data if isinstance(data, dict) and str(data.get("code") or "") not in {"", "0", "200"} else None
         self._balance_cache = (time.time(), data)
         return data
@@ -498,27 +498,31 @@ class BinanceClient:
 
         pos_side: "LONG" 或 "SHORT"（Binance双向持仓模式下的positionSide值）
         """
-        positions = self.get_positions(symbol)
-        target = None
-        for p in positions:
-            pos_amt = float(p.get("positionAmt", 0))
-            if pos_amt == 0:
-                continue
-            target_position_side = (position_side or pos_side or "").upper()
-            if target_position_side and p.get("positionSide", "").upper() != target_position_side:
-                continue
-            target = p
-            break
+        target_side = (position_side or pos_side or "").upper()
+        close_side = (order_side or "").upper()
+        if quantity and close_side:
+            close_sz = quantity
+        else:
+            positions = self.get_positions(symbol)
+            target = None
+            for p in positions:
+                pos_amt = float(p.get("positionAmt", 0))
+                if pos_amt == 0:
+                    continue
+                if target_side and p.get("positionSide", "").upper() != target_side:
+                    continue
+                target = p
+                break
 
-        if not target:
-            logger.info(f"无持仓可平: {symbol}")
-            return {"code": "0", "msg": "no position"}
+            if not target:
+                logger.info(f"无持仓可平: {symbol}")
+                return {"code": "0", "msg": "no position"}
 
-        current_sz = abs(float(target.get("positionAmt", 0)))
-        close_sz = quantity if quantity else current_sz
-        target_side = target.get("positionSide", "").upper()
-        target_amt = float(target.get("positionAmt", 0))
-        close_side = (order_side or ("SELL" if target_amt > 0 else "BUY")).upper()
+            current_sz = abs(float(target.get("positionAmt", 0)))
+            close_sz = quantity if quantity else current_sz
+            target_side = target.get("positionSide", "").upper()
+            target_amt = float(target.get("positionAmt", 0))
+            close_side = (order_side or ("SELL" if target_amt > 0 else "BUY")).upper()
 
         logger.info(f"平仓: {symbol} {target_side} qty={close_sz}")
         close_params = {

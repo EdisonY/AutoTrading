@@ -126,6 +126,8 @@ def collect_once() -> list[dict[str, Any]]:
         json.dumps({"summary": summary, "accounts": rows}, ensure_ascii=False, indent=2, default=str),
         encoding="utf-8",
     )
+    if ERROR_PATH.exists():
+        ERROR_PATH.unlink()
     print(json.dumps(summary, ensure_ascii=False), flush=True)
     return rows
 

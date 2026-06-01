@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 import time
 from datetime import datetime, timezone, timedelta
@@ -38,6 +39,8 @@ ERROR_PATH = ROOT / "runtime" / "account_snapshot_error_latest.json"
 ERROR_LOG_PATH = ROOT / "logs" / "account_snapshot_errors.jsonl"
 A_V11_TARGET_MARGIN_USDT = 100.0
 A_V11_MARGIN_TOLERANCE_PCT = 0.05
+BAN_UNTIL_RE = re.compile(r"banned until\s+(\d{12,})", re.IGNORECASE)
+BAN_RESUME_PADDING_SECONDS = 5 * 60
 
 
 def _sizing_violations(account: dict[str, Any], positions: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -132,16 +135,53 @@ def collect_once() -> list[dict[str, Any]]:
     return rows
 
 
-def write_snapshot_error(exc: Exception) -> None:
+def retry_at_from_error(text: str) -> datetime | None:
+    match = BAN_UNTIL_RE.search(text or "")
+    if not match:
+        return None
+    try:
+        raw_ms = int(match.group(1))
+    except ValueError:
+        return None
+    return datetime.fromtimestamp(raw_ms / 1000, CST) + timedelta(seconds=BAN_RESUME_PADDING_SECONDS)
+
+
+def retry_delay_from_error_file(now: datetime) -> float:
+    if not ERROR_PATH.exists():
+        return 0.0
+    try:
+        payload = json.loads(ERROR_PATH.read_text(encoding="utf-8", errors="replace"))
+        retry_raw = payload.get("retry_at")
+        retry_at = (
+            datetime.fromisoformat(str(retry_raw).replace("Z", "+00:00"))
+            if retry_raw
+            else retry_at_from_error(str(payload.get("error") or ""))
+        )
+        if not retry_at:
+            return 0.0
+        if retry_at.tzinfo is None:
+            retry_at = retry_at.replace(tzinfo=CST)
+        return max(0.0, (retry_at.astimezone(CST) - now).total_seconds())
+    except Exception:
+        return 0.0
+
+
+def write_snapshot_error(exc: Exception) -> dict[str, Any]:
+    now = datetime.now(CST)
+    retry_at = retry_at_from_error(str(exc))
     payload = {
-        "ts": datetime.now(CST).isoformat(),
+        "ts": now.isoformat(),
         "status": "error",
         "error": str(exc),
     }
+    if retry_at:
+        payload["retry_at"] = retry_at.isoformat()
+        payload["retry_after_seconds"] = max(0, int((retry_at - now).total_seconds()))
     ERROR_PATH.parent.mkdir(parents=True, exist_ok=True)
     ERROR_PATH.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     ERROR_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
     write_jsonl_with_daily_shard(ERROR_LOG_PATH, payload)
+    return payload
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -154,11 +194,26 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     while True:
+        retry_delay = retry_delay_from_error_file(datetime.now(CST))
+        if retry_delay > 0:
+            payload = {
+                "status": "cooldown",
+                "sleep_seconds": int(retry_delay),
+                "ts": datetime.now(CST).isoformat(),
+            }
+            print(json.dumps(payload, ensure_ascii=False), flush=True)
+            if args.once:
+                return 2
+            time.sleep(retry_delay)
+            continue
         try:
             collect_once()
         except Exception as exc:
-            write_snapshot_error(exc)
+            error_payload = write_snapshot_error(exc)
             print(json.dumps({"status": "error", "error": str(exc), "ts": datetime.now(CST).isoformat()}, ensure_ascii=False), flush=True)
+            if error_payload.get("retry_after_seconds") and not args.once:
+                time.sleep(max(10, int(error_payload["retry_after_seconds"])))
+                continue
         if args.once:
             return 0
         time.sleep(max(10, args.interval))

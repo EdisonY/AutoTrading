@@ -48,6 +48,7 @@ SERVICES = [
 TIMERS = [
     "crypto-data-maintenance.timer",
 ]
+ACCOUNT_RESUME_TIMER = "crypto-account-snapshot-resume.timer"
 
 WATCH_SHARDS = [
     ROOT / "logs" / "decisions",
@@ -90,6 +91,20 @@ def unit_states(units: list[str]) -> dict[str, str]:
         proc = subprocess.run(["systemctl", "is-active", unit], capture_output=True, text=True, timeout=5)
         states[unit] = proc.stdout.strip() or proc.stderr.strip() or "unknown"
     return states
+
+
+def read_account_error() -> dict[str, Any]:
+    if not ACCOUNT_ERROR_LATEST.exists():
+        return {}
+    try:
+        payload = json.loads(ACCOUNT_ERROR_LATEST.read_text(encoding="utf-8", errors="replace"))
+        return payload if isinstance(payload, dict) else {}
+    except Exception:
+        return {}
+
+
+def account_retry_at(payload: dict[str, Any]) -> datetime | None:
+    return parse_dt(payload.get("retry_at"))
 
 
 def service_states() -> dict[str, str]:
@@ -194,9 +209,24 @@ def collect_alerts() -> dict[str, Any]:
     now = datetime.now(CST)
     alerts: list[dict[str, str]] = []
     states = service_states()
+    account_error_payload = read_account_error()
+    account_retry = account_retry_at(account_error_payload)
+    account_resume_timer_state = unit_state(ACCOUNT_RESUME_TIMER)
+    account_in_cooldown = bool(
+        (account_retry and account_retry > now)
+        or account_resume_timer_state == "active"
+    )
     for service, state in states.items():
         if state != "active":
-            alerts.append({"level": "bad", "title": f"服务异常：{service}", "body": f"systemd 状态为 {state}"})
+            if service == "crypto-account-snapshot.service" and account_in_cooldown:
+                resume_text = account_retry.isoformat() if account_retry else "resume timer active"
+                alerts.append({
+                    "level": "warn",
+                    "title": "账户快照API冷却中",
+                    "body": f"systemd 状态为 {state}；为避免 Binance 418 继续延长，暂停到 {resume_text} 后恢复。",
+                })
+            else:
+                alerts.append({"level": "bad", "title": f"服务异常：{service}", "body": f"systemd 状态为 {state}"})
 
     timers = unit_states(TIMERS)
     for timer, state in timers.items():
@@ -293,17 +323,19 @@ def collect_alerts() -> dict[str, Any]:
         except Exception as exc:
             alerts.append({"level": "warn", "title": "账户仓位尺寸检查失败", "body": str(exc)})
 
-    if ACCOUNT_ERROR_LATEST.exists():
+    if account_error_payload:
         try:
-            err_payload = json.loads(ACCOUNT_ERROR_LATEST.read_text(encoding="utf-8", errors="replace"))
-            err_ts = parse_dt(err_payload.get("ts"))
-            err_text = str(err_payload.get("error") or "")
+            err_ts = parse_dt(account_error_payload.get("ts"))
+            err_text = str(account_error_payload.get("error") or "")
             if err_ts and (now - err_ts).total_seconds() <= 30 * 60:
-                level = "bad" if ("418" in err_text or "-1003" in err_text or "Way too many" in err_text) else "warn"
+                cooling = bool((account_retry and account_retry > now) or account_resume_timer_state == "active")
+                level = "warn" if cooling else ("bad" if ("418" in err_text or "-1003" in err_text or "Way too many" in err_text) else "warn")
+                title = "账户快照API冷却中" if cooling else "账户快照采集失败"
+                retry_note = f"；retry_at={account_retry.isoformat()}" if account_retry else ""
                 alerts.append({
                     "level": level,
-                    "title": "账户快照采集失败",
-                    "body": f"{err_ts.isoformat()}: {err_text[:240]}",
+                    "title": title,
+                    "body": f"{err_ts.isoformat()}: {err_text[:220]}{retry_note}",
                 })
         except Exception as exc:
             alerts.append({"level": "warn", "title": "账户快照错误记录读取失败", "body": str(exc)})
@@ -335,8 +367,10 @@ def collect_alerts() -> dict[str, Any]:
             snapshot_ts = parse_dt(latest_snapshot[0]) if latest_snapshot else None
             if not event_ts or (now - event_ts).total_seconds() > 900:
                 alerts.append({"level": "warn", "title": "策略事件写入偏旧", "body": f"最新非交易事件 {event_ts or '无'}"})
-            if not snapshot_ts or (now - snapshot_ts).total_seconds() > 120:
-                alerts.append({"level": "warn", "title": "账户快照偏旧", "body": f"最新快照 {snapshot_ts or '无'}"})
+            stale_threshold = 2 * 3600 if account_in_cooldown else 120
+            if not snapshot_ts or (now - snapshot_ts).total_seconds() > stale_threshold:
+                title = "账户快照冷却中，使用最后有效快照" if account_in_cooldown else "账户快照偏旧"
+                alerts.append({"level": "warn", "title": title, "body": f"最新快照 {snapshot_ts or '无'}"})
             if total_snapshots == 0:
                 alerts.append({"level": "warn", "title": "账户快照未入库", "body": "account_snapshots 表暂无记录"})
         except Exception as exc:

@@ -27,6 +27,7 @@ from cloud.analyzer.auxiliary import calc_rsi, calc_ema, calc_atr
 from binance_client_v2 import get_client, BinanceClientV2 as ExchangeClient
 from core.audit_log import write_jsonl_with_daily_shard
 from core.execution_engine import CloseRequest, ExecutionEngine, OpenRequest
+from core.exchange_state import count_active_positions, count_side_positions, find_symbol_position, usdt_balance_summary
 from core.event_store import EventStoreWriter
 from core.market_watchlist import load_sentinel_context
 from core.market_data_cache import cached_available_symbols, cached_top_symbols
@@ -720,7 +721,7 @@ class ScannerV16:
     def _total_exchange_positions(self):
         try:
             positions = self.client.get_positions()
-            return sum(1 for p in positions if abs(float(p.get("positionAmt", 0))) > 0.0001)
+            return count_active_positions(positions)
         except Exception as e:
             logger.debug(f"交易所持仓数检查失败: {e}")
             return self._total_local_positions()
@@ -728,15 +729,7 @@ class ScannerV16:
     def _exchange_side_count(self, side):
         try:
             positions = self.client.get_positions()
-            count = 0
-            for p in positions:
-                amt = float(p.get("positionAmt", 0))
-                if abs(amt) <= 0.0001:
-                    continue
-                pos_side = infer_position_side(p)[0].lower()
-                if pos_side == side:
-                    count += 1
-            return count
+            return count_side_positions(positions, side)
         except Exception as e:
             logger.debug(f"交易所方向持仓数检查失败: {e}")
             return sum(1 for tf_pos in self.positions.values() for pos in tf_pos.values() if pos.side == side)
@@ -744,13 +737,7 @@ class ScannerV16:
     def _exchange_symbol_position(self, symbol):
         """Return an existing exchange position for symbol, if any."""
         try:
-            for pos in self.client.get_positions():
-                if str(pos.get("symbol") or "").upper() != symbol.upper():
-                    continue
-                amt = float(pos.get("positionAmt", 0) or 0)
-                if abs(amt) <= 0.0001:
-                    continue
-                return pos
+            return find_symbol_position(self.client.get_positions(), symbol)
         except Exception as e:
             logger.debug(f"交易所同币种持仓检查失败: {symbol} {e}")
         return {}
@@ -803,24 +790,22 @@ class ScannerV16:
             self.positions.setdefault(tf, {})[symbol] = pos
 
     def _account_balance_summary(self):
-        bal = self.client.get_balance()
-        if isinstance(bal, dict):
-            usdt_item = next((a for a in bal.get("assets", []) if a.get("asset") == "USDT"), None)
-            if usdt_item:
-                return float(usdt_item.get("walletBalance", 0)), float(usdt_item.get("availableBalance", 0))
-        elif isinstance(bal, list):
-            usdt_item = next((a for a in bal if a.get("asset") == "USDT"), None)
-            if usdt_item:
-                return float(usdt_item.get("balance", usdt_item.get("walletBalance", 0))), float(usdt_item.get("availableBalance", 0))
-        return 0.0, 0.0
+        return usdt_balance_summary(self.client.get_balance())
 
     def _can_open_new_position(self, risk_usdt, tf, sym, side, score):
-        total_positions = max(self._total_local_positions(), self._total_exchange_positions())
-        side_count = self._exchange_side_count(side)
+        try:
+            exchange_positions = self.client.get_positions()
+            total_positions = max(self._total_local_positions(), count_active_positions(exchange_positions))
+            side_count = count_side_positions(exchange_positions, side)
+        except Exception as e:
+            logger.debug(f"开仓风控快照读取失败: {e}")
+            total_positions = self._total_local_positions()
+            side_count = sum(1 for tf_pos in self.positions.values() for pos in tf_pos.values() if pos.side == side)
+        balance = self.client.get_balance()
         decision = self.risk_engine.check_entry(
             total_positions=total_positions,
             side_positions=side_count,
-            balance=self.client.get_balance(),
+            balance=balance,
             risk_usdt=risk_usdt,
         )
         if not decision.allowed:

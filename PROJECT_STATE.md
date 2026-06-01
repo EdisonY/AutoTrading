@@ -1,6 +1,6 @@
 # AutoTrading Project State
 
-Last updated: 2026-06-01 Asia/Shanghai
+Last updated: 2026-06-02 Asia/Shanghai
 
 This file is the long-lived project memory for multi-location development. Daily reports may roll forward, but this file records the current architecture, what is done, what is not done, and what must not be forgotten.
 
@@ -53,6 +53,7 @@ This file is the long-lived project memory for multi-location development. Daily
 - 2026-06-01 update: all three Binance clients now use `core/binance_api_guard.py`, a file-backed cross-process signed REST guard. A/v11, B/v16, C/v14, and the account snapshot service share a minimum request interval and a persisted ban/cooldown window from `418/429/-1003` responses. `system_alerts.py` surfaces the guard state and top signed REST paths.
 - 2026-06-01 update: the same API guard now also enforces `BINANCE_API_GUARD_MAX_REQUESTS_PER_MIN` (default `120/min`) across all live processes and `BINANCE_API_GUARD_MAX_ACCOUNT_REQUESTS_PER_MIN` (default `80/min`) per account/strategy label. It reports `rolling_count_60s/top_paths_60s` to system alerts.
 - 2026-06-01 update: all three Binance clients now use `BINANCE_ACCOUNT_CACHE_TTL_SEC` for balance/position cache TTL, default `5s`. Order paths still invalidate the cache after submit, so this reduces repeated scan-cycle account reads without weakening open/close confirmation.
+- 2026-06-02 update: A/v11, B/v16, and C/v14 open-risk gates now reuse one exchange-position snapshot and one balance snapshot per gate decision through `core/exchange_state.py`. This cuts duplicate signed REST reads in the entry path without changing thresholds, sizing, leverage, stops, or risk limits. The remaining API-pressure target is still user-data-stream or a centralized account-state service plus confirmation-loop snapshot reuse.
 - 2026-06-01 update: strategy evolution output now includes `expansion_readiness` for controlled expansion. It turns full-live post-approval windows into mature/still-sampling/pause-review counts, missing 24h closed samples, per-candidate action, and a first-screen command-center line so expansion decisions are no longer buried in raw gate tables. Full-live approval files also create gate decision records even if the matching experiment/candidate row is absent on a node, preventing approved live changes from disappearing due to stale research context.
 - 2026-06-01 update: strategy evolution post-approval PnL now reads close PnL from both top-level payload fields and nested `payload.raw`, and historical deterministic `-4164` min-notional `OPEN_FAILED` rows are recorded as `resolved_open_failed` rather than strategy-quality `open_failed`. This cleared the B/v16 false rollback-watch while preserving raw counts for audit.
 - `部署工具/git_change_guard.py` enforces that material staged code/config/tool changes include a `CHANGELOG.md` entry and rejects staged runtime/secret-like artifacts.

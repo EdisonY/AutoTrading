@@ -57,6 +57,7 @@
 - [x] `system_alerts.py` 已读取 `runtime/binance_api_guard_state.json`，入口页可暴露 API guard cooldown、最近请求路径和 top signed REST 路径。
 - [x] 三套 Binance client 的账户/仓位缓存 TTL 改为 `BINANCE_ACCOUNT_CACHE_TTL_SEC`，默认 `5s`，订单提交后仍强制失效，减少扫描周期重复 `positionRisk`。
 - [x] API guard 增加 `BINANCE_API_GUARD_MAX_REQUESTS_PER_MIN`，默认 `120/min`，和 `BINANCE_API_GUARD_MAX_ACCOUNT_REQUESTS_PER_MIN`，默认 `80/min`，并输出 `rolling_count_60s/top_paths_60s` 给系统告警。
+- [x] A/v11、B/v16、C/v14 的开仓风控门禁改为单次 `positionRisk` 快照派生总仓位/方向仓位，并单次读取余额；`core/exchange_state.py` 统一解析 active position、side count、symbol lookup、USDT balance。
 - [ ] 下一步：把账户余额/仓位迁到 user-data-stream 或更低频的集中账户状态服务，减少 `positionRisk` 轮询。
 - [ ] 下一步：把 open/close confirmation 的重复 positionRisk 合并成带 TTL 的确认快照，避免一个开平仓闭环打出多次 signed GET。
 - [ ] 下一步：guard 增加“只允许交易关键路径突破限速”的优先级队列。

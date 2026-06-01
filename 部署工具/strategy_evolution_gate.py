@@ -199,6 +199,49 @@ def account_risk_by_strategy(snapshot: dict[str, Any] | None) -> dict[str, dict[
     return out
 
 
+def normalize_side(value: Any) -> str:
+    text = str(value or "").lower()
+    if text in {"long", "buy"}:
+        return "long"
+    if text in {"short", "sell"}:
+        return "short"
+    return text
+
+
+def open_position_index_by_strategy(snapshot: dict[str, Any] | None) -> dict[str, set[tuple[str, str]]]:
+    out: dict[str, set[tuple[str, str]]] = {}
+    if not isinstance(snapshot, dict):
+        return out
+    for account in snapshot.get("accounts") or []:
+        if account.get("stale"):
+            continue
+        strategy = str(account.get("strategy") or "")
+        if not strategy:
+            continue
+        positions: set[tuple[str, str]] = set()
+        for pos in account.get("positions") or []:
+            symbol = str(pos.get("symbol") or "").upper()
+            side = normalize_side(pos.get("side") or pos.get("raw_side"))
+            qty = abs(to_float(pos.get("qty")))
+            if symbol and qty > 0:
+                positions.add((symbol, side))
+        out[strategy] = positions
+    return out
+
+
+def close_failed_still_open(strategy_positions: dict[str, set[tuple[str, str]]], strategy: str, symbol: str, side: str) -> bool:
+    positions = strategy_positions.get(strategy)
+    if positions is None:
+        return True
+    symbol = str(symbol or "").upper()
+    side = normalize_side(side)
+    if not symbol:
+        return True
+    if side:
+        return (symbol, side) in positions
+    return any(pos_symbol == symbol for pos_symbol, _ in positions)
+
+
 def relevant_counterfactual_rows(candidate: dict[str, Any], counterfactual: dict[str, Any] | None) -> list[dict[str, Any]]:
     if not isinstance(counterfactual, dict):
         return []
@@ -514,11 +557,16 @@ def classify_window_quality(metrics: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def summarize_post_approval_windows(db_path: Path | None, approvals: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
+def summarize_post_approval_windows(
+    db_path: Path | None,
+    approvals: dict[str, dict[str, Any]],
+    account_snapshot: dict[str, Any] | None = None,
+) -> dict[str, dict[str, Any]]:
     if not db_path or not approvals:
         return {}
     now = datetime.now(CST)
     out: dict[str, dict[str, Any]] = {}
+    open_positions_by_strategy = open_position_index_by_strategy(account_snapshot)
     try:
         conn = sqlite3.connect(str(db_path))
         conn.row_factory = sqlite3.Row
@@ -556,6 +604,8 @@ def summarize_post_approval_windows(db_path: Path | None, approvals: dict[str, d
                     "open_failed": 0,
                     "open_failed_reasons": collections.Counter(),
                     "close_failed": 0,
+                    "raw_close_failed": 0,
+                    "resolved_close_failed": 0,
                     "open_skipped": 0,
                     "realized_pnl_usdt": 0.0,
                     "latest_event_ts": "",
@@ -613,7 +663,11 @@ def summarize_post_approval_windows(db_path: Path | None, approvals: dict[str, d
                         metrics["open_failed"] += 1
                         metrics["open_failed_reasons"][open_failed_reason(payload)] += 1
                     elif event_type in {"CLOSE_FAILED", "FORCED_CLOSE_FAILED"}:
-                        metrics["close_failed"] += 1
+                        metrics["raw_close_failed"] += 1
+                        if close_failed_still_open(open_positions_by_strategy, strategy, row["symbol"], row["side"]):
+                            metrics["close_failed"] += 1
+                        else:
+                            metrics["resolved_close_failed"] += 1
                     elif event_type == "OPEN_SKIPPED":
                         metrics["open_skipped"] += 1
                     if event_type in {"CLOSE", "FORCED_CLOSE"}:
@@ -1010,9 +1064,9 @@ def build_payload(args: argparse.Namespace) -> dict[str, Any]:
     reviews = read_jsonl(memory_dir / "promotions" / "reviews_latest.jsonl")
     full_live_approvals = load_full_live_approvals(memory_dir)
     db_path = find_event_db(runtime_dir, args.db)
-    post_approval_windows = summarize_post_approval_windows(db_path, full_live_approvals)
-    counterfactual = read_json(reports_dir / "counterfactual_open_skips_latest.json")
     account_snapshot = read_json(runtime_dir / "account_snapshot_latest.json")
+    post_approval_windows = summarize_post_approval_windows(db_path, full_live_approvals, account_snapshot)
+    counterfactual = read_json(reports_dir / "counterfactual_open_skips_latest.json")
     decisions = build_decisions(candidates, experiments, reviews, counterfactual, account_snapshot, full_live_approvals, post_approval_windows)
     expansion_readiness = summarize_expansion_readiness(decisions)
     counts = {p: sum(1 for d in decisions if d.get("priority") == p) for p in ("P0", "P1", "P2", "P3", "REJECT")}

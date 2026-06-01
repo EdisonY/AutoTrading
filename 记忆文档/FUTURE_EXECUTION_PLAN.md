@@ -6,7 +6,8 @@
 
 - [x] 新增 `replay_gate_audit.py`：从 SQLite `events` 读取 live `SIGNAL/OPEN/OPEN_SKIPPED/OPEN_FAILED`，统一送入 `core.replay` 分类，输出 gate 覆盖率、未知 gate、按策略分布和主要 gate。
 - [x] 接入阿里云轻量分析、每日 shadow review、反向同步、live-context 拉取和入口页。入口页第一屏显示 `Replay门控`，详情区显示 `Replay / Live 门控审计`。
-- [ ] 下一步：补 A/v11 未知 gate 的 `stage/layer`；再抽 A/B/C 纯策略函数，让 replay 直接调用同一 gate，而不是只做事后分类。
+- [x] 已补 A/v11 legacy `OPEN_SKIPPED` 归因：池满/方向持仓上限归 `capacity`，同币种已有仓归 `position`，交易所/preflight 拒单归 `execution`。2026-06-01 20:26 CST Tencent live replay gate audit 已达到 `gate_coverage_pct=100.0%`、`unknown_gate=0`。
+- [ ] 下一步：抽 A/B/C 纯策略函数，让 replay 直接调用同一 gate，而不是只做事后分类。
 - 验收口径：gate 覆盖率需长期 >90%，且未知 gate 不集中于关键 OPEN_SKIPPED/OPEN_FAILED；达标后再推进纯函数抽取。
 
 用户最新目标：作为决策者，入口页必须先给出经过筛选和思考后的结论；系统优化的核心不是展示更多信息，而是让盈亏、策略质量、进化机会和风险暴露更清楚。当前样本仍偏少，但不再全局盲目放宽入场门槛。

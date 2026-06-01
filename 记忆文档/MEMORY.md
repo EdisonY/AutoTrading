@@ -1,5 +1,12 @@
 # MEMORY.md - 长期记忆
 
+## 2026-06-01 A/v11 replay gate 归因补齐 + B/v16 false P0 收敛
+- 中长期计划当前完成度：N1 决策者入口页、N3 Parquet/DuckDB 研究仓、N4 灰度/回滚门禁已经进入可用状态；N2 已完成事件模型、特征对齐、反事实 gate 归一和 replay/live gate audit，但还没有完成 A/B/C 纯策略门控函数和完整 replay 引擎；N5 开源框架 PoC 仍未开始。粗略看，当前阶段约完成 65%-70%，剩余主要是更深的架构抽象和 API/数据底座。
+- 本轮完成 A/v11 历史 `OPEN_SKIPPED` 未知 gate 归因：`周期池满/无可释放弱仓/方向持仓>=上限` 归 `capacity`，`同币种已有持仓/禁止叠仓` 归 `position`，交易所/preflight/min-notional 类拒单归 `execution`。Tencent live replay gate audit 已从 `95.12%`/`98.85%` 提升到 `100.0%`，A/B/C 未知 gate 均为 `0`。
+- 本轮也修正 B/v16 进化门禁 false P0：post-approval `CLOSE_FAILED/FORCED_CLOSE_FAILED` 现在会查最新 fresh account snapshot，只有仓位仍存在才算未闭环 `close_failed`；仓位已消失则记 `resolved_close_failed`，不再触发 `rollback_required/P0`。这与 system alerts 的“强平/关闭后必须确认仓位消失”闭环口径一致。
+- 2026-06-01 20:26 CST live pull：六个核心服务 active，账户浮盈 `+212.3622`，持仓 `14`，attention `P0=0/P1=4/P2=6`。P1 主要是 A/v11/B/v16 已放开候选的 rollback_watch/质量观察，B/v16 `close_failed_24h=0`，但仍有 24h 扣费后 PnL 和样本质量压力，不能视作完全通过。
+- 仍要继续的硬任务：A/B/C 纯门控函数抽取、完整 replay 引擎、OPEN_SKIPPED 放行后的成交/出场仿真、Binance API-budget/user-data-stream、长历史 K 线归档、NautilusTrader/vectorbt 等开源框架 PoC。
+
 ## 2026-06-01 Replay/live 门控审计接入入口页
 - N2 继续推进：新增 `部署工具/replay_gate_audit.py`，把 live SQLite `events` 中的 `SIGNAL/OPEN/OPEN_SKIPPED/OPEN_FAILED` 统一送入 `core.replay` 分类，输出 `runtime/replay_gate_audit_latest.json` 与 `reports/replay_gate_audit_latest.md`。
 - 入口页已新增 `Replay / Live 门控审计` 和功能卡 `Replay gate audit`，首屏摘要也显示 live 开仓流、gate 覆盖率、未知门控数量。当前腾讯 live 审计：open-flow `4816`，gate 覆盖 `95.12%`，状态 `ok`。这证明当前大部分 live 否决/开仓流已能被统一 replay taxonomy 解释，但还不是完整 replay/live 同路径。

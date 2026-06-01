@@ -134,6 +134,33 @@ def normalize_event_type(value: Any) -> ReplayEventType:
         return ReplayEventType.UNKNOWN
 
 
+def infer_gate_from_reason(reason: str) -> tuple[str, str]:
+    """Best-effort gate inference for legacy rows that predate stage/layer fields."""
+    text = str(reason or "").strip()
+    lower = text.lower()
+    if not text:
+        return "", ""
+
+    patterns: tuple[tuple[str, str, tuple[str, ...]], ...] = (
+        ("position", "same_symbol_position", ("同币种已有持仓", "已有持仓", "禁止叠仓", "duplicate position")),
+        ("capacity", "pool_capacity", ("周期池满", "池满", "满仓", "无可释放", "释放弱仓", "方向持仓", "capacity")),
+        ("cooldown", "cooldown", ("冷却", "cooldown", "止损冷却")),
+        ("risk", "margin_or_balance", ("保证金", "余额", "margin", "balance", "not enough")),
+        ("pre_filter", "market_filter", ("黑名单", "tradfi", "atr=0", "atr 0", "过滤")),
+        ("score", "score_threshold", ("分数", "阈值", "score", "threshold")),
+        ("confirmation", "entry_confirmation", ("确认", "confirmation", "confirm")),
+        (
+            "execution",
+            "exchange_reject",
+            ("-4164", "-1109", "min notional", "percent_price", "preflight", "exchange", "order rejected"),
+        ),
+    )
+    for gate, evidence, needles in patterns:
+        if any(needle.lower() in lower for needle in needles):
+            return gate, evidence
+    return "", ""
+
+
 def classify_replay_decision(event: ReplayEvent) -> ReplayDecision:
     """Classify an observed live event into the initial replay gate taxonomy."""
     if event.event_type == ReplayEventType.OPEN:
@@ -141,11 +168,15 @@ def classify_replay_decision(event: ReplayEvent) -> ReplayDecision:
     if event.event_type == ReplayEventType.SIGNAL:
         return ReplayDecision(event, "candidate", "entry_candidate", True, event.reason)
     if event.event_type == ReplayEventType.OPEN_SKIPPED:
-        gate = event.stage or event.layer or "unknown_gate"
-        return ReplayDecision(event, "rejected", gate, False, event.reason)
+        inferred_gate, evidence = infer_gate_from_reason(event.reason)
+        gate = event.stage or event.layer or inferred_gate or "unknown_gate"
+        inferred = {"inferred_from_reason": evidence} if inferred_gate and not (event.stage or event.layer) else {}
+        return ReplayDecision(event, "rejected", gate, False, event.reason, inferred)
     if event.event_type == ReplayEventType.OPEN_FAILED:
-        gate = event.stage or event.layer or "execution"
-        return ReplayDecision(event, "execution_failed", gate, False, event.reason)
+        inferred_gate, evidence = infer_gate_from_reason(event.reason)
+        gate = event.stage or event.layer or inferred_gate or "execution"
+        inferred = {"inferred_from_reason": evidence} if inferred_gate and not (event.stage or event.layer) else {}
+        return ReplayDecision(event, "execution_failed", gate, False, event.reason, inferred)
     if event.is_terminal_close:
         return ReplayDecision(event, "close_observed", event.stage or "exit", True, event.reason)
     return ReplayDecision(event, "observed", event.stage or event.layer or "unknown", False, event.reason)

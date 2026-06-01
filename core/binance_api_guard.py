@@ -36,6 +36,10 @@ def _ban_grace_ms() -> int:
     return max(0, int(os.environ.get("BINANCE_API_GUARD_BAN_GRACE_MS", str(5 * 60 * 1000))))
 
 
+def _max_requests_per_minute() -> int:
+    return max(1, int(os.environ.get("BINANCE_API_GUARD_MAX_REQUESTS_PER_MIN", "120")))
+
+
 def _load_state() -> dict[str, Any]:
     try:
         return json.loads(STATE_PATH.read_text(encoding="utf-8"))
@@ -86,20 +90,35 @@ def wait_before_request(account: str, method: str, path: str) -> float:
                 sleep_seconds = min(60.0, max(1.0, (banned_until - now) / 1000))
             else:
                 last_request_ms = int(state.get("last_request_ms") or 0)
-                wait_ms = _min_interval_ms() - (now - last_request_ms)
-                if wait_ms > 0:
-                    sleep_seconds = min(5.0, wait_ms / 1000)
-                else:
-                    state["last_request_ms"] = now
-                    state["last_account"] = account
-                    state["last_method"] = method
-                    state["last_path"] = path
-                    state["updated_at_ms"] = now
-                    stats = state.setdefault("stats", {})
-                    key = f"{account}:{method}:{path}"
-                    stats[key] = int(stats.get(key) or 0) + 1
+                recent = [
+                    item for item in state.get("recent_requests", [])
+                    if now - int(item.get("ts_ms") or 0) <= 60_000
+                ]
+                if len(recent) >= _max_requests_per_minute():
+                    oldest = min(int(item.get("ts_ms") or now) for item in recent)
+                    sleep_seconds = min(10.0, max(1.0, (oldest + 60_000 - now) / 1000))
+                    state["recent_requests"] = recent
+                    state["rolling_count_60s"] = len(recent)
                     _write_state(state)
-                    return total_sleep
+                else:
+                    wait_ms = _min_interval_ms() - (now - last_request_ms)
+                    if wait_ms > 0:
+                        sleep_seconds = min(5.0, wait_ms / 1000)
+                    else:
+                        state["last_request_ms"] = now
+                        state["last_account"] = account
+                        state["last_method"] = method
+                        state["last_path"] = path
+                        state["updated_at_ms"] = now
+                        recent.append({"ts_ms": now, "account": account, "method": method, "path": path})
+                        state["recent_requests"] = recent[-_max_requests_per_minute():]
+                        state["rolling_count_60s"] = len(state["recent_requests"])
+                        state["max_requests_per_min"] = _max_requests_per_minute()
+                        stats = state.setdefault("stats", {})
+                        key = f"{account}:{method}:{path}"
+                        stats[key] = int(stats.get(key) or 0) + 1
+                        _write_state(state)
+                        return total_sleep
         time.sleep(sleep_seconds)
         total_sleep += sleep_seconds
 

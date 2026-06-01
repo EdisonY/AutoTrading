@@ -56,9 +56,10 @@
 - [x] 三套 Binance client 已接入 `wait_before_request()` / `record_response()`：每次 signed REST 前全进程限速，遇到 `418/429/-1003/too many requests` 会持久化 `banned_until_ms`，让其他进程自动等待。
 - [x] `system_alerts.py` 已读取 `runtime/binance_api_guard_state.json`，入口页可暴露 API guard cooldown、最近请求路径和 top signed REST 路径。
 - [x] 三套 Binance client 的账户/仓位缓存 TTL 改为 `BINANCE_ACCOUNT_CACHE_TTL_SEC`，默认 `5s`，订单提交后仍强制失效，减少扫描周期重复 `positionRisk`。
+- [x] API guard 增加 `BINANCE_API_GUARD_MAX_REQUESTS_PER_MIN`，默认 `120/min`，并输出 `rolling_count_60s/top_paths_60s` 给系统告警。
 - [ ] 下一步：把账户余额/仓位迁到 user-data-stream 或更低频的集中账户状态服务，减少 `positionRisk` 轮询。
 - [ ] 下一步：把 open/close confirmation 的重复 positionRisk 合并成带 TTL 的确认快照，避免一个开平仓闭环打出多次 signed GET。
-- [ ] 下一步：guard 增加滚动窗口预算、每服务预算和“只允许交易关键路径突破限速”的优先级队列。
+- [ ] 下一步：guard 增加每服务预算和“只允许交易关键路径突破限速”的优先级队列。
 
 验收口径：
 - 30 分钟 journal 中 418/429/-1003 为 0。

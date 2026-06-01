@@ -211,7 +211,7 @@ def collect_alerts() -> dict[str, Any]:
     states = service_states()
     account_error_payload = read_account_error()
     account_retry = account_retry_at(account_error_payload)
-    account_resume_timer_state = unit_state(ACCOUNT_RESUME_TIMER)
+    account_resume_timer_state = unit_states([ACCOUNT_RESUME_TIMER]).get(ACCOUNT_RESUME_TIMER, "")
     account_in_cooldown = bool(
         (account_retry and account_retry > now)
         or account_resume_timer_state == "active"

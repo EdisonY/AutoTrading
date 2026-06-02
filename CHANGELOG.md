@@ -2,6 +2,14 @@
 
 This is the durable reason-and-outcome ledger for every material design, code, configuration, deployment, rollback, optimization, or live operational change.
 
+## 2026-06-03 07:16 CST - Extract A/v11 tradability gate
+- Trigger / reason: Continue P0-B replay/live same-path work during the P0-A public cooldown wait. A/v11 still had scanner-local contract tradability rejection logic before opening an order.
+- Completed: Added `evaluate_tradability_gate()` to `core.strategy_gates` and routed A/v11's `client.is_tradable()` rejection through it. The existing skip reason, `decision_stage=tradability`, `filter_layer=execution`, automatic blacklist behavior, thresholds, sizing, leverage, stops, and order behavior are preserved.
+- Not completed / remaining: P0-B still needs A/v11 replacement close/open orchestration, confirmation/risk/execution gates, B/C remaining position/execution gates, and historical same-input replay/live parity tests. P0-A still needs staged fresh-run after public cooldown clears.
+- Verification: Local full P0-A/P0-B regression `python -m unittest tests.test_binance_api_queue_client tests.test_binance_user_stream_runtime tests.test_binance_user_stream_service tests.test_binance_api_executor tests.test_binance_user_stream tests.test_account_state_service_stream tests.test_account_state_stream tests.test_binance_api_queue tests.test_account_state tests.test_execution_engine_account_state tests.test_binance_api_guard tests.test_strategy_gates` passed (`44` tests); `py_compile` passed for `binance_user_stream_service.py`, `account_state_service.py`, `core/strategy_gates.py`, `core/binance_api_queue_client.py`, A/B/C scanners, `release_manager.py`, sentinel, and market-data-cache; `git diff --check` passed. No remote service was started by this P0-B code change.
+- Live impact / deployment: Local code/docs only so far. No service started; no Binance API request or trading behavior activated.
+- Files / release / commit: `core/strategy_gates.py`, `策略文件/scanner.py`, `tests/test_strategy_gates.py`, `CHANGELOG.md`, `记忆文档/MEMORY.md`, `记忆文档/FUTURE_EXECUTION_PLAN.md`.
+
 ## 2026-06-03 07:11 CST - Extract A/v11 resonance-required gate
 - Trigger / reason: Continue P0-B replay/live same-path work while Testnet remains in construction mode and P0-A public fresh-run is blocked by Binance Testnet cooldown. A/v11 still had scanner-local `REQUIRE_RESONANCE` rejection logic before single-signal processing.
 - Completed: Added `evaluate_a_v11_resonance_required_gate()` to `core.strategy_gates` and routed the A/v11 resonance-required branch through it. The existing rejection reason, sentinel scan stage, thresholds, sizing, leverage, stops, order behavior, and service start state are preserved.

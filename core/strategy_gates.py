@@ -78,6 +78,29 @@ def evaluate_account_state_available_gate(
     )
 
 
+def evaluate_tradability_gate(
+    *,
+    tradable: bool,
+    reason: str = "",
+) -> StrategyGateDecision:
+    """Evaluate whether a symbol is tradeable before order construction."""
+    is_tradable = bool(tradable)
+    reason_text = str(reason or "")
+    if not is_tradable:
+        return StrategyGateDecision(
+            False,
+            "tradability",
+            reason_text,
+            evidence={"tradable": False, "reason": reason_text},
+        )
+    return StrategyGateDecision(
+        True,
+        "tradability",
+        "symbol_tradable",
+        evidence={"tradable": True, "reason": reason_text},
+    )
+
+
 def evaluate_symbol_stop_loss_gate(
     *,
     stop_loss_count: int,

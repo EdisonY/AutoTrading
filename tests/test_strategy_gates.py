@@ -31,6 +31,7 @@ from core.strategy_gates import (
     evaluate_symbol_scan_cooldown_gate,
     evaluate_symbol_stop_loss_gate,
     evaluate_timeframe_position_gate,
+    evaluate_tradability_gate,
     evaluate_watchlist_score_adjustment,
 )
 
@@ -49,6 +50,16 @@ class StrategyGateParityTest(unittest.TestCase):
         failed = evaluate_account_state_available_gate(account_state_available=False, read_error=True)
         self.assertFalse(failed.allowed)
         self.assertEqual(failed.reason, "account_state_read_failed")
+
+    def test_tradability_gate(self):
+        ok = evaluate_tradability_gate(tradable=True, reason="")
+        self.assertTrue(ok.allowed)
+        self.assertEqual(ok.reason, "symbol_tradable")
+
+        rejected = evaluate_tradability_gate(tradable=False, reason="MARKET_LOT_SIZE缺失")
+        self.assertFalse(rejected.allowed)
+        self.assertEqual(rejected.gate, "tradability")
+        self.assertEqual(rejected.reason, "MARKET_LOT_SIZE缺失")
 
     def test_a_v11_threshold_and_replacement(self):
         decision = evaluate_a_v11_entry_threshold(

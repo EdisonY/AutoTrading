@@ -129,6 +129,7 @@ from core.strategy_gates import (
     evaluate_symbol_blacklist_gate,
     evaluate_symbol_cooldown_gate,
     evaluate_timeframe_position_gate,
+    evaluate_tradability_gate,
 )
 from core.strategy_engine import StrategyEngine
 
@@ -1991,8 +1992,12 @@ class Scanner:
 
         # ── 合约可交易性检查 ──
         tradable = self.client.is_tradable(inst_id)
-        if not tradable["tradable"]:
-            logger.info(f"  ⏭️ {inst_id}({tf}) 不可交易({tradable['reason']})，跳过开仓")
+        tradability_gate = evaluate_tradability_gate(
+            tradable=bool(tradable.get("tradable")),
+            reason=str(tradable.get("reason") or ""),
+        )
+        if not tradability_gate.allowed:
+            logger.info(f"  ⏭️ {inst_id}({tf}) 不可交易({tradability_gate.reason})，跳过开仓")
             event = {
                 "time": now_str, "event": "OPEN_SKIPPED", "symbol": inst_id,
                 "side": side, "price": price, "sl": sl, "tp": tp,
@@ -2002,7 +2007,7 @@ class Scanner:
                 "st_dir": "多" if sig["st_direction"] == 1 else "空",
                 "st_flip": sig["st_flipped"],
                 "timeframe": tf, "resonance": resonance,
-                "skip_reason": tradable["reason"],
+                "skip_reason": tradability_gate.reason,
                 "decision_stage": "tradability",
                 "filter_layer": "execution",
                 **sentinel_fields(inst_id),
@@ -2011,7 +2016,7 @@ class Scanner:
             # 不可交易的币种自动加入黑名单
             if inst_id not in ATR_ZERO_BLACKLIST:
                 ATR_ZERO_BLACKLIST.add(inst_id)
-                logger.warning(f"  📛 {inst_id} 已加入黑名单（不可交易: {tradable['reason']}）")
+                logger.warning(f"  📛 {inst_id} 已加入黑名单（不可交易: {tradability_gate.reason}）")
             return
 
         existing_exchange_pos = self._exchange_symbol_position(inst_id)

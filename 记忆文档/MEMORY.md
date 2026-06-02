@@ -284,6 +284,7 @@
 - 2026-06-03：继续 P0-A multi-account user-stream 编排。新增 B/v16、C/v14 user-stream systemd 草案，A/B/C user-stream units 都依赖 api-queue 与 account-state；当前仍只部署磁盘，不启动。
 - 2026-06-03：继续 P0-A systemd 安装准备。`release_manager.py` 的 api-queue/account-state/user-stream 组件 post hook 会把 construction units 安装到 `/etc/systemd/system/` 并 daemon-reload，但不 enable、不 start。
 - 2026-06-03：继续 P0-B。A/v11 `REQUIRE_RESONANCE` 共振必需门控已抽成 `evaluate_a_v11_resonance_required_gate()`，scanner 原有“无共振，REQUIRE_RESONANCE=True”拒绝文本、stage 和日志口径保持不变。Tencent no-restart release `20260603-071300-strategy-a-f10e98e` 只把代码上传到磁盘；A/v11 scanner 仍 inactive，不改变阈值/仓位/杠杆/止损/下单行为。
+- 2026-06-03：继续 P0-B。A/v11 合约可交易性拒绝已抽成 `evaluate_tradability_gate()`，scanner 仍保留原 `decision_stage=tradability`、`filter_layer=execution`、skip reason 和不可交易币种自动黑名单行为；不改变阈值/仓位/杠杆/止损/下单行为。
 
 ---
 ## 2026-05-29 全局运行自检与账户方向口径修复

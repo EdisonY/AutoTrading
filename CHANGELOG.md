@@ -2,6 +2,14 @@
 
 This is the durable reason-and-outcome ledger for every material design, code, configuration, deployment, rollback, optimization, or live operational change.
 
+## 2026-06-02 18:55 CST - Extract A/v11 and C/v14 threshold gates
+- Trigger / reason: Continue P0-B replay/live same-path work after the first B/v16 gate extraction. The next low-risk step is to move the simpler A/v11 and C/v14 entry-threshold calculations onto the same shared pure gate module.
+- Completed: Added `evaluate_a_v11_entry_threshold()` and `evaluate_c_v14_entry_threshold()` to `core/strategy_gates.py`. A/v11 scanner now calls the shared A/v11 threshold gate. C/v14 keeps the local `entry_threshold_for()` API but its implementation now delegates to the shared C/v14 threshold gate. Together with the previous B/v16 extraction, all three strategies now have at least their entry-threshold gate exposed through shared pure code.
+- Not completed / remaining: This is threshold-gate extraction only. A/v11/C/v14 confirmation, replacement, tail, position/risk, market-data, and execution gates still need extraction. Full replay/live same-input parity tests are still not complete.
+- Verification: Local `py_compile` passed for `core/strategy_gates.py`, A/v11 scanner, and C/v14 scanner. Local equivalence smokes printed `A/v11 pure threshold equivalence ok` and `C/v14 pure threshold equivalence ok`. Tencent dry-runs for `strategy-a` and `strategy-c` included `core/strategy_gates.py`. Deployed releases `20260602-184846-strategy-a-28f01df` and `20260602-185230-strategy-c-28f01df`; A/C services reported active/running, and journals since deploy showed no Traceback/ImportError/SyntaxError/418/429/-1003.
+- Live impact / deployment: Deployed Tencent A/v11 and C/v14. Intended live behavior is unchanged threshold decisions through shared pure functions. No strategy threshold, sizing, leverage, stop formula, order behavior, automatic upgrade, or automatic rollback changed.
+- Files / release / commit: `core/strategy_gates.py`, `策略文件/scanner.py`, `策略文件/scanner_v14.py`, `CHANGELOG.md`, `PROJECT_STATE.md`, `记忆文档/MEMORY.md`, `记忆文档/FUTURE_EXECUTION_PLAN.md`.
+
 ## 2026-06-02 18:40 CST - Extract B/v16 pure replay/live gates
 - Trigger / reason: Continue the canonical long-term queue while Binance cooldown remains active. P0-B requires scanner and replay to move toward the same pure gate functions instead of only after-the-fact event classification.
 - Completed: Added `core/strategy_gates.py` with pure `StrategyGateDecision`, `evaluate_b_v16_entry_threshold()`, and `evaluate_b_v16_confirmation_gate()`. B/v16 scanner now calls those shared pure functions for the entry-threshold gate and 15m confirmation gate. `release_manager.py` ships the new helper with strategy and research bundles.

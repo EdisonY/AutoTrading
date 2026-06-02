@@ -16,6 +16,31 @@ class StrategyGateDecision:
     evidence: dict[str, Any] | None = None
 
 
+def evaluate_a_v11_entry_threshold(
+    *,
+    timeframe: str,
+    side: str,
+    score: float,
+    score_thresholds: Mapping[str, float],
+    score_threshold: float,
+    short_entry_penalty: float,
+) -> StrategyGateDecision:
+    """Evaluate the A/v11 entry-threshold gate without touching runtime state."""
+    threshold = float(score_thresholds.get(timeframe, score_threshold))
+    side_key = str(side or "").lower()
+    if side_key == "short":
+        threshold += float(short_entry_penalty)
+    adjusted_score = abs(float(score))
+    return StrategyGateDecision(
+        allowed=adjusted_score >= threshold,
+        gate="threshold",
+        reason="threshold_pass" if adjusted_score >= threshold else "threshold_fail",
+        threshold=threshold,
+        adjusted_score=adjusted_score,
+        evidence={"timeframe": timeframe, "side": side_key},
+    )
+
+
 def evaluate_b_v16_entry_threshold(
     *,
     timeframe: str,
@@ -64,6 +89,51 @@ def evaluate_b_v16_entry_threshold(
             "symbol": symbol_key,
             "open_positions": open_positions,
             "confirm_reason": reason,
+        },
+    )
+
+
+def evaluate_c_v14_entry_threshold(
+    *,
+    timeframe: str,
+    side: str,
+    trend_dir: str = "neutral",
+    trend_strength: float = 0.0,
+    score_thresholds: Mapping[str, float],
+    score_min: float,
+    long_penalty: float,
+    short_entry_penalty: float,
+    trend_penalty_threshold: float = 50.0,
+    trend_penalty_value: float = 15.0,
+) -> StrategyGateDecision:
+    """Evaluate the C/v14 entry threshold and trend penalty."""
+    side_key = str(side or "").lower()
+    trend_key = str(trend_dir or "neutral").lower()
+    strength = float(trend_strength or 0)
+    trend_penalty = 0.0
+    if trend_key == "bull" and strength >= float(trend_penalty_threshold) and side_key == "short":
+        trend_penalty = float(trend_penalty_value)
+    elif trend_key == "bear" and strength >= float(trend_penalty_threshold) and side_key == "long":
+        trend_penalty = float(trend_penalty_value)
+
+    threshold = (
+        float(score_thresholds.get(timeframe, score_min))
+        + (float(long_penalty) if side_key == "long" else 0.0)
+        + (float(short_entry_penalty) if side_key == "short" else 0.0)
+        + trend_penalty
+    )
+    return StrategyGateDecision(
+        allowed=True,
+        gate="threshold",
+        reason="threshold_computed",
+        threshold=threshold,
+        adjusted_score=None,
+        evidence={
+            "timeframe": timeframe,
+            "side": side_key,
+            "trend_dir": trend_key,
+            "trend_strength": strength,
+            "trend_penalty": trend_penalty,
         },
     )
 

@@ -65,6 +65,7 @@ from core.binance_api_guard import current_cooldown_seconds, record_public_respo
 from core.position_utils import infer_position_side, leveraged_loss_pct
 from core.sentinel_scanner import fields_from_context, filter_context_by_available, merge_symbols_with_context
 from core.risk_engine import RiskEngine, RiskLimits
+from core.strategy_gates import evaluate_c_v14_entry_threshold
 from core.strategy_engine import StrategyEngine
 
 def console_log_level() -> int:
@@ -112,18 +113,17 @@ SENTINEL_CONTEXT: dict[str, dict] = {}
 
 def entry_threshold_for(tf: str, side: str, trend_dir: str = "neutral", trend_strength: float = 0.0) -> tuple[float, int]:
     """Return the real entry threshold used by the v14 open gate."""
-    trend_penalty = 0
-    if trend_dir == "bull" and trend_strength >= 50 and side == "short":
-        trend_penalty = 15
-    elif trend_dir == "bear" and trend_strength >= 50 and side == "long":
-        trend_penalty = 15
-    threshold = (
-        SCORE_THRESHOLDS.get(tf, SCORE_MIN)
-        + (LONG_PENALTY if side == "long" else 0)
-        + (SHORT_ENTRY_PENALTY if side == "short" else 0)
-        + trend_penalty
+    decision = evaluate_c_v14_entry_threshold(
+        timeframe=tf,
+        side=side,
+        trend_dir=trend_dir,
+        trend_strength=trend_strength,
+        score_thresholds=SCORE_THRESHOLDS,
+        score_min=SCORE_MIN,
+        long_penalty=LONG_PENALTY,
+        short_entry_penalty=SHORT_ENTRY_PENALTY,
     )
-    return threshold, trend_penalty
+    return float(decision.threshold or 0), int((decision.evidence or {}).get("trend_penalty") or 0)
 
 # ── 止损止盈参数（ATR倍数）──
 # v14优化(2026-05-06): 分档ATR止损，替代固定倍数

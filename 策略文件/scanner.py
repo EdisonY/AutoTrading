@@ -114,6 +114,7 @@ from core.kline_cache import load_cached_klines, save_cached_klines
 from core.binance_api_guard import current_cooldown_seconds, record_public_response, wait_before_public_request
 from core.sentinel_scanner import fields_from_context, filter_context_by_available, merge_symbols_with_context
 from core.risk_engine import RiskEngine, RiskLimits
+from core.strategy_gates import evaluate_a_v11_entry_threshold
 from core.strategy_engine import StrategyEngine
 
 def console_log_level() -> int:
@@ -1083,13 +1084,15 @@ class Scanner:
         return abs(self._effective_signal_score(sig, resonance=resonance)) >= STRONG_SIGNAL_THRESHOLD
 
     def _passes_entry_threshold(self, sig: dict) -> bool:
-        side = sig["trade_side"]
-        score = abs(sig["net_score"])
-        tf = sig["timeframe"]
-        threshold = SCORE_THRESHOLDS.get(tf, SCORE_THRESHOLD)
-        if side == "short":
-            threshold += SHORT_ENTRY_PENALTY
-        return score >= threshold
+        decision = evaluate_a_v11_entry_threshold(
+            timeframe=sig["timeframe"],
+            side=sig["trade_side"],
+            score=sig["net_score"],
+            score_thresholds=SCORE_THRESHOLDS,
+            score_threshold=SCORE_THRESHOLD,
+            short_entry_penalty=SHORT_ENTRY_PENALTY,
+        )
+        return decision.allowed
 
     def _has_position(self, sym: str, side: str = None) -> bool:
         """检查是否已有某币种/方向的持仓（跨周期）"""

@@ -37,6 +37,29 @@ class AccountStateServiceStreamTest(unittest.TestCase):
             self.assertEqual(float(state.balance["totalWalletBalance"]), 1300.0)
             self.assertEqual(state.positions[0]["symbol"], "SOLUSDT")
 
+    def test_apply_stream_events_skips_duplicate_event(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            payload = build_account_state_payload([
+                {"account": "A", "strategy": "A/v11", "wallet_usdt": 1000, "positions": []}
+            ])
+            write_account_state(root, payload)
+            event = {
+                "e": "ACCOUNT_UPDATE",
+                "E": int(time.time() * 1000),
+                "T": int(time.time() * 1000),
+                "a": {"B": [{"a": "USDT", "wb": "1400", "cw": "1350"}]},
+            }
+            events = root / "events.jsonl"
+            events.write_text(json.dumps(event) + "\n" + json.dumps(event) + "\n", encoding="utf-8")
+
+            apply_stream_events_once(events_path=events, strategy="A/v11", root=root)
+            state = load_central_account_state(root, "A/v11", max_age_seconds=60 * 60)
+
+            self.assertEqual(float(state.balance["totalWalletBalance"]), 1400.0)
+            offset_path = root / "runtime" / "account_state_stream_offsets.json"
+            self.assertTrue(offset_path.exists())
+
 
 if __name__ == "__main__":
     unittest.main()

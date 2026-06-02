@@ -38,7 +38,8 @@ from account_snapshot_service import (
     write_html,
     write_snapshot_error,
 )
-from core.account_state import build_account_state_payload, write_account_state
+from core.account_state import build_account_state_payload, read_account_state_payload, write_account_state
+from core.account_state_stream import apply_user_stream_event
 
 
 CST = timezone(timedelta(hours=8))
@@ -81,17 +82,64 @@ def collect_state_once(*, write_legacy_snapshot: bool = False, write_db: bool = 
     return payload
 
 
+def apply_stream_events_once(
+    *,
+    events_path: str | Path,
+    strategy: str,
+    root: str | Path = ROOT,
+) -> dict[str, Any]:
+    payload = read_account_state_payload(root, allow_legacy=False)
+    if not payload:
+        raise RuntimeError("central account state missing; run a baseline collection first")
+
+    applied = 0
+    path = Path(events_path)
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        if not raw.strip():
+            continue
+        item = json.loads(raw)
+        if not isinstance(item, dict):
+            continue
+        event_strategy = str(item.get("strategy") or strategy)
+        event = item.get("event") if isinstance(item.get("event"), dict) else item
+        payload = apply_user_stream_event(payload, strategy=event_strategy, event=event)
+        applied += 1
+    output = write_account_state(root, payload)
+    result = {
+        "status": "ok",
+        "path": str(output),
+        "stream_events_applied": applied,
+        "summary": payload.get("summary") or {},
+        "ts": payload.get("generated_at"),
+    }
+    print(json.dumps(result, ensure_ascii=False), flush=True)
+    return payload
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Central Binance account-state service")
     parser.add_argument("--interval", type=int, default=900)
     parser.add_argument("--once", action="store_true")
     parser.add_argument("--write-legacy-snapshot", action="store_true")
     parser.add_argument("--write-db", action="store_true")
+    parser.add_argument("--stream-events", help="Apply newline-delimited user-data-stream events to central account state")
+    parser.add_argument("--stream-strategy", default="", help="Default strategy for raw stream events")
     return parser.parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
+    if args.stream_events:
+        if not args.stream_strategy:
+            print(json.dumps({"status": "error", "error": "--stream-strategy is required with --stream-events"}, ensure_ascii=False), flush=True)
+            return 2
+        try:
+            apply_stream_events_once(events_path=args.stream_events, strategy=args.stream_strategy)
+            return 0
+        except Exception as exc:
+            write_snapshot_error(exc)
+            print(json.dumps({"status": "error", "error": str(exc)}, ensure_ascii=False), flush=True)
+            return 1
     while True:
         try:
             collect_state_once(write_legacy_snapshot=args.write_legacy_snapshot, write_db=args.write_db)

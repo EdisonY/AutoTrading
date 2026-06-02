@@ -20,9 +20,15 @@ if sys.platform == "win32":
 TESTNET_TICKER_URL = "https://testnet.binancefuture.com/fapi/v1/ticker/24hr"
 
 from core.binance_api_guard import record_public_response, wait_before_public_request
+from core.binance_api_queue_client import api_queue_client_enabled, queued_api_request
 
 
 def fetch_json(url: str, timeout: int = 12):
+    if api_queue_client_enabled():
+        data = queued_api_request(scope="public", label="market-data-cache", method="GET", path=url, url=url, timeout_sec=timeout + 5)
+        if isinstance(data, dict) and data.get("code") is not None and str(data.get("code")) != "200":
+            raise RuntimeError(str(data.get("msg") or data))
+        return data
     wait_before_public_request("market-data-cache", url)
     req = urllib.request.Request(url, headers={"User-Agent": "AutoTrading-MarketDataService/1.0"})
     try:

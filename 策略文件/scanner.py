@@ -112,6 +112,7 @@ from core.market_watchlist import load_sentinel_context
 from core.market_data_cache import cached_available_symbols, cached_spike_symbols, cached_top_symbols
 from core.kline_cache import load_cached_klines, save_cached_klines
 from core.binance_api_guard import record_public_response, wait_before_public_request
+from core.binance_api_queue_client import api_queue_client_enabled, queued_api_request
 from core.sentinel_scanner import fields_from_context, filter_context_by_available, merge_symbols_with_context
 from core.risk_engine import RiskEngine, RiskLimits
 from core.strategy_gates import (
@@ -320,6 +321,11 @@ def fetch_json(url: str, timeout: int = 10) -> dict:
     """拉取JSON，内置限流和ban退避"""
     import urllib.request, urllib.error
     global _last_ban_until
+    if api_queue_client_enabled():
+        data = queued_api_request(scope="public", label="A/v11", method="GET", path=url, url=url, timeout_sec=timeout + 5)
+        if isinstance(data, dict) and data.get("code") is not None and str(data.get("code")) != "200":
+            raise RuntimeError(str(data.get("msg") or data))
+        return data
     wait_before_public_request("A/v11", url)
     now = time.time()
     # IP ban退避 - 完全暂停直到解封

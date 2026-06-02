@@ -33,6 +33,7 @@ import urllib.error
 import urllib.request
 
 from core.binance_api_guard import record_public_response, wait_before_public_request
+from core.binance_api_queue_client import api_queue_client_enabled, queued_api_request
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -49,6 +50,11 @@ VPB_TP_MULT = 4.5             # VPB止盈：4.5×ATR（v7: 4.0→4.5，放宽止
 
 
 def fetch_json(url: str, timeout: int = 10) -> dict:
+    if api_queue_client_enabled():
+        data = queued_api_request(scope="public", label="strategy-breakout", method="GET", path=url, url=url, timeout_sec=timeout + 5)
+        if isinstance(data, dict) and data.get("code") is not None and str(data.get("code")) != "200":
+            raise RuntimeError(str(data.get("msg") or data))
+        return data
     wait_before_public_request("strategy-breakout", url)
     req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
     try:

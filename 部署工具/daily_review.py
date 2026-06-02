@@ -45,6 +45,7 @@ import urllib.request
 import urllib.error
 
 from core.binance_api_guard import record_public_response, wait_before_public_request
+from core.binance_api_queue_client import api_queue_client_enabled, queued_api_request
 
 CST = timezone(timedelta(hours=8))
 REPORTS_DIR = ROOT / "reports"
@@ -61,6 +62,11 @@ LOCAL_LOGS = ROOT / "server_logs"
 # ─────────────────────────────────────────────
 
 def fetch_json(url: str, timeout: int = 15) -> any:
+    if api_queue_client_enabled():
+        data = queued_api_request(scope="public", label="daily-review", method="GET", path=url, url=url, timeout_sec=timeout + 5)
+        if isinstance(data, dict) and data.get("code") is not None and str(data.get("code")) != "200":
+            raise RuntimeError(str(data.get("msg") or data))
+        return data
     wait_before_public_request("daily-review", url)
     req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
     try:

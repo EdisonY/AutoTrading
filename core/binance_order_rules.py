@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from core.binance_api_guard import record_public_response, wait_before_public_request
+from core.binance_api_queue_client import api_queue_client_enabled, queued_api_request
 
 
 TRADFI_PERP_BASES = {
@@ -247,6 +248,11 @@ def validate_open_quantity(
 def public_get_json(base_url: str, path: str, params: dict[str, Any], timeout: int = 5) -> Any:
     query = urllib.parse.urlencode(params)
     url = f"{base_url}{path}?{query}" if query else f"{base_url}{path}"
+    if api_queue_client_enabled():
+        data = queued_api_request(scope="public", label="order-rules", method="GET", path=path, url=url, timeout_sec=timeout + 5)
+        if isinstance(data, dict) and data.get("code") is not None and str(data.get("code")) != "200":
+            raise RuntimeError(str(data.get("msg") or data))
+        return data
     wait_before_public_request("order-rules", url)
     try:
         with urllib.request.urlopen(url, timeout=timeout) as resp:

@@ -58,6 +58,7 @@ from core.review_analytics import (  # noqa: E402
 )
 from core.position_utils import infer_position_side, position_unrealized_pnl  # noqa: E402
 from core.binance_api_guard import record_public_response, wait_before_public_request  # noqa: E402
+from core.binance_api_queue_client import api_queue_client_enabled, queued_api_request  # noqa: E402
 
 REPORTS_DIR = ROOT / "reports"
 REPORTS_DIR.mkdir(exist_ok=True)
@@ -105,6 +106,11 @@ def strategies_for_root(data_root: Path) -> list[dict[str, Any]]:
 
 
 def fetch_json(url: str, timeout: int = 15) -> Any:
+    if api_queue_client_enabled():
+        data = queued_api_request(scope="public", label="daily-market-review", method="GET", path=url, url=url, timeout_sec=timeout + 5)
+        if isinstance(data, dict) and data.get("code") is not None and str(data.get("code")) != "200":
+            raise RuntimeError(str(data.get("msg") or data))
+        return data
     wait_before_public_request("daily-market-review", url)
     req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
     try:

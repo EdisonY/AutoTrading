@@ -57,6 +57,7 @@ MAIN_FILES = [
     ("runtime/account_snapshot_latest.json", "runtime/account_snapshot_latest.json", True),
     ("runtime/alerts_latest.json", "runtime/alerts_latest.json", True),
     ("runtime/market_data_cache.json", "runtime/market_data_cache.json", False),
+    ("runtime/market_mover_watchlist.json", "runtime/market_mover_watchlist.json", False),
     ("runtime/strategy_evolution_latest.json", "runtime/strategy_evolution_latest.json", True),
     ("runtime/research_store_summary_latest.json", "runtime/research_store_summary_latest.json", False),
     ("runtime/replay_feature_dataset_latest.json", "runtime/replay_feature_dataset_latest.json", False),

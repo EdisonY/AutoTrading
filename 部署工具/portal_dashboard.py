@@ -663,6 +663,7 @@ def sentinel_quality_summary(path: Path | None) -> dict[str, Any]:
         "summary": {},
         "coverage": {},
         "forward_returns": {},
+        "watchlist_history": {},
     }
     payload = read_json(path) if path else None
     if not isinstance(payload, dict):
@@ -676,6 +677,7 @@ def sentinel_quality_summary(path: Path | None) -> dict[str, Any]:
         "summary": payload.get("summary") if isinstance(payload.get("summary"), dict) else {},
         "coverage": payload.get("coverage") if isinstance(payload.get("coverage"), dict) else {},
         "forward_returns": payload.get("forward_returns") if isinstance(payload.get("forward_returns"), dict) else {},
+        "watchlist_history": payload.get("watchlist_history") if isinstance(payload.get("watchlist_history"), dict) else {},
     }
 
 
@@ -1409,6 +1411,7 @@ def function_status_cards(data: dict[str, Any]) -> list[dict[str, str]]:
     a_v11_rollout_72h = (a_v11_rollout.get("windows") or {}).get("72h") or {}
     sentinel_quality = data.get("sentinel_quality") or {}
     sentinel_coverage = sentinel_quality.get("coverage") or {}
+    sentinel_watchlist = sentinel_quality.get("watchlist_history") or {}
     sentinel_forward_60m = ((sentinel_quality.get("forward_returns") or {}).get("by_horizon") or {}).get("60m") or {}
     sentinel_forward_60m_dir = sentinel_forward_60m.get("directional_after_fee") or {}
     evolution = data.get("strategy_evolution") or {}
@@ -2292,6 +2295,7 @@ def render_html(out_dir: Path) -> str:
 
     sentinel_quality = data.get("sentinel_quality") or {}
     sentinel_coverage = sentinel_quality.get("coverage") or {}
+    sentinel_watchlist = sentinel_quality.get("watchlist_history") or {}
     sentinel_forward_rows = "".join(
         f"""
 <tr>
@@ -2339,6 +2343,13 @@ def render_html(out_dir: Path) -> str:
 """.strip()
         for row in ((sentinel_coverage.get("attribution") or {}).get("not_scanned_breakdown") or [])[:6]
     ) or '<tr><td colspan="5">暂无未扫描细分</td></tr>'
+    sentinel_watchlist_note = (
+        f"Watchlist 历史：{int(sentinel_watchlist.get('snapshots') or 0)} 个快照，"
+        f"{int(sentinel_watchlist.get('unique_symbols') or 0)} 个去重币种，"
+        f"{h(str(sentinel_watchlist.get('first_ts') or '')[:16])} ~ {h(str(sentinel_watchlist.get('last_ts') or '')[:16])}。"
+        if sentinel_watchlist.get("available")
+        else "Watchlist 历史：暂无 durable snapshot；本次上线后开始采集，用于后续区分未进 watchlist 与镜像/扫描缺口。"
+    )
 
     counterfactual = data.get("counterfactual") or {}
     cf_overall = counterfactual.get("overall") or {}
@@ -2851,6 +2862,7 @@ th {{ background:#f1f5f9; color:#334155; }}
       <tbody>{sentinel_rows}</tbody>
     </table>
     <p class="note">N6 审计：大行情覆盖 {int(sentinel_coverage.get('covered_big_move_signals') or 0)}/{int(sentinel_coverage.get('big_move_signals') or 0)}，覆盖率 {float(sentinel_coverage.get('coverage_pct') or 0):.2f}%；更新 {h(sentinel_quality.get('age'))}。</p>
+    <p class="note">{sentinel_watchlist_note}</p>
     <table class="subtable">
       <thead><tr><th>窗口</th><th>样本</th><th>原始均值</th><th>方向扣费后均值</th><th>方向胜率</th></tr></thead>
       <tbody>{sentinel_forward_rows}</tbody>

@@ -50,6 +50,10 @@ JSONL_FILES = [
     "logs_v16/system.jsonl",
 ]
 
+ALWAYS_JSONL_FILES = [
+    "runtime/market_mover_watchlist_history.jsonl",
+]
+
 TEXT_FILES = [
     "logs/scanner_stdout.log",
     "logs_v14/scanner_stdout.log",
@@ -62,6 +66,7 @@ REPORT_FILES = [
     "runtime/account_snapshot_latest.json",
     "runtime/alerts_latest.json",
     "runtime/market_data_cache.json",
+    "runtime/market_mover_watchlist.json",
 ]
 
 SQLITE_FILES = [
@@ -320,11 +325,11 @@ def sync_bundle(
         f"mkdir -p {shell_quote(tmp_dir)}",
         f"cd {shell_quote(REMOTE_DIR)}",
     ]
-    if include_jsonl:
-        for rel in JSONL_FILES:
-            parent = Path(rel).parent.as_posix()
-            commands.append(f"mkdir -p {shell_quote(f'{tmp_dir}/{parent}')} ")
-            commands.append(remote_jsonl_filter_command(rel, days, f"{tmp_dir}/{rel}"))
+    jsonl_files = ALWAYS_JSONL_FILES + (JSONL_FILES if include_jsonl else [])
+    for rel in jsonl_files:
+        parent = Path(rel).parent.as_posix()
+        commands.append(f"mkdir -p {shell_quote(f'{tmp_dir}/{parent}')} ")
+        commands.append(remote_jsonl_filter_command(rel, days, f"{tmp_dir}/{rel}"))
     for rel in TEXT_FILES:
         parent = Path(rel).parent.as_posix()
         commands.append(f"mkdir -p {shell_quote(f'{tmp_dir}/{parent}')} ")
@@ -403,7 +408,7 @@ def sync_bundle(
 
     validate_local_sqlite(LOCAL_DIR / "runtime" / "event_store.sqlite3", max_age_hours=max_age_hours)
 
-    expected_files = (JSONL_FILES if include_jsonl else []) + TEXT_FILES + REPORT_FILES + SQLITE_FILES
+    expected_files = jsonl_files + TEXT_FILES + REPORT_FILES + SQLITE_FILES
     for rel in expected_files:
         path = LOCAL_DIR / rel
         if not path.exists():
@@ -420,7 +425,7 @@ def sync(days_back: int) -> None:
     client = ssh_client()
     try:
         print(f"Connected to Tencent {TENCENT_HOST}; days={','.join(days)}")
-        for rel in JSONL_FILES:
+        for rel in ALWAYS_JSONL_FILES + JSONL_FILES:
             local = LOCAL_DIR / rel
             local.parent.mkdir(parents=True, exist_ok=True)
             data = grep_recent(client, rel, days)

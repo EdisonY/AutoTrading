@@ -447,7 +447,8 @@
 - [x] 命令中心显示大行情覆盖率、未覆盖样例、15m/30m/60m/120m 哨兵前向收益。
 - [x] 命令中心显示大行情粗归因：未进入策略扫描 / 扫描无信号 / 策略拒绝 / 风控拒绝 / 执行拒绝等。
 - [x] 命令中心显示未扫描大行情首版细分：镜像内从未被策略扫描 / 只在较远时间被扫描 / 扫描窗口错过。
-- [ ] 下一步用 durable watchlist snapshot 历史继续拆分 `never_scanned_in_mirror`：未进 watchlist / scanner universe 不支持 / 同步镜像截断，并连接完整 replay/fill outcome。
+- [x] 新增 durable watchlist snapshot 历史采集与同步：`runtime/market_mover_watchlist_history.jsonl` 和 daily shard 会进入阿里云 bounded mirror，入口页显示是否可用。
+- [ ] 下一步在 watchlist history 积累后继续拆分 `never_scanned_in_mirror`：未进 watchlist / scanner universe 不支持 / 同步镜像截断，并连接完整 replay/fill outcome。
 
 ---
 

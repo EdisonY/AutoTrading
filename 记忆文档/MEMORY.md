@@ -1,5 +1,11 @@
 # MEMORY.md - 长期记忆
 
+## 2026-06-02 N6 watchlist 历史持久化
+- 为继续拆解 `never_scanned_in_mirror`，哨兵现在会把每轮 `market_mover_watchlist.json` 追加写入 `runtime/market_mover_watchlist_history.jsonl` 和每日分片。现有 latest JSON 仍保留，watchlist 构造逻辑、scanner cadence、策略阈值都不变。
+- `shadow_sync_from_tencent.py` 会把 watchlist history 和当前 watchlist 带到阿里云 bounded mirror；`sentinel_quality_review.py` 会报告 watchlist history 是否可用；入口页显示 watchlist snapshot 数、去重币种和时间范围。上线前本地历史为 0，这是预期，因为 durable 采集从本轮部署后开始。部署后阿里云短刷新已读到 `Watchlist snapshots: 63`，说明 Tencent daily shard 到 Aliyun mirror 到 portal 的链路已通。
+- 部署记录：Tencent sentinel `20260602-104223-sentinel-f3b972a`、Tencent research `20260602-105250-research-f3b972a`、Tencent portal `20260602-105331-portal-f3b972a`、Aliyun shadow `20260602-105400-shadow-f3b972a` 和修正默认同步的 `20260602-105832-shadow-f3b972a`。最终 live context `2026-06-02T11:01:57+08:00` 显示六服务 active、账户浮盈 `+8.4778`、`10` 仓、attention `P0=0/P1=0/P2=2`。
+- 下一步：等 watchlist history 积累后，把 `never_scanned_in_mirror` 精确拆成未进 watchlist、scanner universe 不支持、或同步镜像截断。不要在没有这层证据前扩大 scanner cadence。
+
 ## 2026-06-02 N6 未扫描大行情细分
 - 继续 N6，仍为 report-only。`sentinel_quality_review.py` 对 `not_scanned` 大行情新增二级细分：`scanned_outside_window`（镜像中曾被扫到但不在 -5m/+30m 命中窗口）、`never_scanned_in_mirror`（镜像内从未进入策略 `sentinel_scans`）、`near_window_gap`（180 分钟内有扫描但命中窗口错过）。
 - 本地 3 日镜像结果：大行情 `1065`，覆盖 `158/1065=14.84%`；`not_scanned=907` 中，较远时间扫描 `538 / 59.32%`，镜像内从未扫 `301 / 33.19%`，近窗口错过 `68 / 7.50%`。入口页新增“未扫描细分”表。

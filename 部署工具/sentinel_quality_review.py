@@ -38,6 +38,7 @@ BIG_MOVE_ABS_PCT = 8.0
 BUS_COVERAGE_WINDOW_MIN = 30
 BUS_SCAN_LOOKBACK_MIN = 5
 NEAR_MISS_WINDOW_MIN = 180
+WATCHLIST_HISTORY_REL = Path("runtime") / "market_mover_watchlist_history.jsonl"
 
 
 def parse_dt(value: str | None) -> datetime | None:
@@ -70,6 +71,50 @@ def parse_payload(value: Any) -> dict[str, Any]:
         return parsed if isinstance(parsed, dict) else {}
     except Exception:
         return {}
+
+
+def load_watchlist_history(root: Path, days: int = 7) -> list[dict[str, Any]]:
+    now = datetime.now(CST)
+    cutoff = now - timedelta(days=days)
+    shard_dir = root / WATCHLIST_HISTORY_REL.parent / WATCHLIST_HISTORY_REL.stem
+    candidates = [root / WATCHLIST_HISTORY_REL]
+    for offset in range(max(1, days + 1)):
+        candidates.append(shard_dir / f"{(now - timedelta(days=offset)).strftime('%Y-%m-%d')}.jsonl")
+    rows: list[dict[str, Any]] = []
+    seen_paths: set[Path] = set()
+    for path in candidates:
+        if path in seen_paths or not path.exists():
+            continue
+        seen_paths.add(path)
+        try:
+            lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+        except Exception:
+            continue
+        for line in lines:
+            payload = parse_payload(line)
+            ts = parse_dt(payload.get("ts"))
+            if not ts or ts < cutoff:
+                continue
+            symbols = payload.get("symbols") if isinstance(payload.get("symbols"), list) else []
+            symbol_set = {
+                str(item.get("symbol") if isinstance(item, dict) else item).upper().strip()
+                for item in symbols
+            }
+            rows.append(
+                {
+                    "ts": payload.get("ts"),
+                    "symbols": [symbol for symbol in symbol_set if symbol],
+                    "count": len(symbol_set),
+                }
+            )
+    rows.sort(key=lambda item: parse_dt(item.get("ts")) or datetime.min.replace(tzinfo=CST))
+    return rows
+
+
+def watchlist_history_root(db_path: Path, default_root: Path) -> Path:
+    if db_path.name == "event_store.sqlite3" and db_path.parent.name == "runtime":
+        return db_path.parent.parent
+    return default_root
 
 
 def load_sentinel_decisions(con: sqlite3.Connection, days: int = 7) -> list[dict[str, Any]]:
@@ -460,6 +505,20 @@ def not_scanned_label(bucket: str) -> str:
     return labels.get(bucket, bucket)
 
 
+def compute_watchlist_history_summary(history: list[dict[str, Any]], days: int) -> dict[str, Any]:
+    symbols: set[str] = set()
+    for row in history:
+        symbols.update(str(symbol) for symbol in row.get("symbols") or [])
+    return {
+        "available": bool(history),
+        "days": days,
+        "snapshots": len(history),
+        "unique_symbols": len(symbols),
+        "first_ts": history[0].get("ts") if history else None,
+        "last_ts": history[-1].get("ts") if history else None,
+    }
+
+
 def build_scan_index(scanned: list[dict[str, Any]]) -> dict[str, list[tuple[datetime, dict[str, Any]]]]:
     scan_by_symbol: dict[str, list[tuple[datetime, dict[str, Any]]]] = {}
     for row in scanned:
@@ -607,7 +666,7 @@ def compute_bus_coverage(signals: list[dict[str, Any]], scanned: list[dict[str, 
     }
 
 
-def build_output(stats: dict, events: list[dict], scanned: list[dict], bus_signals: list[dict]) -> dict[str, Any]:
+def build_output(stats: dict, events: list[dict], scanned: list[dict], bus_signals: list[dict], watchlist_history: list[dict[str, Any]], days: int) -> dict[str, Any]:
     """Build the complete sentinel quality output."""
     now = datetime.now(CST)
     opened = [e for e in events if e.get("event_type") == "OPEN"]
@@ -629,6 +688,7 @@ def build_output(stats: dict, events: list[dict], scanned: list[dict], bus_signa
         "top_movers": stats["top_movers"],
         "forward_returns": compute_forward_returns(scanned),
         "coverage": compute_bus_coverage(bus_signals, scanned),
+        "watchlist_history": compute_watchlist_history_summary(watchlist_history, days),
     }
 
 
@@ -745,6 +805,16 @@ def write_markdown(output: dict, path: Path) -> None:
                 f"{float(bucket.get('pct_of_big_moves') or 0):.2f}% | "
                 f"{float(bucket.get('pct_of_not_scanned') or 0):.2f}% | {examples} |"
             )
+    watchlist_history = output.get("watchlist_history") or {}
+    lines.extend(["", "## Watchlist 历史覆盖", ""])
+    if watchlist_history.get("available"):
+        lines.append(
+            f"- watchlist snapshots: {int(watchlist_history.get('snapshots') or 0)}；"
+            f"去重币种: {int(watchlist_history.get('unique_symbols') or 0)}；"
+            f"范围: {watchlist_history.get('first_ts')} ~ {watchlist_history.get('last_ts')}"
+        )
+    else:
+        lines.append("- 暂无 durable watchlist snapshot 历史；已上线后续采集，下一轮数据可用于区分未进 watchlist 与镜像/扫描缺口。")
 
     lines.append("")
     path.write_text("\n".join(lines), encoding="utf-8")
@@ -775,13 +845,15 @@ def main(argv: list[str] | None = None) -> int:
         events = load_sentinel_decisions(con, days=args.days)
         scanned = load_sentinel_scanned(con, days=args.days)
         bus_signals = load_sentinel_bus_signals(con, days=args.days)
+        watchlist_history = load_watchlist_history(watchlist_history_root(db_path, root), days=args.days)
 
         print(f"  Sentinel decisions: {len(events)}")
         print(f"  Sentinel scanned: {len(scanned)}")
         print(f"  Sentinel bus signals: {len(bus_signals)}")
+        print(f"  Watchlist snapshots: {len(watchlist_history)}")
 
         stats = compute_sentinel_stats(events, scanned)
-        output = build_output(stats, events, scanned, bus_signals)
+        output = build_output(stats, events, scanned, bus_signals, watchlist_history, args.days)
 
         json_path = runtime_dir / "sentinel_quality_latest.json"
         md_path = reports_dir / "sentinel_quality_latest.md"

@@ -127,6 +127,20 @@ def append_log(root: Path, payload: dict[str, Any]) -> None:
     write_jsonl_with_daily_shard(log_path, payload)
 
 
+def append_watchlist_history(root: Path, payload: dict[str, Any]) -> None:
+    history_path = root / "runtime" / "market_mover_watchlist_history.jsonl"
+    write_jsonl_with_daily_shard(
+        history_path,
+        {
+            "ts": payload.get("ts"),
+            "ts_cst": payload.get("ts_cst"),
+            "source": payload.get("source"),
+            "interval_sec": payload.get("interval_sec"),
+            "symbols": payload.get("symbols") or [],
+        },
+    )
+
+
 def material_events(
     symbols: list[dict[str, Any]],
     published: dict[str, dict[str, Any]],
@@ -185,6 +199,7 @@ def run_once(
         "symbols": symbols,
     }
     write_json_atomic(args.watchlist, payload)
+    append_watchlist_history(args.root, payload)
     emitted, published, emitted_at = material_events(
         symbols,
         published,

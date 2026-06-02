@@ -174,6 +174,7 @@ TENCENT_COMPONENTS: dict[str, dict[str, Any]] = {
         + [
             file_pair("部署工具/counterfactual_open_skips.py", "counterfactual_open_skips.py"),
             file_pair("部署工具/apply_research_approval.py", "apply_research_approval.py"),
+            file_pair("部署工具/a_v11_rollout_review.py", "a_v11_rollout_review.py"),
             file_pair("部署工具/cleanup_event_store.py", "cleanup_event_store.py"),
             file_pair("部署工具/data_maintenance.py", "data_maintenance.py"),
             file_pair("部署工具/daily_market_review.py", "daily_market_review.py"),
@@ -222,6 +223,7 @@ ALIYUN_COMPONENTS: dict[str, dict[str, Any]] = {
             file_pair("部署工具/decision_attention.py", "decision_attention.py"),
             file_pair("部署工具/experiment_report.py", "experiment_report.py"),
             file_pair("部署工具/experiment_runner.py", "experiment_runner.py"),
+            file_pair("部署工具/a_v11_rollout_review.py", "a_v11_rollout_review.py"),
             file_pair("部署工具/apply_research_approval.py", "apply_research_approval.py"),
             file_pair("部署工具/cleanup_event_store.py", "cleanup_event_store.py"),
             file_pair("部署工具/data_maintenance.py", "data_maintenance.py"),

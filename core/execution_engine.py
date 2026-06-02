@@ -205,8 +205,9 @@ class ExecutionEngine:
     def close_position(self, req: CloseRequest) -> ExecutionResult:
         if req.cancel_open_orders:
             self._cancel_open_orders(req.symbol)
+        confirm_cache: dict[str, Any] = {}
         qty = float(req.quantity or 0.0)
-        close_target = self._close_target(req.symbol, req.side)
+        close_target = self._close_target(req.symbol, req.side, confirm_cache)
         if qty <= 0:
             qty = float(close_target.get("quantity") or 0.0)
         if qty <= 0:
@@ -232,11 +233,12 @@ class ExecutionEngine:
                     req.side,
                     attempts=req.confirm_attempts,
                     delay_seconds=1.0,
+                    cache=confirm_cache,
                 )
                 if remaining_qty > 0:
                     retry_raw = None
                     try:
-                        retry_target = self._close_target(req.symbol, req.side)
+                        retry_target = self._close_target(req.symbol, req.side, confirm_cache, force_refresh=False)
                         retry_raw = self._submit_close(req.symbol, req.side, remaining_qty, retry_target)
                     except Exception as exc:
                         return ExecutionResult(
@@ -257,6 +259,7 @@ class ExecutionEngine:
                             req.side,
                             attempts=req.confirm_attempts,
                             delay_seconds=1.0,
+                            cache=confirm_cache,
                         )
                     if remaining_qty > 0:
                         return ExecutionResult(
@@ -287,6 +290,7 @@ class ExecutionEngine:
                 req.side,
                 attempts=req.confirm_attempts,
                 delay_seconds=1.0,
+                cache=confirm_cache,
             )
             if remaining_qty <= 0:
                 return ExecutionResult(
@@ -312,11 +316,15 @@ class ExecutionEngine:
             raw=raw,
         )
 
-    def _close_target(self, symbol: str, side: str) -> dict[str, Any]:
+    def _close_target(
+        self,
+        symbol: str,
+        side: str,
+        cache: dict[str, Any] | None = None,
+        force_refresh: bool = True,
+    ) -> dict[str, Any]:
         try:
-            if hasattr(self.client, "invalidate_account_snapshot"):
-                self.client.invalidate_account_snapshot()
-            for p in self.client.get_positions():
+            for p in self._get_positions_for_confirmation(cache, force_refresh=force_refresh):
                 if p.get("symbol") != symbol:
                     continue
                 amt = float(p.get("positionAmt", 0) or 0)
@@ -353,14 +361,19 @@ class ExecutionEngine:
         except Exception:
             pass
 
-    def _confirm_position_qty(self, symbol: str, side: str, attempts: int = 1, delay_seconds: float = 2.0) -> float:
+    def _confirm_position_qty(
+        self,
+        symbol: str,
+        side: str,
+        attempts: int = 1,
+        delay_seconds: float = 2.0,
+        cache: dict[str, Any] | None = None,
+    ) -> float:
         try:
-            for _ in range(max(1, attempts)):
+            for attempt in range(max(1, attempts)):
                 if delay_seconds > 0:
                     time.sleep(delay_seconds)
-                if hasattr(self.client, "invalidate_account_snapshot"):
-                    self.client.invalidate_account_snapshot()
-                positions = self.client.get_positions()
+                positions = self._get_positions_for_confirmation(cache, force_refresh=False)
                 for p in positions:
                     if p.get("symbol") != symbol:
                         continue
@@ -375,6 +388,23 @@ class ExecutionEngine:
         except Exception:
             return 0.0
         return 0.0
+
+    def _get_positions_for_confirmation(self, cache: dict[str, Any] | None, force_refresh: bool = False) -> list[dict[str, Any]]:
+        now = time.monotonic()
+        if (
+            cache is not None
+            and not force_refresh
+            and "positions" in cache
+            and now - float(cache.get("positions_ts") or 0.0) <= 0.75
+        ):
+            return list(cache.get("positions") or [])
+        if hasattr(self.client, "invalidate_account_snapshot"):
+            self.client.invalidate_account_snapshot()
+        positions = list(self.client.get_positions())
+        if cache is not None:
+            cache["positions"] = positions
+            cache["positions_ts"] = now
+        return positions
 
     @staticmethod
     def _is_success(raw: Any) -> bool:

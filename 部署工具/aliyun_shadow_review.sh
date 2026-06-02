@@ -31,6 +31,7 @@ $PYTHON research_kline_features.py --cache-dir $REMOTE_DIR/server_logs_tencent/r
 $PYTHON research_store_query.py --store $REMOTE_DIR/research_store --runtime-dir $REMOTE_DIR/runtime --reports-dir $REMOTE_DIR/reports --days 3 --format parquet || true
 $PYTHON replay_feature_dataset.py --store $REMOTE_DIR/research_store --out-dir $REMOTE_DIR/research_store --runtime-dir $REMOTE_DIR/runtime --reports-dir $REMOTE_DIR/reports --days 3 --format parquet || true
 $PYTHON replay_gate_audit.py --db $REMOTE_DIR/server_logs_tencent/runtime/event_store.sqlite3 --runtime-dir $REMOTE_DIR/runtime --reports-dir $REMOTE_DIR/reports --days 3 || true
+$PYTHON a_v11_rollout_review.py --db $REMOTE_DIR/server_logs_tencent/runtime/event_store.sqlite3 --runtime-dir $REMOTE_DIR/runtime --reports-dir $REMOTE_DIR/reports || true
 
 echo "--- Step 1.8: Daily market review report ---"
 if ! timeout 900s $PYTHON daily_market_review.py --data-root $REMOTE_DIR/server_logs_tencent --top 15; then

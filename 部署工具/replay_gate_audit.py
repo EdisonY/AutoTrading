@@ -28,7 +28,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 ROOT = SCRIPT_DIR.parent if (SCRIPT_DIR.parent / "PROJECT_STATE.md").exists() else SCRIPT_DIR
 sys.path.insert(0, str(ROOT))
 
-from core.replay import ReplayEvent, classify_replay_decision
+from core.replay import ReplayEvent, evaluate_observed_gate
 
 
 CST = timezone(timedelta(hours=8))
@@ -83,7 +83,7 @@ def build_payload(db: Path, days: int, limit: int) -> dict[str, Any]:
 
     for row in reversed(rows):
         event = ReplayEvent.from_event_store_row(row)
-        decision = classify_replay_decision(event)
+        decision = evaluate_observed_gate(event)
         strategy = event.strategy or "unknown"
         latest_ts = max(latest_ts, event.ts or "")
         bucket = by_strategy.setdefault(

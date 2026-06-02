@@ -7,7 +7,8 @@
 - [x] 新增 `replay_gate_audit.py`：从 SQLite `events` 读取 live `SIGNAL/OPEN/OPEN_SKIPPED/OPEN_FAILED`，统一送入 `core.replay` 分类，输出 gate 覆盖率、未知 gate、按策略分布和主要 gate。
 - [x] 接入阿里云轻量分析、每日 shadow review、反向同步、live-context 拉取和入口页。入口页第一屏显示 `Replay门控`，详情区显示 `Replay / Live 门控审计`。
 - [x] 已补 A/v11 legacy `OPEN_SKIPPED` 归因：池满/方向持仓上限归 `capacity`，同币种已有仓归 `position`，交易所/preflight 拒单归 `execution`。2026-06-01 20:26 CST Tencent live replay gate audit 已达到 `gate_coverage_pct=100.0%`、`unknown_gate=0`。
-- [ ] 下一步：抽 A/B/C 纯策略函数，让 replay 直接调用同一 gate，而不是只做事后分类。
+- [x] 新增第一版纯 gate 结果接口：`core.replay.ReplayGateResult` / `evaluate_observed_gate()`，`replay_gate_audit.py` 已改用该 API；旧 `classify_replay_decision()` 保持兼容。
+- [ ] 下一步：抽 A/B/C 纯策略函数，让 replay 和 scanner 直接调用同一 gate，而不是只做事后分类。
 - 验收口径：gate 覆盖率需长期 >90%，且未知 gate 不集中于关键 OPEN_SKIPPED/OPEN_FAILED；达标后再推进纯函数抽取。
 
 用户最新目标：作为决策者，入口页必须先给出经过筛选和思考后的结论；系统优化的核心不是展示更多信息，而是让盈亏、策略质量、进化机会和风险暴露更清楚。当前样本仍偏少，但不再全局盲目放宽入场门槛。
@@ -39,6 +40,7 @@
 
 关键技术节点：
 - [x] 定义统一事件模型起点：`core/replay.py` 提供 `ReplayEvent`、`ReplayDecision`、事件类型归一和初始 gate 分类。
+- [x] 定义统一 gate 结果面：`ReplayGateResult` / `evaluate_observed_gate()`，先覆盖观测型 live event；后续 A/B/C 纯策略 gate 应返回同一 shape。
 - [x] 新增 replay 特征对齐数据集：`replay_feature_dataset.py` 从 DuckDB research-store 读取 `events` + `features`，把 A/B/C 的 OPEN、OPEN_SKIPPED、OPEN_FAILED、SIGNAL 对齐到最近同币种历史特征行，并输出 `research_store/replay_features`、`runtime/replay_feature_dataset_latest.json`、`reports/replay_feature_dataset_latest.md`。
 - [ ] A/B/C 抽出纯策略函数和门控函数，实盘 scanner 只负责编排和下单。
 - [ ] replay 引擎从 SQLite/Parquet 读取历史事件、K线、哨兵上下文，重放 OPEN_SKIPPED/OPEN/CLOSE。
@@ -60,8 +62,9 @@
 - [x] A/v11、B/v16、C/v14 的开仓风控门禁改为单次 `positionRisk` 快照派生总仓位/方向仓位，并单次读取余额；`core/exchange_state.py` 统一解析 active position、side count、symbol lookup、USDT balance。
 - [x] A/v11 平仓提交在执行层已提供 `quantity/order_side` 时不再二次查询 `positionRisk`；A/v11 余额读取切到 `/fapi/v2/balance`；账号快照裸跑缺少 `BINANCE_*` 环境变量时不覆盖最新有效快照。
 - [x] API guard 增加第一版交易关键路径优先级：普通 signed read 在总预算前预留默认 `20/min` 额度给 order/cancel/leverage/margin 等交易路径；系统告警显示 priority counts、normal limit、trade reserve 和 `last_error_*`。
+- [x] open/close confirmation 重复 `positionRisk` 合并第一步：`ExecutionEngine` 在单次 close 操作内复用 0.75 秒内的新鲜仓位快照，避免 close target 与紧接 retry target 连续重复读取；带 sleep 的确认仍刷新。
 - [ ] 下一步：把账户余额/仓位迁到 user-data-stream 或更低频的集中账户状态服务，减少 `positionRisk` 轮询。
-- [ ] 下一步：把 open/close confirmation 的重复 positionRisk 合并成带 TTL 的确认快照，避免一个开平仓闭环打出多次 signed GET。
+- [ ] 下一步：把 open confirmation 与跨操作账户状态迁到 user-data-stream/集中账户状态服务；close 确认缓存继续用真实 live 结果验证是否还可扩大 TTL。
 - [ ] 下一步：guard 升级为独立队列服务或集中 account-state 服务内置限速，进一步替代协作式文件锁。
 
 验收口径：

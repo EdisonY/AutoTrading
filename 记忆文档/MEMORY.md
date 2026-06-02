@@ -1,5 +1,12 @@
 # MEMORY.md - 长期记忆
 
+## 2026-06-02 A/v11 rollout review 接入 + N2/API 继续推进
+- 用户要求进入无需确认模式继续推进长期计划。本轮按项目规则先拉 live context：`2026-06-02T02:52:24+08:00` 显示六个腾讯核心服务 active，账户浮盈 `+1.6233`，`5` 仓，attention `P0=0/P1=4/P2=2`。
+- 已把只读 `a_v11_rollout_review.py` 接入完整报告链：Aliyun 2小时 refresh、每日 shadow review、release_manager 腾讯 research/阿里 shadow 文件集、Aliyun→Tencent 反向同步、pull_live_context、portal_dashboard 首页/功能卡/详情表。最新本地复盘显示 `P1/manual_review_required`，72h 平仓样本 `123`，扣费后 PnL `-320.7581 USDT`，强平贡献主要来自 PLAYUSDT/UBUSDT 等硬顶事件。此轮没有自动回滚，也没有改 A/v11 trailing 参数。
+- N2 继续推进：`core.replay` 新增 `ReplayGateResult` 与 `evaluate_observed_gate()`，`replay_gate_audit.py` 改用这个共享 gate API；旧 `classify_replay_decision()` 保持兼容。当前仍只是观测型 gate surface，下一步才是把 A/B/C scanner 的真实入场门控抽成纯函数。
+- API 压力继续推进：`ExecutionEngine.close_position()` 增加一次 close 操作内的确认快照复用。close target 与紧接 retry target 可共享 0.75 秒内的新鲜仓位快照；带 sleep 的确认尝试仍刷新，避免用旧仓位证明平仓。这减少重复 `positionRisk`，不削弱“仓位消失才算平仓成功”的安全规则。
+- 本轮本地验证：`py_compile` 通过 core/replay、core/execution_engine、replay_gate_audit、a_v11_rollout_review、portal_dashboard、release_manager、sync/pull 工具；`portal_dashboard.py --out-dir reports` 通过；`a_v11_rollout_review.py` 输出可读 MD。后续还需部署阿里 shadow/腾讯 research 或 portal，并 live pull 复核。
+
 ## 2026-06-01 rollback-watch 复核：修正 PnL/OPEN_FAILED 归因
 - 用户要求继续未完成任务。本轮从 live context 复核开始：`2026-06-01T22:04:14+08:00` 拉取显示六个腾讯核心服务 active，系统告警 `ok/0`，账户浮盈约 `+21.16 USDT`，5 仓，attention `P0=0/P1=4/P2=6`。
 - 关键发现：A/v11/B/v16 的 post-approval 实盘窗口原先把很多 `CLOSE/FORCED_CLOSE` 的已实现 PnL 算成 `0.0`，因为事件 payload 的 `pnl_usd` 常在 `payload.raw` 中，不在顶层。已修 `strategy_evolution_gate.py payload_float()`，现在同时读顶层和 `raw`。

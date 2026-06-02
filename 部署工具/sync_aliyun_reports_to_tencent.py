@@ -42,6 +42,7 @@ REPORT_FILES = [
     "research_store_summary_latest.md",
     "replay_feature_dataset_latest.md",
     "replay_gate_audit_latest.md",
+    "a_v11_rollout_review_latest.md",
     "portal_latest.html",
     "strategy_evolution_latest.json",
     "strategy_evolution_latest.md",
@@ -65,6 +66,7 @@ RUNTIME_FILES = [
     "research_store_summary_latest.json",
     "replay_feature_dataset_latest.json",
     "replay_gate_audit_latest.json",
+    "a_v11_rollout_review_latest.json",
 ]
 
 RESEARCH_FILES = [

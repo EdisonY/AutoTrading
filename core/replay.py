@@ -105,6 +105,23 @@ class ReplayDecision:
         }
 
 
+@dataclass(slots=True)
+class ReplayGateResult:
+    """Observed gate result shaped for both replay audit and future live gates."""
+
+    strategy: str
+    symbol: str
+    event_type: str
+    decision: str
+    gate: str
+    accepted: bool
+    reason: str = ""
+    evidence: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
 def parse_payload(value: Any) -> dict[str, Any]:
     if isinstance(value, dict):
         return value
@@ -163,20 +180,38 @@ def infer_gate_from_reason(reason: str) -> tuple[str, str]:
 
 def classify_replay_decision(event: ReplayEvent) -> ReplayDecision:
     """Classify an observed live event into the initial replay gate taxonomy."""
+    result = evaluate_observed_gate(event)
+    return ReplayDecision(
+        event,
+        result.decision,
+        result.gate,
+        result.accepted,
+        result.reason,
+        result.evidence,
+    )
+
+
+def evaluate_observed_gate(event: ReplayEvent) -> ReplayGateResult:
+    """Evaluate a normalized observed event through the shared gate surface.
+
+    This is intentionally observational: it mirrors current live rows without
+    changing scanner behavior. Future scanner gate functions should return this
+    same result shape before order orchestration.
+    """
     if event.event_type == ReplayEventType.OPEN:
-        return ReplayDecision(event, "accepted_open", "open", True, event.reason)
+        return ReplayGateResult(event.strategy, event.symbol, event.event_type.value, "accepted_open", "open", True, event.reason)
     if event.event_type == ReplayEventType.SIGNAL:
-        return ReplayDecision(event, "candidate", "entry_candidate", True, event.reason)
+        return ReplayGateResult(event.strategy, event.symbol, event.event_type.value, "candidate", "entry_candidate", True, event.reason)
     if event.event_type == ReplayEventType.OPEN_SKIPPED:
         inferred_gate, evidence = infer_gate_from_reason(event.reason)
         gate = event.stage or event.layer or inferred_gate or "unknown_gate"
         inferred = {"inferred_from_reason": evidence} if inferred_gate and not (event.stage or event.layer) else {}
-        return ReplayDecision(event, "rejected", gate, False, event.reason, inferred)
+        return ReplayGateResult(event.strategy, event.symbol, event.event_type.value, "rejected", gate, False, event.reason, inferred)
     if event.event_type == ReplayEventType.OPEN_FAILED:
         inferred_gate, evidence = infer_gate_from_reason(event.reason)
         gate = event.stage or event.layer or inferred_gate or "execution"
         inferred = {"inferred_from_reason": evidence} if inferred_gate and not (event.stage or event.layer) else {}
-        return ReplayDecision(event, "execution_failed", gate, False, event.reason, inferred)
+        return ReplayGateResult(event.strategy, event.symbol, event.event_type.value, "execution_failed", gate, False, event.reason, inferred)
     if event.is_terminal_close:
-        return ReplayDecision(event, "close_observed", event.stage or "exit", True, event.reason)
-    return ReplayDecision(event, "observed", event.stage or event.layer or "unknown", False, event.reason)
+        return ReplayGateResult(event.strategy, event.symbol, event.event_type.value, "close_observed", event.stage or "exit", True, event.reason)
+    return ReplayGateResult(event.strategy, event.symbol, event.event_type.value, "observed", event.stage or event.layer or "unknown", False, event.reason)

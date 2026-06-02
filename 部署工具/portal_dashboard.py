@@ -46,6 +46,8 @@ REPLAY_FEATURE_JSON = ROOT / "runtime" / "replay_feature_dataset_latest.json"
 REPLAY_FEATURE_MD = REPORTS_DIR / "replay_feature_dataset_latest.md"
 REPLAY_GATE_JSON = ROOT / "runtime" / "replay_gate_audit_latest.json"
 REPLAY_GATE_MD = REPORTS_DIR / "replay_gate_audit_latest.md"
+A_V11_ROLLOUT_JSON = ROOT / "runtime" / "a_v11_rollout_review_latest.json"
+A_V11_ROLLOUT_MD = REPORTS_DIR / "a_v11_rollout_review_latest.md"
 CST = timezone(timedelta(hours=8))
 
 
@@ -623,6 +625,30 @@ def replay_gate_summary(path: Path | None) -> dict[str, Any]:
         "days": int(payload.get("days") or 0),
         "summary": summary,
         "strategies": strategies,
+    }
+
+
+def a_v11_rollout_summary(path: Path | None) -> dict[str, Any]:
+    empty = {
+        "available": False,
+        "path": A_V11_ROLLOUT_MD,
+        "age": "No A/v11 rollout review",
+        "fresh": False,
+        "decision": {"priority": "P2", "status": "missing", "recommended_actions": []},
+        "windows": {},
+    }
+    payload = read_json(path) if path else None
+    if not isinstance(payload, dict):
+        return empty
+    generated_at = parse_dt(payload.get("generated_at"))
+    return {
+        "available": True,
+        "path": A_V11_ROLLOUT_MD,
+        "age": age_text(generated_at),
+        "fresh": bool(generated_at and (datetime.now(CST) - generated_at).total_seconds() < 4 * 3600),
+        "decision": payload.get("decision") if isinstance(payload.get("decision"), dict) else empty["decision"],
+        "windows": payload.get("windows") if isinstance(payload.get("windows"), dict) else {},
+        "selected_live_parameter": payload.get("selected_live_parameter") or {},
     }
 
 
@@ -1351,6 +1377,9 @@ def function_status_cards(data: dict[str, Any]) -> list[dict[str, str]]:
     replay_summary = replay_feature.get("summary") or {}
     replay_gate = data.get("replay_gate") or {}
     replay_gate_summary_data = replay_gate.get("summary") or {}
+    a_v11_rollout = data.get("a_v11_rollout") or {}
+    a_v11_rollout_decision = a_v11_rollout.get("decision") or {}
+    a_v11_rollout_72h = (a_v11_rollout.get("windows") or {}).get("72h") or {}
     evolution = data.get("strategy_evolution") or {}
     evo_counts = evolution.get("counts") or {}
     attention = data.get("attention") or {}
@@ -1509,6 +1538,28 @@ def function_status_cards(data: dict[str, Any]) -> list[dict[str, str]]:
                 f"updated {replay_gate.get('age')}."
                 if replay_gate.get("available")
                 else "Live events have not been audited through core.replay yet."
+            ),
+        },
+        {
+            "level": (
+                "warn"
+                if a_v11_rollout_decision.get("priority") in {"P0", "P1"}
+                else "ok"
+                if a_v11_rollout.get("fresh")
+                else "warn"
+            ),
+            "name": "A/v11 rollout review",
+            "value": (
+                f"{a_v11_rollout_decision.get('priority')}/{a_v11_rollout_decision.get('status')}"
+                if a_v11_rollout.get("available")
+                else "not built"
+            ),
+            "body": (
+                f"72h closed {int(a_v11_rollout_72h.get('closed_samples') or 0)}; "
+                f"after-cost PnL {float(a_v11_rollout_72h.get('pnl_after_cost_usdt') or 0):+.2f}; "
+                f"updated {a_v11_rollout.get('age')}."
+                if a_v11_rollout.get("available")
+                else "A/v11 trailing rollout review missing from report chain."
             ),
         },
     ]
@@ -1740,6 +1791,9 @@ def build_executive_summary(data: dict[str, Any]) -> dict[str, Any]:
     rollback_brief = rollback_watch_brief(evolution)
     replay_gate = data.get("replay_gate") or {}
     replay_gate_summary_data = replay_gate.get("summary") or {}
+    a_v11_rollout = data.get("a_v11_rollout") or {}
+    a_v11_rollout_decision = a_v11_rollout.get("decision") or {}
+    a_v11_rollout_72h = (a_v11_rollout.get("windows") or {}).get("72h") or {}
     truth = data.get("strategy_truth") or {}
     truth_stats = truth.get("strategy_stats") or {}
     decision_rows = data.get("decision_summary") or []
@@ -1814,6 +1868,13 @@ def build_executive_summary(data: dict[str, Any]) -> dict[str, Any]:
         f"最高进化提示：{evolution_alert.get('title')}；{evolution_alert.get('body')}",
         rollback_brief,
         (
+            f"A/v11 trailing复盘：{a_v11_rollout_decision.get('priority')}/{a_v11_rollout_decision.get('status')}，"
+            f"72h扣费后PnL {float(a_v11_rollout_72h.get('pnl_after_cost_usdt') or 0):+.2f} USDT，"
+            f"平仓样本 {int(a_v11_rollout_72h.get('closed_samples') or 0)}；只提示人工复核，不自动改实盘参数。"
+            if a_v11_rollout.get("available")
+            else "A/v11 trailing复盘：报告尚未生成；不能只靠进化门禁摘要判断是否回滚。"
+        ),
+        (
             f"Replay门控：live开仓流 {int(replay_gate_summary_data.get('open_flow_events') or 0)} 条，"
             f"gate覆盖 {float(replay_gate_summary_data.get('gate_coverage_pct') or 0):.1f}%，"
             f"未知门控 {int(replay_gate_summary_data.get('unknown_gate') or 0)}；"
@@ -1838,6 +1899,8 @@ def build_executive_summary(data: dict[str, Any]) -> dict[str, Any]:
         next_actions.append("允许B/v16与C/v14按当前规则继续收集样本，不额外加仓位尺寸。")
     if actionable_evo:
         next_actions.append("查看策略进化门禁最高项，确认是否进入灰度或回滚。")
+    if a_v11_rollout_decision.get("priority") in {"P0", "P1"}:
+        next_actions.append("复核A/v11 trailing rollout窗口；没有人工决策前不改参数。")
     if int(expansion.get("pause_count") or 0):
         next_actions.append("先复核已放开候选质量/关闭闭环，暂停进一步扩样。")
     elif int(expansion.get("maturing_count") or 0):
@@ -1925,6 +1988,8 @@ def build_data() -> dict[str, Any]:
     data["replay_feature_html"] = REPLAY_FEATURE_MD
     data["replay_gate"] = replay_gate_summary(REPLAY_GATE_JSON)
     data["replay_gate_html"] = REPLAY_GATE_MD
+    data["a_v11_rollout"] = a_v11_rollout_summary(A_V11_ROLLOUT_JSON)
+    data["a_v11_rollout_html"] = A_V11_ROLLOUT_MD
     data["function_status"] = function_status_cards(data)
     data["findings"] = build_findings(data)
     data["executive_summary"] = build_executive_summary(data)
@@ -2271,6 +2336,26 @@ def render_html(out_dir: Path) -> str:
         for r in (replay_gate.get("strategies") or [])
     ) or '<tr><td colspan="9">暂无 replay gate 审计</td></tr>'
 
+    a_v11_rollout = data.get("a_v11_rollout") or {}
+    a_v11_rollout_decision = a_v11_rollout.get("decision") or {}
+    a_v11_rollout_windows = a_v11_rollout.get("windows") or {}
+    a_v11_rollout_rows = "".join(
+        f"""
+<tr>
+  <td>{h(name)}</td>
+  <td>{int(row.get('opens') or 0)}</td>
+  <td>{int(row.get('closed_samples') or 0)}</td>
+  <td>{int(row.get('forced_closes') or 0)}</td>
+  <td>{int(row.get('open_failed') or 0)}</td>
+  <td class="num {'pos' if float(row.get('realized_pnl_usdt') or 0) >= 0 else 'neg'}">{float(row.get('realized_pnl_usdt') or 0):+.2f}</td>
+  <td>{float(row.get('estimated_cost_usdt') or 0):.2f}</td>
+  <td class="num {'pos' if float(row.get('pnl_after_cost_usdt') or 0) >= 0 else 'neg'}">{float(row.get('pnl_after_cost_usdt') or 0):+.2f}</td>
+  <td>{float(row.get('forced_close_rate') or 0):.1%}</td>
+</tr>
+""".strip()
+        for name, row in a_v11_rollout_windows.items()
+    ) or '<tr><td colspan="9">暂无 A/v11 rollout 复盘</td></tr>'
+
     evolution = data.get("strategy_evolution") or {}
     evolution_counts = evolution.get("counts") or {}
     evolution_rows = "".join(
@@ -2532,6 +2617,15 @@ th {{ background:#f1f5f9; color:#334155; }}
     <table>
       <thead><tr><th>优先级</th><th>状态</th><th>策略</th><th>候选</th><th>证据分</th><th>风险分</th><th>建议动作</th><th>关键阻塞</th></tr></thead>
       <tbody>{evolution_rows}</tbody>
+    </table>
+  </section>
+
+  <section class="section panel">
+    <h2>A/v11 trailing rollout复盘</h2>
+    <p class="note">只读复盘已批准 trailing-pullback 上线后的 24h/72h/168h 真实窗口；当前结论 {h(a_v11_rollout_decision.get('priority', '-'))}/{h(a_v11_rollout_decision.get('status', '-'))}，更新 {h(a_v11_rollout.get('age'))}。这里不自动回滚，也不改实盘阈值。</p>
+    <table>
+      <thead><tr><th>窗口</th><th>开仓</th><th>平仓</th><th>强平</th><th>开仓失败</th><th>已实现PnL</th><th>估算成本</th><th>扣费后PnL</th><th>强平率</th></tr></thead>
+      <tbody>{a_v11_rollout_rows}</tbody>
     </table>
   </section>
 

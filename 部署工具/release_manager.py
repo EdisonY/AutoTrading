@@ -76,6 +76,7 @@ CORE_FILES = [
     file_pair("core/account_state.py"),
     file_pair("core/account_state_cache.py"),
     file_pair("core/audit_log.py"),
+    file_pair("core/binance_api_queue.py"),
     file_pair("core/binance_api_guard.py"),
     file_pair("core/binance_order_rules.py"),
     file_pair("core/event_store.py"),
@@ -100,6 +101,7 @@ CORE_FILES = [
 RESEARCH_CORE = [
     file_pair("core/__init__.py"),
     file_pair("core/account_state.py"),
+    file_pair("core/binance_api_queue.py"),
     file_pair("core/binance_api_guard.py"),
     file_pair("core/models.py"),
     file_pair("core/position_utils.py"),
@@ -191,6 +193,15 @@ TENCENT_COMPONENTS: dict[str, dict[str, Any]] = {
         ],
         "services": [],
         "post": ['{python} -c "import account_state_service; print(\'account_state_service import ok\')"'],
+    },
+    "api-queue": {
+        "files": CORE_FILES
+        + [
+            file_pair("部署工具/binance_api_queue_service.py", "binance_api_queue_service.py"),
+            file_pair("部署工具/systemd/crypto-binance-api-queue.service", "systemd/crypto-binance-api-queue.service"),
+        ],
+        "services": [],
+        "post": ['{python} -c "import binance_api_queue_service; print(\'binance_api_queue_service import ok\')"'],
     },
     "research": {
         "files": RESEARCH_CORE

@@ -1,0 +1,15 @@
+[Unit]
+Description=AutoTrading central Binance API queue (construction foundation)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/crypto-auto-trader
+EnvironmentFile=-/etc/crypto-auto-trader/trading.env
+ExecStart=/opt/crypto-auto-trader/.venv/bin/python -u /opt/crypto-auto-trader/binance_api_queue_service.py --interval 5
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

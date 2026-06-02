@@ -117,6 +117,7 @@ from core.risk_engine import RiskEngine, RiskLimits
 from core.strategy_gates import (
     effective_a_v11_signal_score,
     evaluate_a_v11_entry_threshold,
+    evaluate_a_v11_market_microstructure_gate,
     evaluate_a_v11_releasable_position,
     evaluate_a_v11_replacement_signal,
     evaluate_no_same_symbol_position_gate,
@@ -1887,10 +1888,14 @@ class Scanner:
         risk_usdt = RISK_PER_TRADE_USDT
 
         # ── 前置安全校验 ──
-        # 1. ATR=0 保护：ATR为0时止盈止损价格计算无效，直接跳过
-        if atr <= 0:
+        market_gate = evaluate_a_v11_market_microstructure_gate(
+            atr=atr,
+            side=side,
+            stop_loss=sl,
+            entry_price=price,
+        )
+        if not market_gate.allowed and atr <= 0:
             logger.warning(f"  ⚠️ {inst_id}({tf}) ATR=0，跳过开仓（避免止盈止损价格计算错误）")
-            # v6: 自动将ATR=0币种加入黑名单
             if inst_id not in ATR_ZERO_BLACKLIST:
                 ATR_ZERO_BLACKLIST.add(inst_id)
                 logger.warning(f"  📛 {inst_id} 已加入ATR=0黑名单，后续扫描自动跳过")
@@ -1903,7 +1908,7 @@ class Scanner:
                 "st_dir": "多" if sig["st_direction"] == 1 else "空",
                 "st_flip": sig["st_flipped"],
                 "timeframe": tf, "resonance": resonance,
-                "skip_reason": "ATR=0，止损止盈计算无效",
+                "skip_reason": market_gate.reason,
                 "decision_stage": "market_microstructure",
                 "filter_layer": "market_data",
                 **sentinel_fields(inst_id),
@@ -1911,9 +1916,8 @@ class Scanner:
             log_event(event)
             return
 
-        # 2. 止损方向校验（防止止损价格方向错误）
-        if side == "long" and sl >= price:
-            logger.warning(f"  ⚠️ {inst_id}({tf}) 多单止损价{sl}>=开仓价{price}，跳过")
+        if not market_gate.allowed and side == "long":
+            logger.warning(f"  ⚠️ {inst_id}({tf}) {market_gate.reason}，跳过")
             event = {
                 "time": now_str, "event": "OPEN_SKIPPED", "symbol": inst_id,
                 "side": side, "price": price, "sl": sl, "tp": tp,
@@ -1923,7 +1927,7 @@ class Scanner:
                 "st_dir": "多" if sig["st_direction"] == 1 else "空",
                 "st_flip": sig["st_flipped"],
                 "timeframe": tf, "resonance": resonance,
-                "skip_reason": f"多单止损价{sl}>=开仓价{price}",
+                "skip_reason": market_gate.reason,
                 "decision_stage": "market_microstructure",
                 "filter_layer": "market_data",
                 **sentinel_fields(inst_id),
@@ -1931,8 +1935,8 @@ class Scanner:
             log_event(event)
             return
 
-        if side == "short" and sl <= price:
-            logger.warning(f"  ⚠️ {inst_id}({tf}) 空单止损价{sl}<=开仓价{price}，跳过")
+        if not market_gate.allowed and side == "short":
+            logger.warning(f"  ⚠️ {inst_id}({tf}) {market_gate.reason}，跳过")
             event = {
                 "time": now_str, "event": "OPEN_SKIPPED", "symbol": inst_id,
                 "side": side, "price": price, "sl": sl, "tp": tp,
@@ -1942,7 +1946,7 @@ class Scanner:
                 "st_dir": "多" if sig["st_direction"] == 1 else "空",
                 "st_flip": sig["st_flipped"],
                 "timeframe": tf, "resonance": resonance,
-                "skip_reason": f"空单止损价{sl}<=开仓价{price}",
+                "skip_reason": market_gate.reason,
                 "decision_stage": "market_microstructure",
                 "filter_layer": "market_data",
                 **sentinel_fields(inst_id),

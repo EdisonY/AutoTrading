@@ -241,6 +241,43 @@ def evaluate_a_v11_replacement_signal(
     )
 
 
+def evaluate_a_v11_market_microstructure_gate(
+    *,
+    atr: float,
+    side: str,
+    stop_loss: float,
+    entry_price: float,
+) -> StrategyGateDecision:
+    """Evaluate A/v11 pre-open market-data sanity gates."""
+    atr_value = float(atr or 0)
+    side_key = str(side or "").lower()
+    sl_value = float(stop_loss or 0)
+    price_value = float(entry_price or 0)
+    evidence = {"atr": atr_value, "side": side_key, "stop_loss": sl_value, "entry_price": price_value}
+    if atr_value <= 0:
+        return StrategyGateDecision(
+            False,
+            "market_microstructure",
+            "ATR=0，止损止盈计算无效",
+            evidence=evidence,
+        )
+    if side_key == "long" and sl_value >= price_value:
+        return StrategyGateDecision(
+            False,
+            "market_microstructure",
+            f"多单止损价{stop_loss}>=开仓价{entry_price}",
+            evidence=evidence,
+        )
+    if side_key == "short" and sl_value <= price_value:
+        return StrategyGateDecision(
+            False,
+            "market_microstructure",
+            f"空单止损价{stop_loss}<=开仓价{entry_price}",
+            evidence=evidence,
+        )
+    return StrategyGateDecision(True, "market_microstructure", "market_microstructure_ok", evidence=evidence)
+
+
 def evaluate_a_v11_releasable_position(
     *,
     new_score: float,

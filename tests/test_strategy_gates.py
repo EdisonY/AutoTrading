@@ -3,6 +3,7 @@ import unittest
 from core.strategy_gates import (
     effective_a_v11_signal_score,
     evaluate_a_v11_entry_threshold,
+    evaluate_a_v11_market_microstructure_gate,
     evaluate_a_v11_releasable_position,
     evaluate_a_v11_replacement_signal,
     evaluate_active_position_limit_gate,
@@ -105,6 +106,42 @@ class StrategyGateParityTest(unittest.TestCase):
         )
         self.assertFalse(protected.allowed)
         self.assertEqual(protected.reason, "hard_profit_protected")
+
+        atr_zero = evaluate_a_v11_market_microstructure_gate(
+            atr=0,
+            side="long",
+            stop_loss=9,
+            entry_price=10,
+        )
+        self.assertFalse(atr_zero.allowed)
+        self.assertEqual(atr_zero.reason, "ATR=0，止损止盈计算无效")
+
+        bad_long_sl = evaluate_a_v11_market_microstructure_gate(
+            atr=1,
+            side="long",
+            stop_loss=10,
+            entry_price=10,
+        )
+        self.assertFalse(bad_long_sl.allowed)
+        self.assertEqual(bad_long_sl.reason, "多单止损价10>=开仓价10")
+
+        bad_short_sl = evaluate_a_v11_market_microstructure_gate(
+            atr=1,
+            side="short",
+            stop_loss=9,
+            entry_price=10,
+        )
+        self.assertFalse(bad_short_sl.allowed)
+        self.assertEqual(bad_short_sl.reason, "空单止损价9<=开仓价10")
+
+        self.assertTrue(
+            evaluate_a_v11_market_microstructure_gate(
+                atr=1,
+                side="short",
+                stop_loss=11,
+                entry_price=10,
+            ).allowed
+        )
 
     def test_b_v16_threshold_and_confirmation(self):
         confirm = evaluate_b_v16_confirmation_gate(

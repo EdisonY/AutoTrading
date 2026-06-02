@@ -73,6 +73,7 @@ def file_pair(local: str, remote: str | None = None) -> tuple[Path, str]:
 
 CORE_FILES = [
     file_pair("core/__init__.py"),
+    file_pair("core/account_state.py"),
     file_pair("core/account_state_cache.py"),
     file_pair("core/audit_log.py"),
     file_pair("core/binance_api_guard.py"),
@@ -98,6 +99,7 @@ CORE_FILES = [
 
 RESEARCH_CORE = [
     file_pair("core/__init__.py"),
+    file_pair("core/account_state.py"),
     file_pair("core/binance_api_guard.py"),
     file_pair("core/models.py"),
     file_pair("core/position_utils.py"),
@@ -166,7 +168,9 @@ TENCENT_COMPONENTS: dict[str, dict[str, Any]] = {
         "files": CORE_FILES
         + [
             file_pair("部署工具/account_snapshot_service.py", "account_snapshot_service.py"),
+            file_pair("部署工具/account_state_service.py", "account_state_service.py"),
             file_pair("部署工具/account_snapshot_html.py", "account_snapshot_html.py"),
+            file_pair("部署工具/systemd/crypto-account-state.service", "systemd/crypto-account-state.service"),
             file_pair("交易客户端/binance_client.py", "binance_client.py"),
             file_pair("交易客户端/binance_client_v2.py", "binance_client_v2.py"),
             file_pair("交易客户端/binance_client_v3.py", "binance_client_v3.py"),
@@ -174,12 +178,27 @@ TENCENT_COMPONENTS: dict[str, dict[str, Any]] = {
         "services": ["crypto-account-snapshot.service"],
         "post": ['{python} -c "import account_snapshot_service; print(\'account_snapshot_service import ok\')"'],
     },
+    "account-state": {
+        "files": CORE_FILES
+        + [
+            file_pair("部署工具/account_snapshot_service.py", "account_snapshot_service.py"),
+            file_pair("部署工具/account_state_service.py", "account_state_service.py"),
+            file_pair("部署工具/account_snapshot_html.py", "account_snapshot_html.py"),
+            file_pair("部署工具/systemd/crypto-account-state.service", "systemd/crypto-account-state.service"),
+            file_pair("交易客户端/binance_client.py", "binance_client.py"),
+            file_pair("交易客户端/binance_client_v2.py", "binance_client_v2.py"),
+            file_pair("交易客户端/binance_client_v3.py", "binance_client_v3.py"),
+        ],
+        "services": [],
+        "post": ['{python} -c "import account_state_service; print(\'account_state_service import ok\')"'],
+    },
     "research": {
         "files": RESEARCH_CORE
         + [
             file_pair("部署工具/counterfactual_open_skips.py", "counterfactual_open_skips.py"),
             file_pair("部署工具/apply_research_approval.py", "apply_research_approval.py"),
             file_pair("部署工具/a_v11_rollout_review.py", "a_v11_rollout_review.py"),
+            file_pair("部署工具/account_state_service.py", "account_state_service.py"),
             file_pair("部署工具/cleanup_event_store.py", "cleanup_event_store.py"),
             file_pair("部署工具/data_maintenance.py", "data_maintenance.py"),
             file_pair("部署工具/daily_market_review.py", "daily_market_review.py"),
@@ -232,6 +251,7 @@ ALIYUN_COMPONENTS: dict[str, dict[str, Any]] = {
             file_pair("部署工具/experiment_runner.py", "experiment_runner.py"),
             file_pair("部署工具/a_v11_rollout_review.py", "a_v11_rollout_review.py"),
             file_pair("部署工具/apply_research_approval.py", "apply_research_approval.py"),
+            file_pair("部署工具/account_state_service.py", "account_state_service.py"),
             file_pair("部署工具/cleanup_event_store.py", "cleanup_event_store.py"),
             file_pair("部署工具/data_maintenance.py", "data_maintenance.py"),
             file_pair("部署工具/portal_dashboard.py", "portal_dashboard.py"),

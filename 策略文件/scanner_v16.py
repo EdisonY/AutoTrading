@@ -38,9 +38,11 @@ from core.position_utils import infer_position_side, leveraged_loss_pct
 from core.sentinel_scanner import fields_from_context, filter_context_by_available, merge_symbols_with_context
 from core.risk_engine import RiskEngine, RiskLimits
 from core.strategy_gates import (
+    evaluate_active_position_limit_gate,
     evaluate_b_v16_confirmation_gate,
     evaluate_b_v16_entry_threshold,
     evaluate_no_same_symbol_position_gate,
+    evaluate_score_max_gate,
     evaluate_symbol_stop_loss_gate,
 )
 from core.strategy_engine import StrategyEngine
@@ -980,12 +982,16 @@ class ScannerV16:
                         score=abs(float(sig.get("net_score") or 0)),
                     )
                     continue
-                if open_positions >= MAX_ACTIVE_NEW_POSITIONS:
+                active_gate = evaluate_active_position_limit_gate(
+                    open_positions=open_positions,
+                    max_active_positions=MAX_ACTIVE_NEW_POSITIONS,
+                )
+                if not active_gate.allowed:
                     scan_stats["active_limit"] += 1
                     log_event({
                         "time": str(datetime.now(CST)), "event": "OPEN_SKIPPED",
                         "symbol": sym, "side": sig["trade_side"], "score": abs(sig["net_score"]),
-                        "timeframe": tf, "skip_reason": f"活跃持仓{open_positions}>={MAX_ACTIVE_NEW_POSITIONS}只管理不新开",
+                        "timeframe": tf, "skip_reason": active_gate.reason,
                         "decision_stage": "risk_gate",
                         "filter_layer": "risk",
                         **sentinel_fields(sym),
@@ -1004,10 +1010,11 @@ class ScannerV16:
                 side = sig["trade_side"]
                 raw_score = abs(sig["net_score"])
                 score = self._adjusted_score(sym, raw_score)
-                if score > SCORE_MAX:
+                score_max_gate = evaluate_score_max_gate(score=score, score_max=SCORE_MAX)
+                if not score_max_gate.allowed:
                     scan_stats["score_gt_max"] += 1
                     log_sentinel_scan(
-                        sym, tf, "score_rejected", f"评分{score}超过{SCORE_MAX}",
+                        sym, tf, "score_rejected", score_max_gate.reason,
                         side=side, score=score, raw_score=raw_score,
                         decision_stage="score_gate",
                     )

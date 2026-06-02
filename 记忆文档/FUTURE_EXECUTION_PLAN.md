@@ -10,14 +10,14 @@
 
 1. **P0-A Binance API 根治**
    - 目标：把余额/仓位读取从轮询迁到 user-data-stream 或集中账户状态服务；把 guard 从协作式文件锁升级为独立队列/集中限速；避免 IP 级 418/429 反复拖住账户快照和策略扫描。
-   - 已完成：signed/public guard、指数冷却、trade reserve、部分重复 `positionRisk` 合并、B/C `exchangeInfo` 迁出 signed REST、开仓风控门禁优先读取新鲜 `account_snapshot_latest.json` 中心状态（过期/标记 stale 则不用且暂停新开仓，不再回退 signed REST）、runtime 非订单持仓同步/硬顶扫描改为 fresh central state 优先且 stale 时跳过、account snapshot 多账户采集默认间隔 `65s` 并遇到 rate-limit 即停止后续账户、public 60秒 top path/source 归因、public guard 默认平滑到 `60/min`、19:29 CST 自然恢复验证 `fresh_accounts=3/partial_error=0/P0=0`。
-   - 未完成：user-data-stream/central account-state、跨操作 open/close confirmation 状态服务、独立 API 队列服务、连续 30 分钟无新 418/429/-1003 观察。
+   - 已完成：signed/public guard、指数冷却、trade reserve、部分重复 `positionRisk` 合并、B/C `exchangeInfo` 迁出 signed REST、开仓风控门禁优先读取新鲜 `account_snapshot_latest.json` 中心状态（过期/标记 stale 则不用且暂停新开仓，不再回退 signed REST）、runtime 非订单持仓同步/硬顶扫描改为 fresh central state 优先且 stale 时跳过、account snapshot 多账户采集默认间隔 `65s` 并遇到 rate-limit 即停止后续账户、public 60秒 top path/source 归因、public guard 先平滑到 `60/min`，后因 `public:C/v14 /fapi/v1/klines` 429 再降到 `45/min + 1400ms`、19:29 CST 自然恢复验证 `fresh_accounts=3/partial_error=0/P0=0`。
+   - 未完成：user-data-stream/central account-state、跨操作 open/close confirmation 状态服务、独立 API 队列服务、当前 public cooldown 到 `2026-06-02T21:30:59+08:00` 后的连续 30 分钟无新 418/429/-1003 观察。
    - 验收：30 分钟内 journal 无 418/429/-1003；账户快照可自然保持 fresh；策略服务遇到单点 ban 不继续延长 ban；入口页显示 cooldown/source/top paths。
 
 2. **P0-B Replay/live 同路径**
    - 目标：A/B/C scanner 和 replay 使用同一套纯策略 gate/decision 函数，实盘只负责编排、下单、持久化。
-   - 已完成：`core.replay` 事件模型、观测型 `ReplayGateResult`、gate audit、OPEN_SKIPPED 归因覆盖；A/v11、B/v16、C/v14 entry-threshold gates 已抽到 `core.strategy_gates` 并由 live scanner 调用；B/v16 15m confirmation gate、C/v14 15m confirmation gate、C/v14 low-score tail guard、C/v14 stale entry-price market-data guard、A/v11 resonance-adjusted score、replacement-signal eligibility 与 releasable-position selection、A/B/C no-same-symbol position gate、C/v14 same-side position/sector/stop-loss gates、B/v16 stop-loss gate 也已抽到 shared pure function；`tests/test_strategy_gates.py` 已提供第一版 shared gate parity smoke。
-   - 未完成：A/v11 replacement close/open orchestration、confirmation/risk/execution gates、C/v14 remaining market-data/risk/execution gates、B/v16 remaining risk/position/execution gates 继续共享化，scanner 接入更多纯 gate，历史事件驱动的同输入 replay/live 结论一致性测试。
+   - 已完成：`core.replay` 事件模型、观测型 `ReplayGateResult`、gate audit、OPEN_SKIPPED 归因覆盖；A/v11、B/v16、C/v14 entry-threshold gates 已抽到 `core.strategy_gates` 并由 live scanner 调用；B/v16 15m confirmation gate、C/v14 15m confirmation gate、C/v14 low-score tail guard、C/v14 stale entry-price market-data guard、A/v11 resonance-adjusted score、replacement-signal eligibility 与 releasable-position selection、A/B/C no-same-symbol position gate、C/v14 same-side position/sector/stop-loss gates、B/v16 stop-loss gate、B/C score-max gate、B/v16 active-position limit gate 也已抽到 shared pure function；`tests/test_strategy_gates.py` 已提供第一版 shared gate parity smoke。
+   - 未完成：A/v11 replacement close/open orchestration、confirmation/risk/execution gates、C/v14 remaining market-data/risk/execution gates、B/v16 remaining position/execution gates 继续共享化，scanner 接入更多纯 gate，历史事件驱动的同输入 replay/live 结论一致性测试。
    - 验收：给定同一时间、币种、上下文，replay 与 live 入场/否决结论一致；关键 OPEN_SKIPPED/OPEN_FAILED 无未知 gate。
 
 ### Long-term P1 - P0 稳住后并行推进

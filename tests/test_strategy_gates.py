@@ -5,6 +5,7 @@ from core.strategy_gates import (
     evaluate_a_v11_entry_threshold,
     evaluate_a_v11_releasable_position,
     evaluate_a_v11_replacement_signal,
+    evaluate_active_position_limit_gate,
     evaluate_b_v16_confirmation_gate,
     evaluate_b_v16_entry_threshold,
     evaluate_c_v14_confirmation_gate,
@@ -13,6 +14,7 @@ from core.strategy_gates import (
     evaluate_c_v14_tail_guard,
     evaluate_no_same_symbol_position_gate,
     evaluate_same_side_position_gate,
+    evaluate_score_max_gate,
     evaluate_sector_position_gate,
     evaluate_symbol_stop_loss_gate,
 )
@@ -231,6 +233,17 @@ class StrategyGateParityTest(unittest.TestCase):
                 max_positions_per_sector=3,
             ).allowed
         )
+
+        overheat = evaluate_score_max_gate(score=86, score_max=85)
+        self.assertFalse(overheat.allowed)
+        self.assertEqual(overheat.reason, "评分86超过85")
+        self.assertEqual(evaluate_score_max_gate(score=86.0, score_max=85).reason, "评分86.0超过85")
+        self.assertTrue(evaluate_score_max_gate(score=85, score_max=85).allowed)
+
+        active_limit = evaluate_active_position_limit_gate(open_positions=4, max_active_positions=4)
+        self.assertFalse(active_limit.allowed)
+        self.assertEqual(active_limit.reason, "活跃持仓4>=4只管理不新开")
+        self.assertTrue(evaluate_active_position_limit_gate(open_positions=3, max_active_positions=4).allowed)
 
 
 if __name__ == "__main__":

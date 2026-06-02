@@ -62,11 +62,11 @@ def _trade_priority_reserve_per_minute() -> int:
 
 
 def _public_min_interval_ms() -> int:
-    return max(0, int(os.environ.get("BINANCE_PUBLIC_API_GUARD_MIN_INTERVAL_MS", "1000")))
+    return max(0, int(os.environ.get("BINANCE_PUBLIC_API_GUARD_MIN_INTERVAL_MS", "1400")))
 
 
 def _public_max_requests_per_minute() -> int:
-    return max(1, int(os.environ.get("BINANCE_PUBLIC_API_GUARD_MAX_REQUESTS_PER_MIN", "60")))
+    return max(1, int(os.environ.get("BINANCE_PUBLIC_API_GUARD_MAX_REQUESTS_PER_MIN", "45")))
 
 
 def current_cooldown_seconds(now_ms: int | None = None) -> float:

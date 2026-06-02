@@ -72,6 +72,7 @@ from core.strategy_gates import (
     evaluate_c_v14_tail_guard,
     evaluate_no_same_symbol_position_gate,
     evaluate_same_side_position_gate,
+    evaluate_score_max_gate,
     evaluate_sector_position_gate,
     evaluate_symbol_stop_loss_gate,
 )
@@ -1701,10 +1702,11 @@ class Scanner:
 
                 # 否决: 评分超过上限
                 abs_score = abs(sig["net_score"])
-                if abs_score > SCORE_MAX:
-                    logger.info(f"  ⏭️ [{tf}] {sym} 评分{abs_score}超过{SCORE_MAX}，跳过（过热）")
+                score_max_gate = evaluate_score_max_gate(score=abs_score, score_max=SCORE_MAX)
+                if not score_max_gate.allowed:
+                    logger.info(f"  ⏭️ [{tf}] {sym} {score_max_gate.reason}，跳过（过热）")
                     log_sentinel_scan(
-                        sym, tf, "score_rejected", f"评分{abs_score}超过{SCORE_MAX}",
+                        sym, tf, "score_rejected", score_max_gate.reason,
                         side=side, score=abs_score, decision_stage="score_gate",
                     )
                     continue

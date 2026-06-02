@@ -84,6 +84,43 @@ def evaluate_sector_position_gate(
     return StrategyGateDecision(True, "sector_guard", "sector_allowed", evidence={"sector": sector_key, "sector_position_count": count})
 
 
+def evaluate_score_max_gate(
+    *,
+    score: float,
+    score_max: float,
+) -> StrategyGateDecision:
+    """Evaluate score overheat cap."""
+    adjusted_score = abs(float(score))
+    threshold = float(score_max)
+    if adjusted_score > threshold:
+        return StrategyGateDecision(
+            False,
+            "score_gate",
+            f"评分{score}超过{score_max}",
+            threshold=threshold,
+            adjusted_score=adjusted_score,
+        )
+    return StrategyGateDecision(True, "score_gate", "score_within_max", threshold=threshold, adjusted_score=adjusted_score)
+
+
+def evaluate_active_position_limit_gate(
+    *,
+    open_positions: int,
+    max_active_positions: int,
+) -> StrategyGateDecision:
+    """Evaluate active-position limit for new opens."""
+    count = int(open_positions)
+    limit = int(max_active_positions)
+    if count >= limit:
+        return StrategyGateDecision(
+            False,
+            "risk_gate",
+            f"活跃持仓{count}>={limit}只管理不新开",
+            evidence={"open_positions": count, "max_active_positions": limit},
+        )
+    return StrategyGateDecision(True, "risk_gate", "active_position_limit_ok", evidence={"open_positions": count})
+
+
 def evaluate_a_v11_entry_threshold(
     *,
     timeframe: str,

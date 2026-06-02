@@ -252,6 +252,8 @@
 - 2026-06-02：继续 P0-B，C/v14 stale entry-price market-data gate 已抽到 `core.strategy_gates` 并纳入 parity smoke。`scanner_v14.py` 仍保留原黑名单与 OPEN_SKIPPED 记录口径。腾讯 `strategy-c` release `20260602-203336-strategy-c-9a50c01` 部署成功；20:35 live pull 六服务 active，P0=0/P1=4/P2=2，guard cooldown=0。
 - 2026-06-02：继续 P0-B，A/v11 releasable-position selection 已抽到 `evaluate_a_v11_releasable_position()`：强信号、同币种排除、preferred tf、same-side、elite/min-age、hard/soft profit protect、score gap、release rank 都进 shared pure gate；PnL/age 读取和 close/open 执行仍留 scanner/execution。腾讯 `strategy-a` release `20260602-204233-strategy-a-8867f13` 部署成功；20:43 live pull 六服务 active，P0=0/P1=4/P2=2，guard cooldown=0。
 - 2026-06-02：继续 P0-B，C/v14 同方向持仓、止损保护、赛道上限，以及 B/v16 止损保护已抽到 shared pure gates：`evaluate_same_side_position_gate()`、`evaluate_symbol_stop_loss_gate()`、`evaluate_sector_position_gate()`。已部署 `20260602-205218-strategy-b-30bce43` / `20260602-205321-strategy-c-30bce43`；20:56 live pull 六服务 active，P0=0/P1=4/P2=2，guard cooldown=0。
+- 2026-06-02：继续 P0-B，B/C score max gate 与 B/v16 active-position limit gate 已抽到 shared pure functions。已部署 `20260602-210404-strategy-b-637c35e` / `20260602-210538-strategy-c-637c35e`；21:07 live pull 六服务 active，P0=0/P1=4/P2=2。
+- 2026-06-02：P0-A 仍未根治。21:06 guard 显示 `public:C/v14 GET /fapi/v1/klines` 新 429，cooldown 到 `2026-06-02T21:30:59+08:00`。已把 public guard 默认从 `60/min + 1000ms` 降到 `45/min + 1400ms`，部署 A/B/C/sentinel，并重启 market-data-cache。21:21 live pull 六服务 active，P0=0/P1=4/P2=2；需要 cooldown 自然过期后观察 30 分钟无新 418/429/-1003。
 
 ---
 ## 2026-05-29 全局运行自检与账户方向口径修复

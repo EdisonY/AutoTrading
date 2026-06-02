@@ -2,6 +2,14 @@
 
 This is the durable reason-and-outcome ledger for every material design, code, configuration, deployment, rollback, optimization, or live operational change.
 
+## 2026-06-02 20:25 CST - Add shared strategy gate parity tests
+- Trigger / reason: Continue P0-B after multiple live scanner gates were extracted into `core.strategy_gates`. The queue still lacked a durable same-input regression smoke, so future gate extractions could drift without a quick local check.
+- Completed: Added `tests/test_strategy_gates.py` with `unittest` coverage for A/v11 entry threshold, resonance-adjusted effective score, replacement-signal eligibility, B/v16 threshold/confirmation gates, C/v14 threshold/confirmation/tail gates, and the shared no-same-symbol position gate. Added `tests/__init__.py` so the suite can be run as a module.
+- Not completed / remaining: This is a representative parity smoke, not full replay/live same-input replay over historical event rows. Remaining P0-B work still includes extracting A/v11 releasable-position/confirmation/risk/execution gates, C/v14 market-data/risk/execution gates, B/v16 risk/position/execution gates, and adding historical event-driven parity tests.
+- Verification: `python -m unittest tests.test_strategy_gates` passed (`Ran 4 tests ... OK`). `python -m py_compile tests\test_strategy_gates.py core\strategy_gates.py` passed. An initial test run exposed incorrect test-call signatures for B/v16 confirmation and C/v14 threshold; the test file was corrected before commit.
+- Live impact / deployment: None. Local regression tests only; no live service, strategy threshold, sizing, leverage, stop formula, order behavior, automatic upgrade, or automatic rollback changed.
+- Files / release / commit: `tests/__init__.py`, `tests/test_strategy_gates.py`, `CHANGELOG.md`, `PROJECT_STATE.md`, `记忆文档/MEMORY.md`, `记忆文档/FUTURE_EXECUTION_PLAN.md`.
+
 ## 2026-06-02 20:20 CST - Extract shared same-symbol position gate
 - Trigger / reason: Continue canonical P0-B replay/live same-path work after A/v11 replacement-signal extraction. The next common low-risk position gate was the no-same-symbol-stacking check that prevents aggregate margin/risk drift when an exchange or local position already exists for the symbol.
 - Completed: Added `evaluate_no_same_symbol_position_gate()` to `core/strategy_gates.py`. A/v11, B/v16, and C/v14 now call this shared pure gate before their existing duplicate-position `OPEN_SKIPPED` logging. Existing rejection reasons, categories, event fields, sizing policy fields, exchange-side metadata, and downstream risk checks remain unchanged.

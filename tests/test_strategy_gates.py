@@ -1,0 +1,146 @@
+import unittest
+
+from core.strategy_gates import (
+    effective_a_v11_signal_score,
+    evaluate_a_v11_entry_threshold,
+    evaluate_a_v11_replacement_signal,
+    evaluate_b_v16_confirmation_gate,
+    evaluate_b_v16_entry_threshold,
+    evaluate_c_v14_confirmation_gate,
+    evaluate_c_v14_entry_threshold,
+    evaluate_c_v14_tail_guard,
+    evaluate_no_same_symbol_position_gate,
+)
+
+
+class StrategyGateParityTest(unittest.TestCase):
+    def test_a_v11_threshold_and_replacement(self):
+        decision = evaluate_a_v11_entry_threshold(
+            timeframe="15m",
+            side="short",
+            score=-122,
+            score_thresholds={"15m": 115},
+            score_threshold=120,
+            short_entry_penalty=5,
+        )
+        self.assertTrue(decision.allowed)
+        self.assertEqual(decision.threshold, 120)
+
+        self.assertEqual(
+            effective_a_v11_signal_score(score=100, side="long", resonance=True, resonance_bonus=8),
+            108,
+        )
+        self.assertEqual(
+            effective_a_v11_signal_score(score=-100, side="short", resonance=True, resonance_bonus=8),
+            -108,
+        )
+        self.assertTrue(
+            evaluate_a_v11_replacement_signal(
+                effective_score=-112,
+                strong_signal_threshold=112,
+            ).allowed
+        )
+        self.assertFalse(
+            evaluate_a_v11_replacement_signal(
+                effective_score=111.9,
+                strong_signal_threshold=112,
+            ).allowed
+        )
+
+    def test_b_v16_threshold_and_confirmation(self):
+        confirm = evaluate_b_v16_confirmation_gate(
+            side="long",
+            raw_score=90,
+            confirm_signal={"trade_side": "short", "net_score": 30},
+            open_positions=1,
+            max_active_new_positions=4,
+            no_confirm_high_score_pass=85,
+            confirm_opposite_reject_score=25,
+            opposite_high_score_pass=80,
+            weak_confirm_pass_score=75,
+            confirm_min_score=15,
+            confirm_bonus=5,
+            confirm_strong_bonus=8,
+        )
+        self.assertFalse(confirm.allowed)
+        self.assertEqual(confirm.gate, "confirmation")
+
+        decision = evaluate_b_v16_entry_threshold(
+            timeframe="1h",
+            side="short",
+            score=80,
+            symbol="ALTUSDT",
+            open_positions=2,
+            confirm_reason="15m无信号但高分放行",
+            score_thresholds={"1h": 80},
+            score_min=80,
+            short_entry_penalty=10,
+            major_symbols={"BTCUSDT", "ETHUSDT"},
+            low_position_threshold_discount=5,
+            no_confirm_threshold_penalty=8,
+            weak_opposite_confirm_penalty=4,
+            confirm_bonus=5,
+            confirm_strong_bonus=8,
+        )
+        self.assertFalse(decision.allowed)
+        self.assertEqual(decision.threshold, 93)
+
+    def test_c_v14_threshold_confirmation_and_tail(self):
+        threshold = evaluate_c_v14_entry_threshold(
+            timeframe="1h",
+            side="short",
+            score_thresholds={"1h": 50},
+            score_min=50,
+            long_penalty=0,
+            short_entry_penalty=10,
+        )
+        self.assertTrue(threshold.allowed)
+        self.assertEqual(threshold.threshold, 60)
+
+        confirm = evaluate_c_v14_confirmation_gate(
+            side="long",
+            entry_score=90,
+            confirm_signal={"trade_side": "short", "net_score": 10, "can_trade": True},
+            confirm_timeframe="15m",
+            no_confirm_high_score_pass=88,
+            weak_confirm_min_score=18,
+            confirm_min_score=25,
+        )
+        self.assertTrue(confirm.allowed)
+        self.assertIn("弱反向", confirm.reason)
+
+        tail = evaluate_c_v14_tail_guard(
+            signal={"net_score": 60, "bb_pos": 90, "rsi": 60},
+            side="long",
+            tail_guard_min_score=75,
+            tail_guard_long_bb_pos=83,
+            tail_guard_short_bb_pos=17,
+            tail_guard_min_vol_ratio=1.4,
+            tail_guard_max_atr_pct=0.055,
+        )
+        self.assertFalse(tail.allowed)
+        self.assertEqual(tail.gate, "tail_guard")
+
+    def test_same_symbol_position_gate(self):
+        self.assertTrue(
+            evaluate_no_same_symbol_position_gate(
+                has_exchange_position=False,
+                has_local_position=False,
+            ).allowed
+        )
+        self.assertFalse(
+            evaluate_no_same_symbol_position_gate(
+                has_exchange_position=True,
+                has_local_position=False,
+            ).allowed
+        )
+        self.assertFalse(
+            evaluate_no_same_symbol_position_gate(
+                has_exchange_position=False,
+                has_local_position=True,
+            ).allowed
+        )
+
+
+if __name__ == "__main__":
+    unittest.main()

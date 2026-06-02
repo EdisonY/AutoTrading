@@ -28,12 +28,15 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "部署工具"))
 
 from account_state_service import apply_stream_events_once
+from core.binance_api_queue import BinanceApiQueue
+from core.binance_user_stream import refresh_listen_key_via_queue
 from core.binance_user_stream_runtime import process_stream_messages, user_stream_url
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Binance user-data-stream service")
     parser.add_argument("--strategy", required=True)
+    parser.add_argument("--account", default="")
     parser.add_argument("--listen-key", default="")
     parser.add_argument("--messages-file", default="")
     parser.add_argument("--apply-state", action="store_true")
@@ -61,7 +64,11 @@ def run_messages(
     return result
 
 
-def run_websocket(*, root: str | Path, strategy: str, listen_key: str, apply_state: bool, ws_base: str, once: bool) -> int:
+def run_websocket(*, root: str | Path, account: str, strategy: str, listen_key: str, apply_state: bool, ws_base: str, once: bool) -> int:
+    if not listen_key:
+        account = account or strategy.split("/", 1)[0]
+        record = refresh_listen_key_via_queue(root, BinanceApiQueue(Path(root) / "runtime" / "binance_api_queue.sqlite3"), account=account, strategy=strategy)
+        listen_key = record.listen_key
     if not listen_key:
         raise RuntimeError("--listen-key is required for websocket mode")
     try:
@@ -96,6 +103,7 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         return run_websocket(
             root=args.root,
+            account=args.account,
             strategy=args.strategy,
             listen_key=args.listen_key,
             apply_state=args.apply_state,

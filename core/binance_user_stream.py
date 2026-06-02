@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from core.account_state import atomic_write_json, utc_now_iso
-from core.binance_api_queue import PRIORITY_HIGH, PRIORITY_TRADE
+from core.binance_api_queue import PRIORITY_HIGH, PRIORITY_TRADE, BinanceApiQueue
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -195,23 +195,99 @@ def listen_key_queue_request(
         method = "POST"
         body: dict[str, Any] = {}
         priority = PRIORITY_HIGH
+        idempotency_key = f"listen-key:{action}:{account}:{strategy}:{now_ms()}"
     elif action == "keepalive":
         method = "PUT"
         body = {"listenKey": listen_key}
         priority = PRIORITY_HIGH
+        idempotency_key = f"listen-key:{action}:{account}:{strategy}:{listen_key or 'missing'}"
     elif action == "close":
         method = "DELETE"
         body = {"listenKey": listen_key}
         priority = PRIORITY_TRADE
+        idempotency_key = f"listen-key:{action}:{account}:{strategy}:{listen_key or 'missing'}"
     else:
         raise ValueError(f"unknown listen-key action: {action}")
     return {
         "scope": "signed",
-        "account": strategy,
+        "account": account,
         "label": f"user-stream:{strategy}",
         "method": method,
         "path": "/fapi/v1/listenKey",
         "priority": priority,
         "body": body,
-        "idempotency_key": f"listen-key:{action}:{account}:{strategy}:{listen_key or 'new'}",
+        "idempotency_key": idempotency_key,
     }
+
+
+def active_listen_key_record(
+    root: str | Path,
+    *,
+    account: str,
+    strategy: str,
+    at_ms: int | None = None,
+    keepalive_margin_ms: int = DEFAULT_KEEPALIVE_MARGIN_MS,
+) -> ListenKeyRecord | None:
+    ts = now_ms() if at_ms is None else int(at_ms)
+    for item in load_listen_key_state(root).get("records") or []:
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("account") or "") != account or str(item.get("strategy") or "") != strategy:
+            continue
+        if str(item.get("status") or "") != "active":
+            return None
+        expires = int(item.get("expires_at_ms") or 0)
+        listen_key = str(item.get("listen_key") or "")
+        if not listen_key or expires <= ts or expires - ts <= keepalive_margin_ms:
+            return None
+        return ListenKeyRecord(
+            account=account,
+            strategy=strategy,
+            listen_key=listen_key,
+            created_at_ms=int(item.get("created_at_ms") or ts),
+            updated_at_ms=int(item.get("updated_at_ms") or ts),
+            expires_at_ms=expires,
+            status="active",
+            error=str(item.get("error") or ""),
+        )
+    return None
+
+
+def refresh_listen_key_via_queue(
+    root: str | Path,
+    queue: BinanceApiQueue,
+    *,
+    account: str,
+    strategy: str,
+    transport=None,
+    at_ms: int | None = None,
+) -> ListenKeyRecord:
+    """Start or keepalive a listen-key through the central API queue executor."""
+    from core.binance_api_executor import execute_api_queue_request
+
+    ts = now_ms() if at_ms is None else int(at_ms)
+    existing = active_listen_key_record(root, account=account, strategy=strategy, at_ms=ts)
+    if existing:
+        return existing
+    due = [
+        item for item in listen_key_due_records(root, at_ms=ts)
+        if str(item.get("account") or "") == account and str(item.get("strategy") or "") == strategy
+    ]
+    action = "keepalive" if due and due[0].get("due_action") == "keepalive" else "start"
+    listen_key = str(due[0].get("listen_key") or "") if due else ""
+    spec = listen_key_queue_request(action=action, account=account, strategy=strategy, listen_key=listen_key)
+    request = queue.submit_request(**spec)
+    result = execute_api_queue_request(queue, request, transport=transport)
+    if result.status != "done":
+        mark_listen_key_error(root, account=account, strategy=strategy, error=result.error or result.status, at_ms=ts)
+        raise RuntimeError(result.error or f"listen-key {action} failed: {result.status}")
+    body = result.result_body if isinstance(result.result_body, dict) else {}
+    if action == "start":
+        new_key = str(body.get("listenKey") or "")
+        if not new_key:
+            mark_listen_key_error(root, account=account, strategy=strategy, error="listenKey missing in start response", at_ms=ts)
+            raise RuntimeError("listenKey missing in start response")
+        return upsert_listen_key(root, account=account, strategy=strategy, listen_key=new_key, at_ms=ts)
+    if not listen_key:
+        raise RuntimeError("listen-key keepalive requested without listen_key")
+    return upsert_listen_key(root, account=account, strategy=strategy, listen_key=listen_key, at_ms=ts)

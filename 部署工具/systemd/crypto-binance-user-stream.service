@@ -7,7 +7,7 @@ Wants=network-online.target
 Type=simple
 WorkingDirectory=/opt/crypto-auto-trader
 EnvironmentFile=-/etc/crypto-auto-trader/trading.env
-ExecStart=/opt/crypto-auto-trader/.venv/bin/python -u /opt/crypto-auto-trader/binance_user_stream_service.py --strategy A/v11 --listen-key ${BINANCE_A_LISTEN_KEY} --apply-state
+ExecStart=/opt/crypto-auto-trader/.venv/bin/python -u /opt/crypto-auto-trader/binance_user_stream_service.py --strategy A/v11 --apply-state
 Restart=on-failure
 RestartSec=10
 

@@ -10,7 +10,7 @@
 
 1. **P0-A Binance API 根治**
    - 目标：把余额/仓位读取从轮询迁到 user-data-stream 或集中账户状态服务；把 guard 从协作式文件锁升级为独立队列/集中限速；避免 IP 级 418/429 反复拖住账户快照和策略扫描。
-   - 已完成：signed/public guard、指数冷却、trade reserve、部分重复 `positionRisk` 合并、B/C `exchangeInfo` 迁出 signed REST。
+   - 已完成：signed/public guard、指数冷却、trade reserve、部分重复 `positionRisk` 合并、B/C `exchangeInfo` 迁出 signed REST、开仓风控门禁优先读取新鲜 `account_snapshot_latest.json` 中心状态（过期/标记 stale 则不用）。
    - 未完成：user-data-stream/central account-state、跨操作 open/close confirmation 状态服务、public request 归因、独立 API 队列服务。
    - 验收：30 分钟内 journal 无 418/429/-1003；账户快照可自然保持 fresh；策略服务遇到单点 ban 不继续延长 ban；入口页显示 cooldown/source/top paths。
 

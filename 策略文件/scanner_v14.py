@@ -54,6 +54,7 @@ from cloud.analyzer.auxiliary import (
 # 交易交易所: Binance Account C
 from binance_client_v3 import get_client, BinanceClientV3 as ExchangeClient, _delete
 from core.audit_log import write_jsonl_with_daily_shard
+from core.account_state_cache import load_cached_account_state
 from core.execution_engine import CloseRequest, ExecutionEngine, OpenRequest
 from core.exchange_state import count_active_positions, count_side_positions, find_symbol_position, usdt_balance_summary
 from core.event_store import EventStoreWriter
@@ -1068,14 +1069,16 @@ class Scanner:
 
     def _can_open_new_position(self, risk_usdt: float, now_str: str, tf: str, sym: str, side: str, score: float) -> bool:
         try:
-            exchange_positions = self.client.get_positions()
+            cached_state = load_cached_account_state(PROJECT_ROOT, "C/v14")
+            exchange_positions = cached_state.positions if cached_state else self.client.get_positions()
             total_positions = max(self._total_local_positions(), count_active_positions(exchange_positions))
             side_count = count_side_positions(exchange_positions, side)
         except Exception as e:
             logger.debug(f"  开仓风控快照读取失败: {e}")
             total_positions = self._total_local_positions()
             side_count = sum(1 for tf_pos in self.positions.values() for (_, sd) in tf_pos if sd == side)
-        balance = self.client.get_balance()
+            cached_state = None
+        balance = cached_state.balance if cached_state else self.client.get_balance()
         decision = self.risk_engine.check_entry(
             total_positions=total_positions,
             side_positions=side_count,

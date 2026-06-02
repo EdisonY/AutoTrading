@@ -73,6 +73,7 @@ def file_pair(local: str, remote: str | None = None) -> tuple[Path, str]:
 
 CORE_FILES = [
     file_pair("core/__init__.py"),
+    file_pair("core/account_state_cache.py"),
     file_pair("core/audit_log.py"),
     file_pair("core/binance_api_guard.py"),
     file_pair("core/binance_order_rules.py"),

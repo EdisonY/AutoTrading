@@ -202,7 +202,10 @@ TENCENT_COMPONENTS: dict[str, dict[str, Any]] = {
             file_pair("交易客户端/binance_client_v3.py", "binance_client_v3.py"),
         ],
         "services": [],
-        "post": ['{python} -c "import account_state_service; print(\'account_state_service import ok\')"'],
+        "post": [
+            '{python} -c "import account_state_service; print(\'account_state_service import ok\')"',
+            "sudo cp systemd/crypto-account-state.service /etc/systemd/system/crypto-account-state.service && sudo systemctl daemon-reload",
+        ],
     },
     "api-queue": {
         "files": CORE_FILES
@@ -211,7 +214,10 @@ TENCENT_COMPONENTS: dict[str, dict[str, Any]] = {
             file_pair("部署工具/systemd/crypto-binance-api-queue.service", "systemd/crypto-binance-api-queue.service"),
         ],
         "services": [],
-        "post": ['{python} -c "import binance_api_queue_service; print(\'binance_api_queue_service import ok\')"'],
+        "post": [
+            '{python} -c "import binance_api_queue_service; print(\'binance_api_queue_service import ok\')"',
+            "sudo cp systemd/crypto-binance-api-queue.service /etc/systemd/system/crypto-binance-api-queue.service && sudo systemctl daemon-reload",
+        ],
     },
     "user-stream": {
         "files": CORE_FILES
@@ -222,7 +228,10 @@ TENCENT_COMPONENTS: dict[str, dict[str, Any]] = {
             file_pair("部署工具/systemd/crypto-binance-user-stream-v14.service", "systemd/crypto-binance-user-stream-v14.service"),
         ],
         "services": [],
-        "post": ['{python} -c "import binance_user_stream_service; print(\'binance_user_stream_service import ok\')"'],
+        "post": [
+            '{python} -c "import binance_user_stream_service; print(\'binance_user_stream_service import ok\')"',
+            "sudo cp systemd/crypto-binance-user-stream.service /etc/systemd/system/crypto-binance-user-stream.service && sudo cp systemd/crypto-binance-user-stream-v16.service /etc/systemd/system/crypto-binance-user-stream-v16.service && sudo cp systemd/crypto-binance-user-stream-v14.service /etc/systemd/system/crypto-binance-user-stream-v14.service && sudo systemctl daemon-reload",
+        ],
     },
     "research": {
         "files": RESEARCH_CORE

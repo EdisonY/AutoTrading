@@ -2,6 +2,14 @@
 
 This is the durable reason-and-outcome ledger for every material design, code, configuration, deployment, rollback, optimization, or live operational change.
 
+## 2026-06-03 02:50 CST - Install construction systemd units without starting services
+- Trigger / reason: Fresh-run preparation found the construction units were uploaded under `/opt/crypto-auto-trader/systemd` but not installed in systemd (`LoadState=not-found`) for API queue, account-state, and A/B/C user-stream services.
+- Completed: Updated `release_manager.py` post-deploy hooks for `api-queue`, `account-state`, and `user-stream` to copy their unit files into `/etc/systemd/system/` and run `systemctl daemon-reload`. These hooks do not enable or start services.
+- Not completed / remaining: Controlled fresh-run start/observe remains next.
+- Verification: `py_compile` passed for `release_manager.py`; `git diff --check` passed. After deploying the hooks, `systemctl show` reports `LoadState=loaded`, `ActiveState=inactive`, `UnitFileState=disabled`, and `/etc/systemd/system/...` fragment paths for `crypto-binance-api-queue.service`, `crypto-account-state.service`, and all three user-stream services.
+- Live impact / deployment: Deployed Tencent no-restart releases `20260603-025123-api-queue-52215e9`, `20260603-025322-account-state-52215e9`, and `20260603-025405-user-stream-52215e9`. Units were installed and daemon-reloaded, but no service was enabled or started and no Binance API request was sent.
+- Files / release / commit: `部署工具/release_manager.py`, `CHANGELOG.md`, `PROJECT_STATE.md`, `记忆文档/MEMORY.md`.
+
 ## 2026-06-03 02:45 CST - Add multi-account user-stream service units
 - Trigger / reason: Continue P0-A before fresh-run. User-stream runtime existed, but only A/v11 had a draft service unit, so B/v16 and C/v14 account streams could not be orchestrated in the fresh-run start sequence.
 - Completed: Added draft systemd units for B/v16 and C/v14 user-data-stream services and updated the A/v11 unit dependencies. All user-stream units now declare network, API queue, and account-state dependencies. `release_manager.py` now ships all three user-stream unit files in the `user-stream` component.

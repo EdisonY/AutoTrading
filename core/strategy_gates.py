@@ -484,6 +484,27 @@ def evaluate_a_v11_pool_capacity_replacement_gate(
     )
 
 
+def evaluate_a_v11_resonance_required_gate(
+    *,
+    require_resonance: bool,
+    has_resonance: bool,
+) -> StrategyGateDecision:
+    """Evaluate A/v11's optional resonance requirement."""
+    if require_resonance and not has_resonance:
+        return StrategyGateDecision(
+            False,
+            "resonance",
+            "无共振，REQUIRE_RESONANCE=True",
+            evidence={"require_resonance": True, "has_resonance": False},
+        )
+    return StrategyGateDecision(
+        True,
+        "resonance",
+        "resonance_requirement_satisfied",
+        evidence={"require_resonance": bool(require_resonance), "has_resonance": bool(has_resonance)},
+    )
+
+
 def evaluate_a_v11_market_microstructure_gate(
     *,
     atr: float,

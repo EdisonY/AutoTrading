@@ -10,6 +10,7 @@ from core.strategy_gates import (
     evaluate_a_v11_pool_capacity_replacement_gate,
     evaluate_a_v11_releasable_position,
     evaluate_a_v11_replacement_signal,
+    evaluate_a_v11_resonance_required_gate,
     evaluate_active_position_limit_gate,
     evaluate_b_v16_confirmation_gate,
     evaluate_b_v16_entry_threshold,
@@ -190,6 +191,25 @@ class StrategyGateParityTest(unittest.TestCase):
         )
         self.assertFalse(pool_full_rejected.allowed)
         self.assertEqual(pool_full_rejected.reason, "VPB周期池满且未达到强信号替换条件")
+
+        resonance_missing = evaluate_a_v11_resonance_required_gate(
+            require_resonance=True,
+            has_resonance=False,
+        )
+        self.assertFalse(resonance_missing.allowed)
+        self.assertEqual(resonance_missing.reason, "无共振，REQUIRE_RESONANCE=True")
+        self.assertTrue(
+            evaluate_a_v11_resonance_required_gate(
+                require_resonance=False,
+                has_resonance=False,
+            ).allowed
+        )
+        self.assertTrue(
+            evaluate_a_v11_resonance_required_gate(
+                require_resonance=True,
+                has_resonance=True,
+            ).allowed
+        )
 
         sizing_ok = evaluate_a_v11_margin_sizing_gate(
             quantity=40,

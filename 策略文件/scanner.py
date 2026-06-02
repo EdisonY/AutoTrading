@@ -124,6 +124,7 @@ from core.strategy_gates import (
     evaluate_a_v11_pool_capacity_replacement_gate,
     evaluate_a_v11_releasable_position,
     evaluate_a_v11_replacement_signal,
+    evaluate_a_v11_resonance_required_gate,
     evaluate_no_same_symbol_position_gate,
     evaluate_symbol_blacklist_gate,
     evaluate_symbol_cooldown_gate,
@@ -1840,10 +1841,14 @@ class Scanner:
                 if sig["symbol"] in opened_symbols:
                     continue
                 # REQUIRE_RESONANCE=False 时不强制共振
-                if REQUIRE_RESONANCE and sig["symbol"] not in resonance_map:
+                resonance_gate = evaluate_a_v11_resonance_required_gate(
+                    require_resonance=REQUIRE_RESONANCE,
+                    has_resonance=sig["symbol"] in resonance_map,
+                )
+                if not resonance_gate.allowed:
                     logger.debug(f"  ⏭️ [{tf}] {sig['symbol']} 无共振，跳过（REQUIRE_RESONANCE=True）")
                     log_sentinel_scan(
-                        sig["symbol"], tf, "strategy_rejected", "无共振，REQUIRE_RESONANCE=True",
+                        sig["symbol"], tf, "strategy_rejected", resonance_gate.reason,
                         side=sig.get("trade_side", ""),
                         score=abs(float(sig.get("net_score") or 0)),
                         decision_stage="resonance",

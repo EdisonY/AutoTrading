@@ -28,6 +28,7 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "部署工具"))
 
 from account_state_service import apply_stream_events_once
+from core.account_state import read_account_state_payload, utc_now_iso, write_account_state
 from core.binance_api_queue import BinanceApiQueue
 from core.binance_user_stream import refresh_listen_key_via_queue
 from core.binance_user_stream_runtime import process_stream_messages, user_stream_url
@@ -64,6 +65,28 @@ def run_messages(
     return result
 
 
+def touch_account_state_row(*, root: str | Path, strategy: str) -> str:
+    """Mark a strategy account-state row fresh while its websocket stays connected."""
+    payload = read_account_state_payload(root, allow_legacy=False)
+    if not payload:
+        return ""
+    now = utc_now_iso()
+    changed = False
+    for row in payload.get("accounts") or []:
+        if not isinstance(row, dict):
+            continue
+        if str(row.get("strategy") or "").upper() != str(strategy or "").upper():
+            continue
+        row["ts"] = now
+        row["stale"] = False
+        row.pop("snapshot_error", None)
+        changed = True
+    if not changed:
+        return ""
+    payload["generated_at"] = now
+    return str(write_account_state(root, payload))
+
+
 def run_websocket(*, root: str | Path, account: str, strategy: str, listen_key: str, apply_state: bool, ws_base: str, once: bool) -> int:
     if not listen_key:
         account = account or strategy.split("/", 1)[0]
@@ -79,7 +102,14 @@ def run_websocket(*, root: str | Path, account: str, strategy: str, listen_key: 
     ws = websocket.create_connection(user_stream_url(listen_key, base_url=ws_base), timeout=30)
     try:
         while True:
-            raw = ws.recv()
+            try:
+                raw = ws.recv()
+            except websocket.WebSocketTimeoutException:
+                touched = touch_account_state_row(root=root, strategy=strategy) if apply_state else ""
+                print(json.dumps({"status": "idle", "strategy": strategy, "account_state_touched": bool(touched)}, ensure_ascii=False), flush=True)
+                if once:
+                    return 0
+                continue
             result = process_stream_messages(root, strategy=strategy, messages=[raw])
             if apply_state and result.get("last_event_file"):
                 apply_stream_events_once(events_path=result["last_event_file"], strategy=strategy, root=root)

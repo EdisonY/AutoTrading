@@ -67,15 +67,18 @@ from core.position_utils import infer_position_side, leveraged_loss_pct
 from core.sentinel_scanner import fields_from_context, filter_context_by_available, merge_symbols_with_context
 from core.risk_engine import RiskEngine, RiskLimits
 from core.strategy_gates import (
+    evaluate_account_state_available_gate,
     evaluate_c_v14_confirmation_gate,
     evaluate_c_v14_entry_threshold,
     evaluate_c_v14_market_microstructure_gate,
     evaluate_c_v14_stale_entry_price_gate,
     evaluate_c_v14_tail_guard,
+    evaluate_consecutive_loss_cooldown_gate,
     evaluate_no_same_symbol_position_gate,
     evaluate_same_side_position_gate,
     evaluate_score_max_gate,
     evaluate_sector_position_gate,
+    evaluate_symbol_cooldown_gate,
     evaluate_symbol_stop_loss_gate,
 )
 from core.strategy_engine import StrategyEngine
@@ -1095,7 +1098,8 @@ class Scanner:
     def _can_open_new_position(self, risk_usdt: float, now_str: str, tf: str, sym: str, side: str, score: float) -> bool:
         try:
             cached_state = load_cached_account_state(PROJECT_ROOT, "C/v14")
-            if not cached_state:
+            state_gate = evaluate_account_state_available_gate(account_state_available=bool(cached_state))
+            if not state_gate.allowed:
                 logger.info(f"  ⏸️ [{tf}] {sym} 中心账户状态不可用，暂停新开仓以避免 signed REST 压力")
                 log_event({
                     "time": now_str, "event": "OPEN_SKIPPED", "symbol": sym,
@@ -1565,18 +1569,23 @@ class Scanner:
                 del self.cooldowns[tf][sym]
 
         # 否决条件: 连续亏损冷却
-        if self.consecutive_losses >= 5 and self.last_loss_time:
-            cooldown_end = self.last_loss_time + timedelta(minutes=COOLDOWN_CONSECUTIVE)
-            if now < cooldown_end:
-                remaining = (cooldown_end - now).seconds // 60
-                logger.info(f"  ⏸️ 连续亏损{self.consecutive_losses}次，冷却中（剩余{remaining}分钟）")
-                log_system({
-                    "ts": now_str, "scan_count": self.scan_count,
-                    "positions": sum(self._pos_count(tf) for tf in TIMEFRAMES),
-                    "consecutive_losses": self.consecutive_losses,
-                    "status": "cooldown",
-                })
-                return
+        cooldown_gate = evaluate_consecutive_loss_cooldown_gate(
+            consecutive_losses=self.consecutive_losses,
+            last_loss_time=self.last_loss_time,
+            now=now,
+            min_consecutive_losses=5,
+            cooldown_minutes=COOLDOWN_CONSECUTIVE,
+        )
+        if not cooldown_gate.allowed:
+            remaining = int((cooldown_gate.evidence or {}).get("remaining_minutes") or 0)
+            logger.info(f"  ⏸️ 连续亏损{self.consecutive_losses}次，冷却中（剩余{remaining}分钟）")
+            log_system({
+                "ts": now_str, "scan_count": self.scan_count,
+                "positions": sum(self._pos_count(tf) for tf in TIMEFRAMES),
+                "consecutive_losses": self.consecutive_losses,
+                "status": "cooldown",
+            })
+            return
 
         # 1.8 BTC大盘趋势判断（v14优化 2026-05-08）
         btc_trend = fetch_btc_trend()
@@ -1608,7 +1617,8 @@ class Scanner:
                     log_sentinel_scan(sym, tf, "pre_filter_rejected", "本周期已有持仓", decision_stage="pre_filter")
                     continue
                 cd = self.cooldowns.get(tf, {}).get(sym)
-                if cd and now < cd:
+                cooldown_gate = evaluate_symbol_cooldown_gate(cooldown_until=cd, now=now)
+                if not cooldown_gate.allowed:
                     log_sentinel_scan(sym, tf, "pre_filter_rejected", "冷却期内", decision_stage="pre_filter")
                     continue
                 try:

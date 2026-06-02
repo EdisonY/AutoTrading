@@ -39,6 +39,7 @@ from core.position_utils import infer_position_side, leveraged_loss_pct
 from core.sentinel_scanner import fields_from_context, filter_context_by_available, merge_symbols_with_context
 from core.risk_engine import RiskEngine, RiskLimits
 from core.strategy_gates import (
+    evaluate_account_state_available_gate,
     evaluate_active_position_limit_gate,
     evaluate_b_v16_confirmation_gate,
     evaluate_b_v16_entry_threshold,
@@ -46,6 +47,7 @@ from core.strategy_gates import (
     evaluate_no_same_symbol_position_gate,
     evaluate_score_max_gate,
     evaluate_symbol_stop_loss_gate,
+    evaluate_watchlist_score_adjustment,
 )
 from core.strategy_engine import StrategyEngine
 
@@ -833,7 +835,8 @@ class ScannerV16:
     def _can_open_new_position(self, risk_usdt, tf, sym, side, score):
         try:
             cached_state = load_cached_account_state(PROJECT_ROOT, "B/v16")
-            if not cached_state:
+            state_gate = evaluate_account_state_available_gate(account_state_available=bool(cached_state))
+            if not state_gate.allowed:
                 logger.info(f"  跳过[{tf}]: {sym} 中心账户状态不可用，暂停新开仓以避免 signed REST 压力")
                 log_event({
                     "time": str(datetime.now(CST)), "event": "OPEN_SKIPPED",
@@ -918,9 +921,13 @@ class ScannerV16:
         return decision.allowed, decision.reason
 
     def _adjusted_score(self, sym, score):
-        if sym in WATCHLIST_SYMBOLS:
-            return max(0.0, score - WATCHLIST_SCORE_PENALTY)
-        return score
+        decision = evaluate_watchlist_score_adjustment(
+            symbol=sym,
+            score=score,
+            watchlist_symbols=WATCHLIST_SYMBOLS,
+            penalty=WATCHLIST_SCORE_PENALTY,
+        )
+        return decision.adjusted_score if decision.adjusted_score is not None else score
 
     def _passes_15m_confirmation(self, sym, side, raw_score, open_positions):
         sig = self.strategy_engine.analyze(sym, CONFIRM_TIMEFRAME)

@@ -117,11 +117,13 @@ from core.sentinel_scanner import fields_from_context, filter_context_by_availab
 from core.risk_engine import RiskEngine, RiskLimits
 from core.strategy_gates import (
     effective_a_v11_signal_score,
+    evaluate_account_state_available_gate,
     evaluate_a_v11_entry_threshold,
     evaluate_a_v11_market_microstructure_gate,
     evaluate_a_v11_releasable_position,
     evaluate_a_v11_replacement_signal,
     evaluate_no_same_symbol_position_gate,
+    evaluate_symbol_cooldown_gate,
 )
 from core.strategy_engine import StrategyEngine
 
@@ -1035,7 +1037,8 @@ class Scanner:
     def _can_open_new_position(self, risk_usdt: float, now_str: str, tf: str, sym: str, side: str, score: float) -> bool:
         try:
             cached_state = load_cached_account_state(PROJECT_ROOT, "A/v11")
-            if not cached_state:
+            state_gate = evaluate_account_state_available_gate(account_state_available=bool(cached_state))
+            if not state_gate.allowed:
                 logger.info(f"  ⏸️ [{tf}] {sym} 中心账户状态不可用，暂停新开仓以避免 signed REST 压力")
                 log_event({
                     "time": now_str, "event": "OPEN_SKIPPED", "symbol": sym,
@@ -1652,7 +1655,8 @@ class Scanner:
                     continue
                 # 冷却期检查
                 cd = self.cooldowns.get(tf, {}).get(sym)
-                if cd and now < cd:
+                cooldown_gate = evaluate_symbol_cooldown_gate(cooldown_until=cd, now=now)
+                if not cooldown_gate.allowed:
                     log_sentinel_scan(sym, tf, "cooldown_rejected", "冷却期内", decision_stage="cooldown", filter_layer="risk")
                     continue
                 try:

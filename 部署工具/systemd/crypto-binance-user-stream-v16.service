@@ -1,7 +1,7 @@
 [Unit]
 Description=AutoTrading Binance user-data-stream service B/v16 (construction foundation)
-After=network-online.target crypto-binance-api-queue.service crypto-account-state.service
-Wants=network-online.target crypto-binance-api-queue.service crypto-account-state.service
+After=network-online.target crypto-binance-api-queue.service
+Wants=network-online.target crypto-binance-api-queue.service
 
 [Service]
 Type=simple

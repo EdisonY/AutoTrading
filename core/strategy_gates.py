@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from typing import Any, Collection, Mapping
 
 
@@ -43,6 +44,28 @@ def evaluate_same_side_position_gate(
     if has_same_side_position:
         return StrategyGateDecision(False, "position_gate", "same_side_position_exists")
     return StrategyGateDecision(True, "position_gate", "no_same_side_position")
+
+
+def evaluate_account_state_available_gate(
+    *,
+    account_state_available: bool,
+    read_error: bool = False,
+) -> StrategyGateDecision:
+    """Evaluate whether central account state is usable for entry risk checks."""
+    if not account_state_available:
+        reason = "account_state_read_failed" if read_error else "account_state_unavailable"
+        return StrategyGateDecision(
+            False,
+            "risk_gate",
+            reason,
+            evidence={"account_state_available": False, "read_error": bool(read_error)},
+        )
+    return StrategyGateDecision(
+        True,
+        "risk_gate",
+        "account_state_available",
+        evidence={"account_state_available": True, "read_error": bool(read_error)},
+    )
 
 
 def evaluate_symbol_stop_loss_gate(
@@ -101,6 +124,100 @@ def evaluate_score_max_gate(
             adjusted_score=adjusted_score,
         )
     return StrategyGateDecision(True, "score_gate", "score_within_max", threshold=threshold, adjusted_score=adjusted_score)
+
+
+def evaluate_watchlist_score_adjustment(
+    *,
+    symbol: str,
+    score: float,
+    watchlist_symbols: Collection[str],
+    penalty: float,
+) -> StrategyGateDecision:
+    """Apply watchlist score penalty without rejecting the signal."""
+    raw_score = float(score)
+    symbol_key = str(symbol or "").upper()
+    watchlist = {str(item or "").upper() for item in watchlist_symbols}
+    if symbol_key in watchlist:
+        adjusted = max(0.0, raw_score - float(penalty))
+        return StrategyGateDecision(
+            True,
+            "score_adjustment",
+            "watchlist_penalty_applied",
+            adjusted_score=adjusted,
+            evidence={"symbol": symbol_key, "raw_score": raw_score, "penalty": float(penalty)},
+        )
+    return StrategyGateDecision(
+        True,
+        "score_adjustment",
+        "score_unchanged",
+        adjusted_score=raw_score,
+        evidence={"symbol": symbol_key, "raw_score": raw_score, "penalty": 0.0},
+    )
+
+
+def evaluate_consecutive_loss_cooldown_gate(
+    *,
+    consecutive_losses: int,
+    last_loss_time: datetime | None,
+    now: datetime,
+    min_consecutive_losses: int,
+    cooldown_minutes: float,
+) -> StrategyGateDecision:
+    """Evaluate a global consecutive-loss cooldown gate."""
+    losses = int(consecutive_losses or 0)
+    min_losses = int(min_consecutive_losses)
+    cooldown = float(cooldown_minutes)
+    if losses < min_losses or last_loss_time is None:
+        return StrategyGateDecision(
+            True,
+            "cooldown",
+            "consecutive_loss_cooldown_clear",
+            evidence={"consecutive_losses": losses, "min_consecutive_losses": min_losses},
+        )
+
+    cooldown_end = last_loss_time + timedelta(minutes=cooldown)
+    if now < cooldown_end:
+        remaining_minutes = int(max(0.0, (cooldown_end - now).total_seconds()) // 60)
+        return StrategyGateDecision(
+            False,
+            "cooldown",
+            "consecutive_loss_cooldown_active",
+            evidence={
+                "consecutive_losses": losses,
+                "min_consecutive_losses": min_losses,
+                "cooldown_minutes": cooldown,
+                "cooldown_end": cooldown_end,
+                "remaining_minutes": remaining_minutes,
+            },
+        )
+    return StrategyGateDecision(
+        True,
+        "cooldown",
+        "consecutive_loss_cooldown_expired",
+        evidence={
+            "consecutive_losses": losses,
+            "min_consecutive_losses": min_losses,
+            "cooldown_minutes": cooldown,
+            "cooldown_end": cooldown_end,
+        },
+    )
+
+
+def evaluate_symbol_cooldown_gate(
+    *,
+    cooldown_until: datetime | None,
+    now: datetime,
+) -> StrategyGateDecision:
+    """Evaluate a per-symbol datetime cooldown gate."""
+    if cooldown_until is None or now >= cooldown_until:
+        return StrategyGateDecision(True, "cooldown", "symbol_cooldown_clear")
+    remaining_minutes = int(max(0.0, (cooldown_until - now).total_seconds()) // 60)
+    return StrategyGateDecision(
+        False,
+        "cooldown",
+        "symbol_cooldown_active",
+        evidence={"cooldown_until": cooldown_until, "remaining_minutes": remaining_minutes},
+    )
 
 
 def evaluate_active_position_limit_gate(

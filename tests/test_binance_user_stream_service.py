@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 
 from core.account_state import build_account_state_payload, load_central_account_state, write_account_state
-from 部署工具.binance_user_stream_service import run_messages
+from 部署工具.binance_user_stream_service import run_messages, touch_account_state_row
 
 
 class BinanceUserStreamServiceTest(unittest.TestCase):
@@ -25,6 +25,21 @@ class BinanceUserStreamServiceTest(unittest.TestCase):
             state = load_central_account_state(root, "A/v11", max_age_seconds=60 * 60 * 24 * 365)
 
             self.assertEqual(float(state.balance["totalWalletBalance"]), 1500.0)
+
+    def test_touch_account_state_row_refreshes_strategy_timestamp(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            payload = build_account_state_payload([
+                {"account": "A", "strategy": "A/v11", "wallet_usdt": 1000, "positions": []}
+            ])
+            payload["accounts"][0]["ts"] = "2000-01-01T00:00:00+00:00"
+            write_account_state(root, payload)
+
+            self.assertFalse(load_central_account_state(root, "A/v11", max_age_seconds=60, allow_legacy=False))
+            touched = touch_account_state_row(root=root, strategy="A/v11")
+            self.assertTrue(touched)
+            state = load_central_account_state(root, "A/v11", max_age_seconds=60, allow_legacy=False)
+            self.assertIsNotNone(state)
 
 
 if __name__ == "__main__":

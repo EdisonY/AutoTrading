@@ -1,7 +1,9 @@
 import unittest
+from datetime import datetime, timedelta, timezone
 
 from core.strategy_gates import (
     effective_a_v11_signal_score,
+    evaluate_account_state_available_gate,
     evaluate_a_v11_entry_threshold,
     evaluate_a_v11_market_microstructure_gate,
     evaluate_a_v11_releasable_position,
@@ -15,15 +17,32 @@ from core.strategy_gates import (
     evaluate_c_v14_market_microstructure_gate,
     evaluate_c_v14_stale_entry_price_gate,
     evaluate_c_v14_tail_guard,
+    evaluate_consecutive_loss_cooldown_gate,
     evaluate_no_same_symbol_position_gate,
     evaluate_same_side_position_gate,
     evaluate_score_max_gate,
     evaluate_sector_position_gate,
+    evaluate_symbol_cooldown_gate,
     evaluate_symbol_stop_loss_gate,
+    evaluate_watchlist_score_adjustment,
 )
 
 
 class StrategyGateParityTest(unittest.TestCase):
+    def test_account_state_available_gate(self):
+        ok = evaluate_account_state_available_gate(account_state_available=True)
+        self.assertTrue(ok.allowed)
+        self.assertEqual(ok.reason, "account_state_available")
+
+        missing = evaluate_account_state_available_gate(account_state_available=False)
+        self.assertFalse(missing.allowed)
+        self.assertEqual(missing.reason, "account_state_unavailable")
+        self.assertEqual(missing.gate, "risk_gate")
+
+        failed = evaluate_account_state_available_gate(account_state_available=False, read_error=True)
+        self.assertFalse(failed.allowed)
+        self.assertEqual(failed.reason, "account_state_read_failed")
+
     def test_a_v11_threshold_and_replacement(self):
         decision = evaluate_a_v11_entry_threshold(
             timeframe="15m",
@@ -343,6 +362,75 @@ class StrategyGateParityTest(unittest.TestCase):
         self.assertFalse(active_limit.allowed)
         self.assertEqual(active_limit.reason, "活跃持仓4>=4只管理不新开")
         self.assertTrue(evaluate_active_position_limit_gate(open_positions=3, max_active_positions=4).allowed)
+
+    def test_watchlist_score_adjustment(self):
+        penalized = evaluate_watchlist_score_adjustment(
+            symbol="abcusdt",
+            score=8,
+            watchlist_symbols={"ABCUSDT"},
+            penalty=10,
+        )
+        self.assertEqual(penalized.adjusted_score, 0.0)
+        self.assertEqual(penalized.reason, "watchlist_penalty_applied")
+
+        unchanged = evaluate_watchlist_score_adjustment(
+            symbol="XYZUSDT",
+            score=80,
+            watchlist_symbols={"ABCUSDT"},
+            penalty=10,
+        )
+        self.assertEqual(unchanged.adjusted_score, 80)
+        self.assertEqual(unchanged.reason, "score_unchanged")
+
+    def test_consecutive_loss_cooldown_gate(self):
+        now = datetime(2026, 6, 3, 4, 0, tzinfo=timezone.utc)
+        clear = evaluate_consecutive_loss_cooldown_gate(
+            consecutive_losses=4,
+            last_loss_time=now - timedelta(minutes=10),
+            now=now,
+            min_consecutive_losses=5,
+            cooldown_minutes=120,
+        )
+        self.assertTrue(clear.allowed)
+        self.assertEqual(clear.reason, "consecutive_loss_cooldown_clear")
+
+        active = evaluate_consecutive_loss_cooldown_gate(
+            consecutive_losses=5,
+            last_loss_time=now - timedelta(minutes=30),
+            now=now,
+            min_consecutive_losses=5,
+            cooldown_minutes=120,
+        )
+        self.assertFalse(active.allowed)
+        self.assertEqual(active.reason, "consecutive_loss_cooldown_active")
+        self.assertEqual(active.evidence["remaining_minutes"], 90)
+
+        expired = evaluate_consecutive_loss_cooldown_gate(
+            consecutive_losses=5,
+            last_loss_time=now - timedelta(minutes=121),
+            now=now,
+            min_consecutive_losses=5,
+            cooldown_minutes=120,
+        )
+        self.assertTrue(expired.allowed)
+        self.assertEqual(expired.reason, "consecutive_loss_cooldown_expired")
+
+    def test_symbol_cooldown_gate(self):
+        now = datetime(2026, 6, 3, 4, 0, tzinfo=timezone.utc)
+        self.assertTrue(evaluate_symbol_cooldown_gate(cooldown_until=None, now=now).allowed)
+        self.assertTrue(
+            evaluate_symbol_cooldown_gate(
+                cooldown_until=now - timedelta(minutes=1),
+                now=now,
+            ).allowed
+        )
+        active = evaluate_symbol_cooldown_gate(
+            cooldown_until=now + timedelta(minutes=17),
+            now=now,
+        )
+        self.assertFalse(active.allowed)
+        self.assertEqual(active.reason, "symbol_cooldown_active")
+        self.assertEqual(active.evidence["remaining_minutes"], 17)
 
 
 if __name__ == "__main__":

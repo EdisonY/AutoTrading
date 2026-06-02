@@ -2,6 +2,63 @@
 
 ## 2026-05-31 下一阶段目标：从调参系统升级为策略进化系统
 
+## 2026-06-02 当前长期任务 P 级执行队列（canonical）
+
+本节是后续自动推进的优先级来源。这里的 P 级是长期工程优先级，不是入口页 attention priority。旧阶段清单仍保留历史上下文；如冲突，以本节顺序为准。
+
+### Long-term P0 - 必须先完成
+
+1. **P0-A Binance API 根治**
+   - 目标：把余额/仓位读取从轮询迁到 user-data-stream 或集中账户状态服务；把 guard 从协作式文件锁升级为独立队列/集中限速；避免 IP 级 418/429 反复拖住账户快照和策略扫描。
+   - 已完成：signed/public guard、指数冷却、trade reserve、部分重复 `positionRisk` 合并、B/C `exchangeInfo` 迁出 signed REST。
+   - 未完成：user-data-stream/central account-state、跨操作 open/close confirmation 状态服务、public request 归因、独立 API 队列服务。
+   - 验收：30 分钟内 journal 无 418/429/-1003；账户快照可自然保持 fresh；策略服务遇到单点 ban 不继续延长 ban；入口页显示 cooldown/source/top paths。
+
+2. **P0-B Replay/live 同路径**
+   - 目标：A/B/C scanner 和 replay 使用同一套纯策略 gate/decision 函数，实盘只负责编排、下单、持久化。
+   - 已完成：`core.replay` 事件模型、观测型 `ReplayGateResult`、gate audit、OPEN_SKIPPED 归因覆盖。
+   - 未完成：A/B/C 纯 gate 抽取、scanner 接入纯 gate、同输入 replay/live 结论一致性测试。
+   - 验收：给定同一时间、币种、上下文，replay 与 live 入场/否决结论一致；关键 OPEN_SKIPPED/OPEN_FAILED 无未知 gate。
+
+### Long-term P1 - P0 稳住后并行推进
+
+1. **P1-A A/v11 trailing-pullback 质量决策**
+   - 当前问题：已批准 rollout 后进入 rollback-watch；需要决定继续、收窄或回滚。
+   - 验收：按 24h/72h/168h 窗口拆出亏损来源、top losers、出场原因、regime、强平/成本贡献，并形成可执行 decision packet；没有 operator-quality evidence 不自动回滚。
+
+2. **P1-B B/v16 full-live 候选质量决策**
+   - 当前问题：ATR stop bands 与 overheat cap 85 已 full-live，但 24h after-cost PnL 和 forced-close rate 承压。
+   - 验收：拆 hard-stop/forced-close/open-fail/high-vol regime 贡献，形成继续观察、收窄或准备回滚建议；没有成熟窗口和账户风险证据不自动回滚。
+
+3. **P1-C 完整 replay/fill 引擎**
+   - 目标：OPEN_SKIPPED 放行后的成交、持仓、出场、费用/滑点仿真统一到一个 replay/fill 引擎。
+   - 验收：每个实盘 OPEN_SKIPPED 能回答“若放行，按同一出场规则会怎样”。
+
+4. **P1-D 灰度/回滚门禁增强**
+   - 未完成：更细 regime、关闭确认失败归因、窗口 PF 阈值、paper fill/slippage simulation、自动 rollback plan。
+   - 验收：每个 P0/P1 策略候选必须包含改动、优势、风险、回滚路径；自动升级/回滚仍默认关闭，直到验收充分。
+
+5. **P1-E 长历史 K线/研究仓增强**
+   - 当前问题：已有近期 `klines/features`，但不是长历史 K线仓。
+   - 验收：30 天以上策略漏斗、replay feature、sentinel outcome 查询秒级可用，并不依赖 SQLite 长期膨胀。
+
+### Long-term P2 - P0/P1 闭环后推进
+
+1. **P2-A Sentinel 深化**
+   - 继续拆 `not_scanned`：未进 watchlist、scanner universe 不支持、cadence miss、mirror truncation，并接 full replay/fill outcome。
+
+2. **P2-B Recovery-position 策略**
+   - 补 takeover 后 MFE/MAE、反向信号退出、同策略是否会重新开仓、自动 recovery-exit 规则证据。
+
+3. **P2-C 已有候选继续观察**
+   - A/v11 replacement-quality guarded small-live；B/v16 confirm-soft-pass shadow；C/v14 受控扩样漏斗/PF。
+
+4. **P2-D 工程治理**
+   - GitHub CI 接入 `git_change_guard.py`；attention browser ack 链路复核；历史凭据轮换/清理。
+
+5. **P2-E 开源框架 PoC**
+   - NautilusTrader / Qlib / Freqtrade / vectorbt 只做小样本 PoC，除非 replay 准确率、查询速度或开发效率显著提升，否则不迁移主系统。
+
 ### 2026-06-01 N2 进展补充：Replay/live 门控审计
 
 - [x] 新增 `replay_gate_audit.py`：从 SQLite `events` 读取 live `SIGNAL/OPEN/OPEN_SKIPPED/OPEN_FAILED`，统一送入 `core.replay` 分类，输出 gate 覆盖率、未知 gate、按策略分布和主要 gate。

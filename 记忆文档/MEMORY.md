@@ -1,5 +1,8 @@
 # MEMORY.md - 长期记忆
 
+## 2026-06-02 长期任务 P 级执行队列
+- 用户明确要求按“长期任务 P 级”而不是入口页 attention P 级推进。已把当前 canonical 长期队列写入 `记忆文档/FUTURE_EXECUTION_PLAN.md`：P0-A Binance API 根治，P0-B replay/live 同路径；P1-A/B A/v11 与 B/v16 rollout 质量决策，P1-C 完整 replay/fill，P1-D 灰度/回滚门禁，P1-E 长历史研究仓；P2 sentinel/recovery/治理/PoC。后续自动推进按这个顺序，旧阶段清单只作历史上下文。
+
 ## 2026-06-02 API 限流复发与保守降压
 - 继续长期计划时先拉 live context：`2026-06-02T13:36:13+08:00` 显示六个 Tencent 核心服务 active，账户浮盈 `+59.3176`，`6` 仓，attention `P0=0/P1=0/P2=4`；随后部署 Phase 8 报告链并复拉，发现最新 attention 升为 `P0=1/P1=6/P2=4`。
 - P0 根因是 Binance `HTTP 418/-1003` IP ban，来源 `crypto-account-snapshot.service`，封禁到 `2026-06-02T14:11:54+08:00`，共享 guard 加 grace 后 cooldown 到 `14:16:54+08:00`；账户快照保持 `2026-06-02T12:28:03+08:00` 的最后有效快照。

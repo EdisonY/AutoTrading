@@ -2,6 +2,14 @@
 
 This is the durable reason-and-outcome ledger for every material design, code, configuration, deployment, rollback, optimization, or live operational change.
 
+## 2026-06-02 17:15 CST - Canonicalize long-term P-level queue
+- Trigger / reason: User clarified that "P-level tasks" means long-term engineering priorities, not the portal/system attention priority, and requested memory updates plus a persistent goal to advance them in order until all goals are complete.
+- Completed: Added a canonical long-term P0/P1/P2 execution queue to `记忆文档/FUTURE_EXECUTION_PLAN.md`. Updated `PROJECT_STATE.md` to point future agents to that queue and clarify that older unchecked phase tasks are historical context unless still listed there. Updated `记忆文档/MEMORY.md` with the durable decision and created an active Codex goal for ordered execution.
+- Not completed / remaining: This is prioritization/memory work only. Actual engineering execution continues next in order: P0-A Binance API root fix, then P0-B replay/live same path, then P1 rollback-quality/replay/fill/gate/history tasks, then P2 items.
+- Verification: Documentation update pending local guard/commit.
+- Live impact / deployment: None. No live service, strategy threshold, sizing, leverage, stop, cadence, order behavior, automatic upgrade, or automatic rollback changed.
+- Files / release / commit: `记忆文档/FUTURE_EXECUTION_PLAN.md`, `PROJECT_STATE.md`, `记忆文档/MEMORY.md`, `CHANGELOG.md`.
+
 ## 2026-06-02 16:55 CST - Move B/C exchangeInfo off signed REST
 - Trigger / reason: Binance/Testnet returned another IP-level `418/-1003` after the 16:44 cooldown expired, even though the local signed guard had only four recent requests. While the new cooldown must not be forced, B/v16 and C/v14 still had `exchangeInfo` running through signed REST, needlessly occupying account API pressure.
 - Completed: Changed B/v16 and C/v14 Binance clients so `/fapi/v1/exchangeInfo` uses the shared public REST guard (`wait_before_public_request` / `record_public_response`) and the existing 60-second exchange-info cache. `get_exchange_info()` now returns that cached public result instead of sending a signed request.

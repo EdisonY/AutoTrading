@@ -33,6 +33,12 @@ class BinanceUserStreamServiceTest(unittest.TestCase):
                 {"account": "A", "strategy": "A/v11", "wallet_usdt": 1000, "positions": []}
             ])
             payload["accounts"][0]["ts"] = "2000-01-01T00:00:00+00:00"
+            payload["accounts"][0]["stale"] = True
+            payload["accounts"][0]["snapshot_error"] = "old snapshot stale"
+            payload["summary"]["fresh_accounts"] = 0
+            payload["summary"]["stale_accounts"] = ["A"]
+            payload["summary"]["partial_error_count"] = 1
+            payload["errors"] = ["old snapshot stale"]
             write_account_state(root, payload)
 
             self.assertFalse(load_central_account_state(root, "A/v11", max_age_seconds=60, allow_legacy=False))
@@ -40,6 +46,10 @@ class BinanceUserStreamServiceTest(unittest.TestCase):
             self.assertTrue(touched)
             state = load_central_account_state(root, "A/v11", max_age_seconds=60, allow_legacy=False)
             self.assertIsNotNone(state)
+            refreshed = json.loads((root / "runtime" / "account_state_latest.json").read_text(encoding="utf-8"))
+            self.assertEqual(refreshed["summary"]["fresh_accounts"], 1)
+            self.assertEqual(refreshed["summary"]["stale_accounts"], [])
+            self.assertEqual(refreshed["summary"]["partial_error_count"], 0)
 
 
 if __name__ == "__main__":

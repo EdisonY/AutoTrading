@@ -28,7 +28,7 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "部署工具"))
 
 from account_state_service import apply_stream_events_once
-from core.account_state import read_account_state_payload, utc_now_iso, write_account_state
+from core.account_state import build_account_state_payload, read_account_state_payload, utc_now_iso, write_account_state
 from core.binance_api_queue import BinanceApiQueue
 from core.binance_user_stream import refresh_listen_key_via_queue
 from core.binance_user_stream_runtime import process_stream_messages, user_stream_url
@@ -83,8 +83,16 @@ def touch_account_state_row(*, root: str | Path, strategy: str) -> str:
         changed = True
     if not changed:
         return ""
-    payload["generated_at"] = now
-    return str(write_account_state(root, payload))
+    rows = [row for row in payload.get("accounts") or [] if isinstance(row, dict)]
+    errors = [str(row.get("snapshot_error") or "") for row in rows if row.get("snapshot_error")]
+    rebuilt = build_account_state_payload(
+        rows,
+        status="ok" if not errors else "partial",
+        source=str(payload.get("source") or "user_stream_idle_touch"),
+        errors=errors,
+    )
+    rebuilt["generated_at"] = now
+    return str(write_account_state(root, rebuilt))
 
 
 def run_websocket(*, root: str | Path, account: str, strategy: str, listen_key: str, apply_state: bool, ws_base: str, once: bool) -> int:

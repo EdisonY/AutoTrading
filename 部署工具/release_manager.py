@@ -172,6 +172,7 @@ TENCENT_COMPONENTS: dict[str, dict[str, Any]] = {
             file_pair("交易客户端/binance_client_v3.py", "binance_client_v3.py"),
         ],
         "services": ["crypto-account-snapshot.service"],
+        "post": ['{python} -c "import account_snapshot_service; print(\'account_snapshot_service import ok\')"'],
     },
     "research": {
         "files": RESEARCH_CORE

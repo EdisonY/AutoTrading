@@ -2316,6 +2316,17 @@ def render_html(out_dir: Path) -> str:
 """.strip()
         for row in (sentinel_coverage.get("missed_examples") or [])[:10]
     ) or '<tr><td colspan="5">暂无未覆盖大行情样例</td></tr>'
+    sentinel_attribution_rows = "".join(
+        f"""
+<tr>
+  <td>{h(row.get('label') or row.get('bucket'))}</td>
+  <td>{int(row.get('count') or 0)}</td>
+  <td>{float(row.get('pct') or 0):.2f}%</td>
+  <td>{h(', '.join(str(ex.get('symbol') or '') for ex in (row.get('examples') or [])[:4]))}</td>
+</tr>
+""".strip()
+        for row in ((sentinel_coverage.get("attribution") or {}).get("buckets") or [])[:8]
+    ) or '<tr><td colspan="4">暂无大行情归因审计</td></tr>'
 
     counterfactual = data.get("counterfactual") or {}
     cf_overall = counterfactual.get("overall") or {}
@@ -2835,6 +2846,10 @@ th {{ background:#f1f5f9; color:#334155; }}
     <table class="subtable">
       <thead><tr><th>未覆盖样例</th><th>涨跌幅</th><th>加速度</th><th>成交额</th><th>时间</th></tr></thead>
       <tbody>{sentinel_missed_rows}</tbody>
+    </table>
+    <table class="subtable">
+      <thead><tr><th>大行情归因</th><th>数量</th><th>占比</th><th>样例</th></tr></thead>
+      <tbody>{sentinel_attribution_rows}</tbody>
     </table>
   </section>
 

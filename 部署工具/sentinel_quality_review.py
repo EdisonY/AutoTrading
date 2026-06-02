@@ -36,6 +36,7 @@ FORWARD_HORIZONS_MIN = (15, 30, 60, 120)
 FORWARD_TOLERANCE_MIN = 20
 BIG_MOVE_ABS_PCT = 8.0
 BUS_COVERAGE_WINDOW_MIN = 30
+BUS_SCAN_LOOKBACK_MIN = 5
 
 
 def parse_dt(value: str | None) -> datetime | None:
@@ -141,6 +142,8 @@ def load_sentinel_scanned(con: sqlite3.Connection, days: int = 7) -> list[dict[s
                         "reason": row[5] or "",
                         "last_price": safe_float(payload.get("sentinel_last_price") or payload.get("last_price")),
                         "rank": payload.get("sentinel_rank") or payload.get("rank"),
+                        "side": payload.get("side", ""),
+                        "score": safe_float(payload.get("score")),
                     }
                 )
             return out
@@ -170,6 +173,10 @@ def load_sentinel_scanned(con: sqlite3.Connection, days: int = 7) -> list[dict[s
             "decision_stage": payload.get("decision_stage", ""),
             "filter_layer": payload.get("filter_layer", ""),
             "reason": payload.get("reason", ""),
+            "last_price": safe_float(payload.get("sentinel_last_price") or payload.get("last_price")),
+            "rank": payload.get("sentinel_rank") or payload.get("rank"),
+            "side": payload.get("side", ""),
+            "score": safe_float(payload.get("score")),
         })
     return events
 
@@ -384,43 +391,165 @@ def compute_forward_returns(scanned: list[dict[str, Any]]) -> dict[str, Any]:
     return {"by_horizon": by_horizon, "by_reason": by_reason, "examples": examples}
 
 
-def compute_bus_coverage(signals: list[dict[str, Any]], scanned: list[dict[str, Any]]) -> dict[str, Any]:
-    scan_by_symbol: dict[str, list[datetime]] = {}
+def attribution_bucket(row: dict[str, Any] | None) -> str:
+    if not row:
+        return "not_scanned"
+    result = str(row.get("sentinel_scan_result") or row.get("scan_result") or "").lower()
+    stage = str(row.get("decision_stage") or "").lower()
+    layer = str(row.get("filter_layer") or "").lower()
+    reason = str(row.get("reason") or "").lower()
+    if result in ("opened", "open") or stage == "open":
+        return "opened"
+    if "error" in result or "error" in reason or "400" in reason:
+        return "analysis_or_data_error"
+    if result in ("no_signal", "signal_not_found"):
+        return "scanned_no_signal"
+    if "pre_filter" in result or stage == "pre_filter":
+        return "pre_filter_rejected"
+    if layer == "market_data" or "market" in stage:
+        return "market_data_rejected"
+    if layer == "confirmation" or "confirmation" in stage:
+        return "confirmation_rejected"
+    if layer == "execution" or "execution" in stage or "tradability" in stage:
+        return "execution_rejected"
+    if layer == "risk" or "risk" in stage or "cooldown" in stage or "position" in stage or "capital" in stage:
+        return "risk_rejected"
+    if layer == "strategy" or "score" in stage or "threshold" in stage or "strategy" in stage:
+        return "strategy_rejected"
+    return "scanned_other"
+
+
+def attribution_label(bucket: str) -> str:
+    labels = {
+        "not_scanned": "未进入策略扫描",
+        "opened": "已开仓",
+        "scanned_no_signal": "已扫描但无信号",
+        "strategy_rejected": "策略拒绝",
+        "risk_rejected": "风控/冷却/仓位拒绝",
+        "confirmation_rejected": "确认层拒绝",
+        "execution_rejected": "执行/交易所规则拒绝",
+        "market_data_rejected": "行情数据拒绝",
+        "pre_filter_rejected": "预过滤拒绝",
+        "analysis_or_data_error": "分析/数据错误",
+        "scanned_other": "已扫描但未归类",
+    }
+    return labels.get(bucket, bucket)
+
+
+def build_scan_index(scanned: list[dict[str, Any]]) -> dict[str, list[tuple[datetime, dict[str, Any]]]]:
+    scan_by_symbol: dict[str, list[tuple[datetime, dict[str, Any]]]] = {}
     for row in scanned:
         symbol = str(row.get("symbol") or "")
         ts = parse_dt(row.get("ts"))
         if symbol and ts:
-            scan_by_symbol.setdefault(symbol, []).append(ts)
+            scan_by_symbol.setdefault(symbol, []).append((ts, row))
     for rows in scan_by_symbol.values():
-        rows.sort()
+        rows.sort(key=lambda item: item[0])
+    return scan_by_symbol
+
+
+def find_matching_scans(
+    row: dict[str, Any],
+    scan_by_symbol: dict[str, list[tuple[datetime, dict[str, Any]]]],
+) -> list[dict[str, Any]]:
+    symbol = str(row.get("symbol") or "")
+    ts = parse_dt(row.get("ts"))
+    scans = scan_by_symbol.get(symbol) or []
+    if not ts or not scans:
+        return []
+    times = [item[0] for item in scans]
+    idx = bisect.bisect_left(times, ts - timedelta(minutes=BUS_SCAN_LOOKBACK_MIN))
+    matches: list[dict[str, Any]] = []
+    while idx < len(scans) and scans[idx][0] <= ts + timedelta(minutes=BUS_COVERAGE_WINDOW_MIN):
+        matches.append(scans[idx][1])
+        idx += 1
+    return matches
+
+
+def choose_representative_scan(matches: list[dict[str, Any]]) -> dict[str, Any] | None:
+    if not matches:
+        return None
+    priority = {
+        "opened": 0,
+        "execution_rejected": 1,
+        "risk_rejected": 2,
+        "confirmation_rejected": 3,
+        "strategy_rejected": 4,
+        "market_data_rejected": 5,
+        "pre_filter_rejected": 6,
+        "analysis_or_data_error": 7,
+        "scanned_no_signal": 8,
+        "scanned_other": 9,
+    }
+    return sorted(matches, key=lambda item: priority.get(attribution_bucket(item), 99))[0]
+
+
+def compute_bus_coverage(signals: list[dict[str, Any]], scanned: list[dict[str, Any]]) -> dict[str, Any]:
+    scan_by_symbol = build_scan_index(scanned)
 
     big_signals = [row for row in signals if safe_float(row.get("abs_change_pct")) >= BIG_MOVE_ABS_PCT]
     covered = 0
     missed: list[dict[str, Any]] = []
+    bucket_counts: dict[str, int] = {}
+    examples_by_bucket: dict[str, list[dict[str, Any]]] = {}
+    scan_results: dict[str, int] = {}
+    stages: dict[str, int] = {}
     for row in big_signals:
-        symbol = str(row.get("symbol") or "")
-        ts = parse_dt(row.get("ts"))
-        scans = scan_by_symbol.get(symbol) or []
-        hit = False
-        if ts:
-            idx = bisect.bisect_left(scans, ts - timedelta(minutes=5))
-            while idx < len(scans) and scans[idx] <= ts + timedelta(minutes=BUS_COVERAGE_WINDOW_MIN):
-                hit = True
-                break
-        if hit:
+        matches = find_matching_scans(row, scan_by_symbol)
+        representative = choose_representative_scan(matches)
+        bucket = attribution_bucket(representative)
+        bucket_counts[bucket] = bucket_counts.get(bucket, 0) + 1
+        if representative:
             covered += 1
-        elif len(missed) < 15:
-            missed.append(
+            scan_result = str(representative.get("sentinel_scan_result") or "unknown")
+            stage = str(representative.get("decision_stage") or "unknown")
+            scan_results[scan_result] = scan_results.get(scan_result, 0) + 1
+            stages[stage] = stages.get(stage, 0) + 1
+        example = {
+            "symbol": str(row.get("symbol") or ""),
+            "ts": row.get("ts"),
+            "reason": row.get("reason"),
+            "change_pct": round(safe_float(row.get("change_pct")), 4),
+            "velocity_pct": round(safe_float(row.get("velocity_pct")), 4),
+            "quote_volume": round(safe_float(row.get("quote_volume")), 2),
+            "attribution": bucket,
+            "attribution_label": attribution_label(bucket),
+        }
+        if representative:
+            example.update(
                 {
-                    "symbol": symbol,
-                    "ts": row.get("ts"),
-                    "reason": row.get("reason"),
-                    "change_pct": round(safe_float(row.get("change_pct")), 4),
-                    "velocity_pct": round(safe_float(row.get("velocity_pct")), 4),
-                    "quote_volume": round(safe_float(row.get("quote_volume")), 2),
+                    "strategy": representative.get("strategy"),
+                    "scan_ts": representative.get("ts"),
+                    "scan_result": representative.get("sentinel_scan_result"),
+                    "decision_stage": representative.get("decision_stage"),
+                    "filter_layer": representative.get("filter_layer"),
+                    "scan_reason": representative.get("reason"),
+                    "score": representative.get("score"),
+                    "side": representative.get("side"),
                 }
             )
+        examples_by_bucket.setdefault(bucket, [])
+        if len(examples_by_bucket[bucket]) < 5:
+            examples_by_bucket[bucket].append(example)
+        if bucket == "not_scanned" and len(missed) < 15:
+            missed.append(example)
     total = len(big_signals)
+    attribution = {
+        "window_minutes": BUS_COVERAGE_WINDOW_MIN,
+        "scan_lookback_minutes": BUS_SCAN_LOOKBACK_MIN,
+        "buckets": [
+            {
+                "bucket": key,
+                "label": attribution_label(key),
+                "count": count,
+                "pct": round(count / max(total, 1) * 100.0, 2),
+                "examples": examples_by_bucket.get(key, []),
+            }
+            for key, count in sorted(bucket_counts.items(), key=lambda item: item[1], reverse=True)
+        ],
+        "scan_results": dict(sorted(scan_results.items(), key=lambda item: item[1], reverse=True)),
+        "decision_stages": dict(sorted(stages.items(), key=lambda item: item[1], reverse=True)),
+    }
     return {
         "bus_signals": len(signals),
         "big_move_threshold_abs_pct": BIG_MOVE_ABS_PCT,
@@ -428,6 +557,7 @@ def compute_bus_coverage(signals: list[dict[str, Any]], scanned: list[dict[str, 
         "covered_big_move_signals": covered,
         "coverage_pct": round(covered / max(total, 1) * 100.0, 2),
         "missed_examples": missed,
+        "attribution": attribution,
     }
 
 
@@ -541,6 +671,22 @@ def write_markdown(output: dict, path: Path) -> None:
             f"| {row.get('symbol')} | {float(row.get('change_pct') or 0):+.2f}% | "
             f"{float(row.get('velocity_pct') or 0):+.2f}% | {float(row.get('quote_volume') or 0):.0f} | {str(row.get('ts') or '')[:16]} |"
         )
+    attribution = coverage.get("attribution") or {}
+    lines.extend(["", "## 大行情归因首版", ""])
+    lines.append("归因按大行情触发后 5 分钟前到 30 分钟后是否进入策略扫描，以及扫描结果的 stage/layer 粗分；仍需后续接完整 replay/fill。")
+    lines.append("")
+    lines.append("| 归因 | 数量 | 占比 | 样例 |")
+    lines.append("|------|-----:|-----:|------|")
+    for bucket in attribution.get("buckets") or []:
+        examples = ", ".join(str(row.get("symbol") or "") for row in (bucket.get("examples") or [])[:4])
+        lines.append(
+            f"| {bucket.get('label') or bucket.get('bucket')} | {int(bucket.get('count') or 0)} | "
+            f"{float(bucket.get('pct') or 0):.2f}% | {examples} |"
+        )
+    if attribution.get("scan_results"):
+        top_results = "；".join(f"{k}: {v}" for k, v in list(attribution.get("scan_results", {}).items())[:8])
+        lines.append("")
+        lines.append(f"- 已扫描大行情 scan_result 分布: {top_results}")
 
     lines.append("")
     path.write_text("\n".join(lines), encoding="utf-8")
@@ -605,6 +751,11 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  {reason}: total={rs['total']} opened={rs['opened']} skipped={rs['skipped']}")
         coverage = output.get("coverage") or {}
         print(f"Coverage: {coverage.get('coverage_pct')}% ({coverage.get('covered_big_move_signals')}/{coverage.get('big_move_signals')})")
+        attribution = (coverage.get("attribution") or {}).get("buckets") or []
+        if attribution:
+            print("Attribution:")
+            for row in attribution[:5]:
+                print(f"  {row.get('bucket')}: {row.get('count')} ({row.get('pct')}%)")
 
         return 0
     finally:

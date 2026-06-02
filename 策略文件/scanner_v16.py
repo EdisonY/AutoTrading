@@ -37,6 +37,7 @@ from core.binance_api_guard import record_public_response, wait_before_public_re
 from core.position_utils import infer_position_side, leveraged_loss_pct
 from core.sentinel_scanner import fields_from_context, filter_context_by_available, merge_symbols_with_context
 from core.risk_engine import RiskEngine, RiskLimits
+from core.strategy_gates import evaluate_b_v16_confirmation_gate, evaluate_b_v16_entry_threshold
 from core.strategy_engine import StrategyEngine
 
 def console_log_level() -> int:
@@ -864,18 +865,24 @@ class ScannerV16:
         return True
 
     def _passes_entry_threshold(self, tf, side, score, sym=None, open_positions=None, confirm_reason=""):
-        threshold = SCORE_THRESHOLDS.get(tf, SCORE_MIN)
-        if side == "short" and sym not in MAJOR_SYMBOLS:
-            threshold += SHORT_ENTRY_PENALTY
-        if open_positions is not None and open_positions <= 3:
-            threshold -= LOW_POSITION_THRESHOLD_DISCOUNT
-        if "15m无信号" in confirm_reason:
-            threshold += NO_CONFIRM_THRESHOLD_PENALTY
-        elif "15m轻微相反" in confirm_reason:
-            threshold += WEAK_OPPOSITE_CONFIRM_PENALTY
-        elif "+8" in confirm_reason or "+5" in confirm_reason:
-            score += CONFIRM_STRONG_BONUS if "+8" in confirm_reason else CONFIRM_BONUS
-        return score >= threshold
+        decision = evaluate_b_v16_entry_threshold(
+            timeframe=tf,
+            side=side,
+            score=score,
+            symbol=sym,
+            open_positions=open_positions,
+            confirm_reason=confirm_reason,
+            score_thresholds=SCORE_THRESHOLDS,
+            score_min=SCORE_MIN,
+            short_entry_penalty=SHORT_ENTRY_PENALTY,
+            major_symbols=MAJOR_SYMBOLS,
+            low_position_threshold_discount=LOW_POSITION_THRESHOLD_DISCOUNT,
+            no_confirm_threshold_penalty=NO_CONFIRM_THRESHOLD_PENALTY,
+            weak_opposite_confirm_penalty=WEAK_OPPOSITE_CONFIRM_PENALTY,
+            confirm_bonus=CONFIRM_BONUS,
+            confirm_strong_bonus=CONFIRM_STRONG_BONUS,
+        )
+        return decision.allowed
 
     def _passes_small_live_stage_guard(self, sym, tf, sig, side, score):
         """Small-live approval for HYP-2026-05-22-B-v16-reverse_trade-stage-guard."""
@@ -905,23 +912,21 @@ class ScannerV16:
 
     def _passes_15m_confirmation(self, sym, side, raw_score, open_positions):
         sig = self.strategy_engine.analyze(sym, CONFIRM_TIMEFRAME)
-        if not sig:
-            if raw_score >= NO_CONFIRM_HIGH_SCORE_PASS:
-                return True, "15m无信号但高分放行"
-            return False, "15m无确认信号"
-        confirm_score = abs(sig["net_score"])
-        if sig["trade_side"] != side:
-            if confirm_score >= CONFIRM_OPPOSITE_REJECT_SCORE:
-                return False, f"15m方向强烈相反:{sig['trade_side']} {confirm_score}"
-            if raw_score >= OPPOSITE_HIGH_SCORE_PASS and open_positions < MAX_ACTIVE_NEW_POSITIONS:
-                return True, f"15m轻微相反但高分放行:{confirm_score}"
-            return False, f"15m方向相反:{sig['trade_side']}"
-        if confirm_score < CONFIRM_MIN_SCORE:
-            if raw_score >= WEAK_CONFIRM_PASS_SCORE:
-                return True, f"15m弱确认放行:{confirm_score}"
-            return False, f"15m确认分不足:{confirm_score}"
-        bonus = CONFIRM_STRONG_BONUS if confirm_score >= 35 else CONFIRM_BONUS
-        return True, f"15m确认{confirm_score}+{bonus}"
+        decision = evaluate_b_v16_confirmation_gate(
+            side=side,
+            raw_score=raw_score,
+            confirm_signal=sig,
+            open_positions=open_positions,
+            max_active_new_positions=MAX_ACTIVE_NEW_POSITIONS,
+            no_confirm_high_score_pass=NO_CONFIRM_HIGH_SCORE_PASS,
+            confirm_opposite_reject_score=CONFIRM_OPPOSITE_REJECT_SCORE,
+            opposite_high_score_pass=OPPOSITE_HIGH_SCORE_PASS,
+            weak_confirm_pass_score=WEAK_CONFIRM_PASS_SCORE,
+            confirm_min_score=CONFIRM_MIN_SCORE,
+            confirm_bonus=CONFIRM_BONUS,
+            confirm_strong_bonus=CONFIRM_STRONG_BONUS,
+        )
+        return decision.allowed, decision.reason
 
     def scan(self):
         symbols = merge_sentinel_symbols(fetch_top_symbols(50))

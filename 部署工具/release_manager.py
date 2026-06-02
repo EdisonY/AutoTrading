@@ -90,6 +90,7 @@ CORE_FILES = [
     file_pair("core/sentinel_scanner.py"),
     file_pair("core/strategy_config.py"),
     file_pair("core/strategy_engine.py"),
+    file_pair("core/strategy_gates.py"),
     file_pair("cloud/__init__.py"),
     file_pair("cloud/analyzer/__init__.py"),
     file_pair("cloud/analyzer/auxiliary.py"),
@@ -105,6 +106,7 @@ RESEARCH_CORE = [
     file_pair("core/experiment.py"),
     file_pair("core/research_memory.py"),
     file_pair("core/paper_broker.py"),
+    file_pair("core/strategy_gates.py"),
 ]
 
 TENCENT_COMPONENTS: dict[str, dict[str, Any]] = {

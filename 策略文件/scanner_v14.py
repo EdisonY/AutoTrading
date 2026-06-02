@@ -78,8 +78,10 @@ from core.strategy_gates import (
     evaluate_same_side_position_gate,
     evaluate_score_max_gate,
     evaluate_sector_position_gate,
+    evaluate_symbol_blacklist_gate,
     evaluate_symbol_cooldown_gate,
     evaluate_symbol_stop_loss_gate,
+    evaluate_timeframe_position_gate,
 )
 from core.strategy_engine import StrategyEngine
 
@@ -1609,11 +1611,13 @@ class Scanner:
         for tf in TIMEFRAMES:
             tf_signals = []
             for sym in symbols:
-                if sym in ATR_ZERO_BLACKLIST:
+                blacklist_gate = evaluate_symbol_blacklist_gate(symbol=sym, blacklisted_symbols=ATR_ZERO_BLACKLIST, reason="ATR=0黑名单")
+                if not blacklist_gate.allowed:
                     log_sentinel_scan(sym, tf, "pre_filter_rejected", "ATR=0黑名单", decision_stage="pre_filter")
                     continue
                 # v14修复(2026-05-08): 双向持仓独立检查
-                if self._has_position_in_tf(tf, sym):
+                timeframe_position_gate = evaluate_timeframe_position_gate(has_timeframe_position=self._has_position_in_tf(tf, sym))
+                if not timeframe_position_gate.allowed:
                     log_sentinel_scan(sym, tf, "pre_filter_rejected", "本周期已有持仓", decision_stage="pre_filter")
                     continue
                 cd = self.cooldowns.get(tf, {}).get(sym)

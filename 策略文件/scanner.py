@@ -123,7 +123,9 @@ from core.strategy_gates import (
     evaluate_a_v11_releasable_position,
     evaluate_a_v11_replacement_signal,
     evaluate_no_same_symbol_position_gate,
+    evaluate_symbol_blacklist_gate,
     evaluate_symbol_cooldown_gate,
+    evaluate_timeframe_position_gate,
 )
 from core.strategy_engine import StrategyEngine
 
@@ -1643,11 +1645,13 @@ class Scanner:
             tf_signals = []
             for sym in symbols:
                 # ATR=0异常币种黑名单
-                if sym in ATR_ZERO_BLACKLIST:
+                blacklist_gate = evaluate_symbol_blacklist_gate(symbol=sym, blacklisted_symbols=ATR_ZERO_BLACKLIST, reason="ATR=0黑名单")
+                if not blacklist_gate.allowed:
                     log_sentinel_scan(sym, tf, "pre_filter_rejected", "ATR=0黑名单", decision_stage="pre_filter")
                     continue
                 # 已持仓的跳过
-                if self._has_position_in_tf(tf, sym):
+                timeframe_position_gate = evaluate_timeframe_position_gate(has_timeframe_position=self._has_position_in_tf(tf, sym))
+                if not timeframe_position_gate.allowed:
                     log_sentinel_scan(sym, tf, "pre_filter_rejected", "本周期已有持仓", decision_stage="pre_filter")
                     continue
                 if self.sl_counts.get(sym, 0) >= MAX_SL_PER_SYMBOL:

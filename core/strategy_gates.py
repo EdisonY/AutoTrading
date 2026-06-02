@@ -46,6 +46,16 @@ def evaluate_same_side_position_gate(
     return StrategyGateDecision(True, "position_gate", "no_same_side_position")
 
 
+def evaluate_timeframe_position_gate(
+    *,
+    has_timeframe_position: bool,
+) -> StrategyGateDecision:
+    """Evaluate whether this timeframe already holds the symbol."""
+    if has_timeframe_position:
+        return StrategyGateDecision(False, "position_gate", "timeframe_position_exists")
+    return StrategyGateDecision(True, "position_gate", "no_timeframe_position")
+
+
 def evaluate_account_state_available_gate(
     *,
     account_state_available: bool,
@@ -84,6 +94,25 @@ def evaluate_symbol_stop_loss_gate(
             evidence={"stop_loss_count": count, "max_stop_loss_per_symbol": limit},
         )
     return StrategyGateDecision(True, "cooldown", "symbol_stop_loss_allowed", evidence={"stop_loss_count": count})
+
+
+def evaluate_symbol_blacklist_gate(
+    *,
+    symbol: str,
+    blacklisted_symbols: Collection[str],
+    reason: str = "symbol_blacklisted",
+) -> StrategyGateDecision:
+    """Evaluate a shared symbol blacklist pre-filter."""
+    symbol_key = str(symbol or "").upper()
+    blacklist = {str(item or "").upper() for item in blacklisted_symbols}
+    if symbol_key in blacklist:
+        return StrategyGateDecision(
+            False,
+            "pre_filter",
+            str(reason),
+            evidence={"symbol": symbol_key},
+        )
+    return StrategyGateDecision(True, "pre_filter", "symbol_allowed", evidence={"symbol": symbol_key})
 
 
 def evaluate_sector_position_gate(
@@ -218,6 +247,22 @@ def evaluate_symbol_cooldown_gate(
         "symbol_cooldown_active",
         evidence={"cooldown_until": cooldown_until, "remaining_minutes": remaining_minutes},
     )
+
+
+def evaluate_symbol_scan_cooldown_gate(
+    *,
+    cooldown_ticks: int | float | None,
+) -> StrategyGateDecision:
+    """Evaluate a per-symbol scan-count cooldown gate."""
+    ticks = int(cooldown_ticks or 0)
+    if ticks > 0:
+        return StrategyGateDecision(
+            False,
+            "cooldown",
+            "symbol_scan_cooldown_active",
+            evidence={"cooldown_ticks": ticks},
+        )
+    return StrategyGateDecision(True, "cooldown", "symbol_scan_cooldown_clear", evidence={"cooldown_ticks": ticks})
 
 
 def evaluate_active_position_limit_gate(

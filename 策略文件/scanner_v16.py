@@ -46,7 +46,10 @@ from core.strategy_gates import (
     evaluate_b_v16_small_live_stage_guard,
     evaluate_no_same_symbol_position_gate,
     evaluate_score_max_gate,
+    evaluate_symbol_blacklist_gate,
+    evaluate_symbol_scan_cooldown_gate,
     evaluate_symbol_stop_loss_gate,
+    evaluate_timeframe_position_gate,
     evaluate_watchlist_score_adjustment,
 )
 from core.strategy_engine import StrategyEngine
@@ -962,10 +965,12 @@ class ScannerV16:
 
         for tf in ENTRY_TIMEFRAMES:
             for sym in symbols:
-                if sym in LOSS_BLACKLIST:
+                blacklist_gate = evaluate_symbol_blacklist_gate(symbol=sym, blacklisted_symbols=LOSS_BLACKLIST, reason="loss_blacklist")
+                if not blacklist_gate.allowed:
                     scan_stats["loss_blacklist"] += 1
                     continue
-                if self.has_position(tf, sym):
+                timeframe_position_gate = evaluate_timeframe_position_gate(has_timeframe_position=self.has_position(tf, sym))
+                if not timeframe_position_gate.allowed:
                     scan_stats["has_position"] += 1
                     continue
                 symbol_sl_gate = evaluate_symbol_stop_loss_gate(
@@ -976,7 +981,8 @@ class ScannerV16:
                     scan_stats["symbol_sl_cooldown"] += 1
                     continue
                 cd = self.cooldowns.get(tf, {}).get(sym, 0)
-                if cd > 0:
+                cooldown_gate = evaluate_symbol_scan_cooldown_gate(cooldown_ticks=cd)
+                if not cooldown_gate.allowed:
                     self.cooldowns[tf][sym] = cd - 1
                     scan_stats["cooldown"] += 1
                     continue

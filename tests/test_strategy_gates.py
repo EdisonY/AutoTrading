@@ -22,8 +22,11 @@ from core.strategy_gates import (
     evaluate_same_side_position_gate,
     evaluate_score_max_gate,
     evaluate_sector_position_gate,
+    evaluate_symbol_blacklist_gate,
     evaluate_symbol_cooldown_gate,
+    evaluate_symbol_scan_cooldown_gate,
     evaluate_symbol_stop_loss_gate,
+    evaluate_timeframe_position_gate,
     evaluate_watchlist_score_adjustment,
 )
 
@@ -326,6 +329,27 @@ class StrategyGateParityTest(unittest.TestCase):
         self.assertFalse(evaluate_same_side_position_gate(has_same_side_position=True).allowed)
         self.assertTrue(evaluate_same_side_position_gate(has_same_side_position=False).allowed)
 
+        self.assertFalse(evaluate_timeframe_position_gate(has_timeframe_position=True).allowed)
+        self.assertEqual(
+            evaluate_timeframe_position_gate(has_timeframe_position=True).reason,
+            "timeframe_position_exists",
+        )
+        self.assertTrue(evaluate_timeframe_position_gate(has_timeframe_position=False).allowed)
+
+    def test_symbol_blacklist_gate(self):
+        blocked = evaluate_symbol_blacklist_gate(
+            symbol="abcusdt",
+            blacklisted_symbols={"ABCUSDT"},
+            reason="ATR=0黑名单",
+        )
+        self.assertFalse(blocked.allowed)
+        self.assertEqual(blocked.reason, "ATR=0黑名单")
+        self.assertEqual(blocked.gate, "pre_filter")
+
+        allowed = evaluate_symbol_blacklist_gate(symbol="XYZUSDT", blacklisted_symbols={"ABCUSDT"})
+        self.assertTrue(allowed.allowed)
+        self.assertEqual(allowed.reason, "symbol_allowed")
+
     def test_risk_position_gates(self):
         sl_gate = evaluate_symbol_stop_loss_gate(stop_loss_count=2, max_stop_loss_per_symbol=2)
         self.assertFalse(sl_gate.allowed)
@@ -431,6 +455,14 @@ class StrategyGateParityTest(unittest.TestCase):
         self.assertFalse(active.allowed)
         self.assertEqual(active.reason, "symbol_cooldown_active")
         self.assertEqual(active.evidence["remaining_minutes"], 17)
+
+    def test_symbol_scan_cooldown_gate(self):
+        self.assertTrue(evaluate_symbol_scan_cooldown_gate(cooldown_ticks=0).allowed)
+        self.assertTrue(evaluate_symbol_scan_cooldown_gate(cooldown_ticks=None).allowed)
+        active = evaluate_symbol_scan_cooldown_gate(cooldown_ticks=3)
+        self.assertFalse(active.allowed)
+        self.assertEqual(active.reason, "symbol_scan_cooldown_active")
+        self.assertEqual(active.evidence["cooldown_ticks"], 3)
 
 
 if __name__ == "__main__":

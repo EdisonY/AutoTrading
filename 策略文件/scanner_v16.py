@@ -732,35 +732,39 @@ class ScannerV16:
 
     def _total_exchange_positions(self):
         try:
-            positions = self.client.get_positions()
-            return count_active_positions(positions)
+            cached_state = load_cached_account_state(PROJECT_ROOT, "B/v16")
+            if cached_state:
+                return count_active_positions(cached_state.positions)
         except Exception as e:
-            logger.debug(f"交易所持仓数检查失败: {e}")
-            return self._total_local_positions()
+            logger.debug(f"中心账户状态持仓数检查失败: {e}")
+        return self._total_local_positions()
 
     def _exchange_side_count(self, side):
         try:
-            positions = self.client.get_positions()
-            return count_side_positions(positions, side)
+            cached_state = load_cached_account_state(PROJECT_ROOT, "B/v16")
+            if cached_state:
+                return count_side_positions(cached_state.positions, side)
         except Exception as e:
-            logger.debug(f"交易所方向持仓数检查失败: {e}")
-            return sum(1 for tf_pos in self.positions.values() for pos in tf_pos.values() if pos.side == side)
+            logger.debug(f"中心账户状态方向持仓数检查失败: {e}")
+        return sum(1 for tf_pos in self.positions.values() for pos in tf_pos.values() if pos.side == side)
 
     def _exchange_symbol_position(self, symbol):
         """Return an existing exchange position for symbol, if any."""
         try:
-            return find_symbol_position(self.client.get_positions(), symbol)
+            cached_state = load_cached_account_state(PROJECT_ROOT, "B/v16")
+            if cached_state:
+                return find_symbol_position(cached_state.positions, symbol)
         except Exception as e:
-            logger.debug(f"交易所同币种持仓检查失败: {symbol} {e}")
+            logger.debug(f"中心账户状态同币种持仓检查失败: {symbol} {e}")
         return {}
 
     def _sync_exchange_positions(self):
         """把交易所现有持仓同步进本地内存，避免重启/恢复遗漏导致硬止损失效。"""
-        try:
-            raw_positions = self.client.get_positions()
-        except Exception as e:
-            logger.debug(f"交易所持仓同步失败: {e}")
+        cached_state = load_cached_account_state(PROJECT_ROOT, "B/v16")
+        if not cached_state:
+            logger.debug("中心账户状态不可用，跳过本轮交易所持仓同步")
             return
+        raw_positions = cached_state.positions
 
         for p in raw_positions:
             try:
@@ -807,15 +811,34 @@ class ScannerV16:
     def _can_open_new_position(self, risk_usdt, tf, sym, side, score):
         try:
             cached_state = load_cached_account_state(PROJECT_ROOT, "B/v16")
-            exchange_positions = cached_state.positions if cached_state else self.client.get_positions()
+            if not cached_state:
+                logger.info(f"  跳过[{tf}]: {sym} 中心账户状态不可用，暂停新开仓以避免 signed REST 压力")
+                log_event({
+                    "time": str(datetime.now(CST)), "event": "OPEN_SKIPPED",
+                    "symbol": sym, "side": side, "score": score, "timeframe": tf,
+                    "skip_reason": "中心账户状态不可用，暂停新开仓以避免 signed REST 压力",
+                    "risk_category": "account_state_unavailable",
+                    "decision_stage": "risk_gate",
+                    "filter_layer": "risk",
+                    **sentinel_fields(sym),
+                })
+                return False
+            exchange_positions = cached_state.positions
             total_positions = max(self._total_local_positions(), count_active_positions(exchange_positions))
             side_count = count_side_positions(exchange_positions, side)
         except Exception as e:
             logger.debug(f"开仓风控快照读取失败: {e}")
-            total_positions = self._total_local_positions()
-            side_count = sum(1 for tf_pos in self.positions.values() for pos in tf_pos.values() if pos.side == side)
-            cached_state = None
-        balance = cached_state.balance if cached_state else self.client.get_balance()
+            log_event({
+                "time": str(datetime.now(CST)), "event": "OPEN_SKIPPED",
+                "symbol": sym, "side": side, "score": score, "timeframe": tf,
+                "skip_reason": "中心账户状态读取失败，暂停新开仓以避免 signed REST 压力",
+                "risk_category": "account_state_unavailable",
+                "decision_stage": "risk_gate",
+                "filter_layer": "risk",
+                **sentinel_fields(sym),
+            })
+            return False
+        balance = cached_state.balance
         decision = self.risk_engine.check_entry(
             total_positions=total_positions,
             side_positions=side_count,
@@ -1248,11 +1271,11 @@ class ScannerV16:
 
     def _enforce_hard_stop_on_exchange(self):
         """交易所级硬顶兜底：即使本地状态丢失，也直接扫交易所持仓。"""
-        try:
-            raw_positions = self.client.get_positions()
-        except Exception as e:
-            logger.warning(f"交易所硬顶扫描失败: {e}")
+        cached_state = load_cached_account_state(PROJECT_ROOT, "B/v16")
+        if not cached_state:
+            logger.debug("中心账户状态不可用，跳过本轮交易所硬顶扫描")
             return
+        raw_positions = cached_state.positions
         for p in raw_positions:
             try:
                 amt = float(p.get("positionAmt", 0))

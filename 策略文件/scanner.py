@@ -111,7 +111,7 @@ from core.event_store import EventStoreWriter
 from core.market_watchlist import load_sentinel_context
 from core.market_data_cache import cached_available_symbols, cached_spike_symbols, cached_top_symbols
 from core.kline_cache import load_cached_klines, save_cached_klines
-from core.binance_api_guard import record_public_response, wait_before_public_request
+from core.binance_api_guard import current_cooldown_seconds, record_public_response, wait_before_public_request
 from core.sentinel_scanner import fields_from_context, filter_context_by_available, merge_symbols_with_context
 from core.risk_engine import RiskEngine, RiskLimits
 from core.strategy_engine import StrategyEngine
@@ -985,26 +985,30 @@ class Scanner:
 
     def _total_exchange_positions(self) -> int:
         try:
-            positions = self.client.get_positions()
-            return count_active_positions(positions)
+            cached_state = load_cached_account_state(PROJECT_ROOT, "A/v11")
+            if cached_state:
+                return count_active_positions(cached_state.positions)
         except Exception as e:
-            logger.debug(f"  交易所持仓数检查失败: {e}")
-            return self._total_local_positions()
+            logger.debug(f"  中心账户状态持仓数检查失败: {e}")
+        return self._total_local_positions()
 
     def _exchange_side_count(self, side: str) -> int:
         try:
-            positions = self.client.get_positions()
-            return count_side_positions(positions, side)
+            cached_state = load_cached_account_state(PROJECT_ROOT, "A/v11")
+            if cached_state:
+                return count_side_positions(cached_state.positions, side)
         except Exception as e:
-            logger.debug(f"  交易所方向持仓数检查失败: {e}")
-            return sum(1 for tf_pos in self.positions.values() for (_, sd) in tf_pos if sd == side)
+            logger.debug(f"  中心账户状态方向持仓数检查失败: {e}")
+        return sum(1 for tf_pos in self.positions.values() for (_, sd) in tf_pos if sd == side)
 
     def _exchange_symbol_position(self, symbol: str) -> dict:
         """Return an existing exchange position for symbol, if any."""
         try:
-            return find_symbol_position(self.client.get_positions(), symbol)
+            cached_state = load_cached_account_state(PROJECT_ROOT, "A/v11")
+            if cached_state:
+                return find_symbol_position(cached_state.positions, symbol)
         except Exception as e:
-            logger.debug(f"  交易所同币种持仓检查失败: {symbol} {e}")
+            logger.debug(f"  中心账户状态同币种持仓检查失败: {symbol} {e}")
         return {}
 
     def _account_balance_summary(self) -> tuple[float, float]:
@@ -1013,15 +1017,34 @@ class Scanner:
     def _can_open_new_position(self, risk_usdt: float, now_str: str, tf: str, sym: str, side: str, score: float) -> bool:
         try:
             cached_state = load_cached_account_state(PROJECT_ROOT, "A/v11")
-            exchange_positions = cached_state.positions if cached_state else self.client.get_positions()
+            if not cached_state:
+                logger.info(f"  ⏸️ [{tf}] {sym} 中心账户状态不可用，暂停新开仓以避免 signed REST 压力")
+                log_event({
+                    "time": now_str, "event": "OPEN_SKIPPED", "symbol": sym,
+                    "side": side, "score": score, "timeframe": tf,
+                    "skip_reason": "中心账户状态不可用，暂停新开仓以避免 signed REST 压力",
+                    "risk_category": "account_state_unavailable",
+                    "decision_stage": "risk_gate",
+                    "filter_layer": "risk",
+                    **sentinel_fields(sym),
+                })
+                return False
+            exchange_positions = cached_state.positions
             total_positions = max(self._total_local_positions(), count_active_positions(exchange_positions))
             side_count = count_side_positions(exchange_positions, side)
         except Exception as e:
             logger.debug(f"  开仓风控快照读取失败: {e}")
-            total_positions = self._total_local_positions()
-            side_count = sum(1 for tf_pos in self.positions.values() for (_, sd) in tf_pos if sd == side)
-            cached_state = None
-        balance = cached_state.balance if cached_state else self.client.get_balance()
+            log_event({
+                "time": now_str, "event": "OPEN_SKIPPED", "symbol": sym,
+                "side": side, "score": score, "timeframe": tf,
+                "skip_reason": "中心账户状态读取失败，暂停新开仓以避免 signed REST 压力",
+                "risk_category": "account_state_unavailable",
+                "decision_stage": "risk_gate",
+                "filter_layer": "risk",
+                **sentinel_fields(sym),
+            })
+            return False
+        balance = cached_state.balance
         decision = self.risk_engine.check_entry(
             total_positions=total_positions,
             side_positions=side_count,
@@ -1277,16 +1300,23 @@ class Scanner:
     def _sync_exchange_state(self):
         """启动时同步交易所账户状态：设置持仓模式，同步已有持仓到内存"""
         logger.info("同步交易所账户状态...")
+        cached_state = load_cached_account_state(PROJECT_ROOT, "A/v11")
+        if current_cooldown_seconds() > 0 and not cached_state:
+            logger.warning("  Binance guard 冷却中且中心账户状态不可用，跳过启动 REST 同步")
+            return
 
         # 1. 确认持仓模式为双向
-        config = self.client.get_account_config()
-        if config.get("dualSidePosition"):
-            logger.info("  持仓模式: 双向持仓 ✓")
+        if current_cooldown_seconds() <= 0:
+            config = self.client.get_account_config()
+            if config.get("dualSidePosition"):
+                logger.info("  持仓模式: 双向持仓 ✓")
+            else:
+                logger.warning(f"  获取账户配置失败: {config}")
         else:
-            logger.warning(f"  获取账户配置失败: {config}")
+            logger.info("  Binance guard 冷却中，跳过启动持仓模式 REST 检查")
 
         # 2. 查询现有持仓并同步到内存（重启后恢复）
-        positions = self.client.get_positions()
+        positions = cached_state.positions if cached_state else self.client.get_positions()
         if positions:
             logger.info(f"  现有持仓: {len(positions)} 个")
             for pos in positions:
@@ -1348,7 +1378,7 @@ class Scanner:
             logger.info("  当前无持仓 ✓")
 
         # 3. 查询余额（Binance /fapi/v2/account 返回dict，余额在assets列表中）
-        bal = self.client.get_balance()
+        bal = cached_state.balance if cached_state else self.client.get_balance()
         if isinstance(bal, dict):
             assets = bal.get("assets", [])
             for item in assets:
@@ -1360,7 +1390,11 @@ class Scanner:
     def _sync_exchange_positions(self, now_str: str, now_dt: datetime = None):
         """同步交易所实际持仓状态。如果止盈止损已自动触发，本地也同步平仓。"""
         # 收集交易所上实际存在的持仓
-        exchange_positions = self.client.get_positions()
+        cached_state = load_cached_account_state(PROJECT_ROOT, "A/v11")
+        if not cached_state:
+            logger.debug("  中心账户状态不可用，跳过本轮交易所持仓同步")
+            return
+        exchange_positions = cached_state.positions
         exchange_active = {}  # {(symbol, positionSide): pos_data}
         for p in exchange_positions:
             symbol = p.get("symbol", "")
@@ -1445,11 +1479,11 @@ class Scanner:
 
     def _enforce_hard_stop_on_exchange(self, now_str: str, now_dt: datetime = None):
         """交易所级硬顶兜底：直接扫描真实持仓，避免本地恢复遗漏导致超亏仓失管。"""
-        try:
-            exchange_positions = self.client.get_positions()
-        except Exception as e:
-            logger.warning(f"  交易所硬顶扫描失败: {e}")
+        cached_state = load_cached_account_state(PROJECT_ROOT, "A/v11")
+        if not cached_state:
+            logger.debug("  中心账户状态不可用，跳过本轮交易所硬顶扫描")
             return
+        exchange_positions = cached_state.positions
 
         for p in exchange_positions:
             try:
@@ -2582,12 +2616,9 @@ def main():
             heartbeat_counter += 1
             if heartbeat_counter % 10 == 0:
                 try:
-                    bal = scanner.client.get_balance()
-                    # Binance /fapi/v2/account 返回dict，余额在assets列表中
-                    if isinstance(bal, dict):
-                        usdt_bal = next((b for b in bal.get("assets", []) if b.get("asset") == "USDT"), {})
-                    elif isinstance(bal, list):
-                        usdt_bal = next((b for b in bal if b.get("asset") == "USDT"), {})
+                    cached_state = load_cached_account_state(PROJECT_ROOT, "A/v11")
+                    if cached_state:
+                        usdt_bal = cached_state.balance
                     else:
                         usdt_bal = {}
                     log_system({

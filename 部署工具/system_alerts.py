@@ -241,6 +241,7 @@ def read_binance_api_guard(now: datetime) -> dict[str, Any]:
     banned_until = datetime.fromtimestamp(banned_until_ms / 1000, CST) if banned_until_ms else None
     stats = payload.get("stats") if isinstance(payload.get("stats"), dict) else {}
     recent = payload.get("recent_requests") if isinstance(payload.get("recent_requests"), list) else []
+    recent_public = payload.get("recent_public_requests") if isinstance(payload.get("recent_public_requests"), list) else []
     recent_counts: dict[str, int] = {}
     priority_counts: dict[str, int] = {}
     for item in recent:
@@ -248,6 +249,10 @@ def read_binance_api_guard(now: datetime) -> dict[str, Any]:
         recent_counts[key] = recent_counts.get(key, 0) + 1
         priority = str(item.get("priority") or "normal")
         priority_counts[priority] = priority_counts.get(priority, 0) + 1
+    recent_public_counts: dict[str, int] = {}
+    for item in recent_public:
+        key = f"{item.get('label')}:{item.get('path')}"
+        recent_public_counts[key] = recent_public_counts.get(key, 0) + 1
     return {
         "updated_at_ms": payload.get("updated_at_ms"),
         "last_account": payload.get("last_account"),
@@ -271,6 +276,13 @@ def read_binance_api_guard(now: datetime) -> dict[str, Any]:
         "trade_priority_reserve_per_min": int(payload.get("trade_priority_reserve_per_min") or 0),
         "normal_priority_limit_per_min": int(payload.get("normal_priority_limit_per_min") or 0),
         "priority_counts_60s": priority_counts,
+        "public_rolling_count_60s": int(payload.get("public_rolling_count_60s") or len(recent_public)),
+        "public_max_requests_per_min": int(payload.get("public_max_requests_per_min") or 0),
+        "top_public_paths_60s": sorted(
+            ({"name": str(name), "count": int(count or 0)} for name, count in recent_public_counts.items()),
+            key=lambda item: item["count"],
+            reverse=True,
+        )[:6],
         "top_paths_60s": sorted(
             ({"name": str(name), "count": int(count or 0)} for name, count in recent_counts.items()),
             key=lambda item: item["count"],
@@ -515,12 +527,26 @@ def collect_alerts() -> dict[str, Any]:
         })
 
     if api_guard.get("in_cooldown"):
+        public_top = api_guard.get("top_public_paths_60s") if isinstance(api_guard.get("top_public_paths_60s"), list) else []
+        signed_top = api_guard.get("top_paths_60s") if isinstance(api_guard.get("top_paths_60s"), list) else []
+        public_note = ""
+        if public_top:
+            public_note = "；public 60s top " + "，".join(
+                f"{item.get('name')}:{item.get('count')}" for item in public_top[:3]
+            )
+        elif signed_top:
+            public_note = "；signed 60s top " + "，".join(
+                f"{item.get('name')}:{item.get('count')}" for item in signed_top[:3]
+            )
         alerts.append({
             "level": "warn",
             "title": "Binance API全局闸门冷却中",
             "body": (
-                f"全进程共享保护已暂停 signed REST 到 {api_guard.get('banned_until')}；"
-                f"最近 {api_guard.get('last_account') or '-'} {api_guard.get('last_method') or ''} {api_guard.get('last_path') or ''}"
+                f"全进程共享保护已暂停 Binance REST 到 {api_guard.get('banned_until')}；"
+                f"最近 {api_guard.get('last_error_account') or api_guard.get('last_account') or '-'} "
+                f"{api_guard.get('last_error_method') or api_guard.get('last_method') or ''} "
+                f"{api_guard.get('last_error_path') or api_guard.get('last_path') or ''}"
+                f"{public_note}"
             ),
         })
     elif api_guard.get("error"):

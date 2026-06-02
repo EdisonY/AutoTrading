@@ -37,6 +37,10 @@ def _ban_grace_ms() -> int:
     return max(0, int(os.environ.get("BINANCE_API_GUARD_BAN_GRACE_MS", str(10 * 60 * 1000))))
 
 
+def _rate_limit_fallback_ms() -> int:
+    return max(60_000, int(os.environ.get("BINANCE_API_GUARD_RATE_LIMIT_FALLBACK_MS", str(30 * 60 * 1000))))
+
+
 def _max_requests_per_minute() -> int:
     return max(1, int(os.environ.get("BINANCE_API_GUARD_MAX_REQUESTS_PER_MIN", "90")))
 
@@ -54,7 +58,7 @@ def _public_min_interval_ms() -> int:
 
 
 def _public_max_requests_per_minute() -> int:
-    return max(1, int(os.environ.get("BINANCE_PUBLIC_API_GUARD_MAX_REQUESTS_PER_MIN", "600")))
+    return max(1, int(os.environ.get("BINANCE_PUBLIC_API_GUARD_MAX_REQUESTS_PER_MIN", "120")))
 
 
 def current_cooldown_seconds(now_ms: int | None = None) -> float:
@@ -200,7 +204,7 @@ def record_response(account: str, method: str, path: str, status_code: int | str
     if match:
         banned_until_ms = int(match.group(1)) + _ban_grace_ms()
     elif status in {"418", "429"} or code in {"-1003"} or "too many requests" in lowered:
-        banned_until_ms = _now_ms() + max(_ban_grace_ms(), 15 * 60 * 1000)
+        banned_until_ms = _now_ms() + max(_ban_grace_ms(), _rate_limit_fallback_ms())
     with _locked():
         state = _load_state()
         now = _now_ms()

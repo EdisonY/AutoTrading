@@ -2,6 +2,14 @@
 
 This is the durable reason-and-outcome ledger for every material design, code, configuration, deployment, rollback, optimization, or live operational change.
 
+## 2026-06-02 14:32 CST - Extend API guard fallback cooldown
+- Trigger / reason: After public REST guard deployment and account reload, the next cooldown expiry still hit Binance/Testnet `429/-1003` from public B/v16 `/fapi/v1/klines` even though the local guard saw only a few recent public requests. This suggests IP-level residual cooldown or shared-IP noise, so repeated short retries are unsafe.
+- Completed: Reduced the public REST guard default from `600/min` to `120/min`. Added `BINANCE_API_GUARD_RATE_LIMIT_FALLBACK_MS`, default `30min`, for 418/429/-1003 responses that do not include an explicit `banned until` timestamp. Explicit `banned until` responses still use exchange time plus the configured grace.
+- Not completed / remaining: This still does not replace websocket/user-data-stream or a centralized queue/account-state service. It intentionally favors longer cooldown over fast snapshot recovery while Binance keeps returning IP-level rate limits.
+- Verification: Local `py_compile` passed for the guard, order rules, A/B/C scanners, sentinel, market-data service, and account snapshot service. Dry-runs passed for Tencent A/B/C strategy, sentinel, and account components. Deploys completed with active/running services; an intermediate A/v11 SFTP attempt dropped before uploading `scanner.py`, then the final A/v11 retry completed successfully.
+- Live impact / deployment: Deployed Tencent releases `20260602-144100-strategy-a-d930ad4`, `20260602-143631-strategy-b-d930ad4`, `20260602-143711-strategy-c-d930ad4`, `20260602-143749-sentinel-d930ad4`, and `20260602-143825-account-d930ad4`. Live impact is more conservative REST retry behavior only.
+- Files / release / commit: `core/binance_api_guard.py`, `CHANGELOG.md`, `PROJECT_STATE.md`, `记忆文档/MEMORY.md`, `记忆文档/FUTURE_EXECUTION_PLAN.md`.
+
 ## 2026-06-02 14:23 CST - Reload account snapshot after public-guard core deploy
 - Trigger / reason: After the public REST guard was deployed to strategy/sentinel bundles, `crypto-account-snapshot.service` had been running since the earlier signed-guard deployment and still had the old `core.binance_api_guard` module in memory. When the cooldown ended at `14:16 CST`, it imported updated `core.binance_order_rules.py`, which now imports `record_public_response`, and logged an import error from the stale in-memory guard module.
 - Completed: Re-ran Tencent `account` deployment so account snapshot reloads the updated shared core and Binance clients in one process. This was a process reload / consistency fix after the prior core update, not a new strategy or account logic change.

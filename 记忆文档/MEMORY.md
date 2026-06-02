@@ -7,6 +7,7 @@
 - 部署记录：第一轮 Tencent `strategy-a` `20260602-134420-strategy-a-c2a583c`、`strategy-b` `20260602-134522-strategy-b-c2a583c`、`strategy-c` `20260602-134607-strategy-c-c2a583c`、`account` `20260602-134646-account-c2a583c`。第二轮 public guard：`strategy-a` `20260602-135806-strategy-a-c2a583c`、`strategy-b` `20260602-135850-strategy-b-c2a583c`、`strategy-c` `20260602-135937-strategy-c-c2a583c`、`sentinel` `20260602-140038-sentinel-c2a583c`。账号服务 journal 显示 `status=cooldown sleep_seconds=1754`，没有继续打 Binance；`2026-06-02T14:01:50+08:00` live pull 六服务 active，但 P0 仍会等交易所冷却过后才能自然清。
 - 仍未完成：这不是 user-data-stream/集中账户状态服务；public guard 是第一层协作式限速，还需要后续 public request 归因、独立队列或集中 account-state。ban 窗口内不要手动强刷账户快照。
 - 14:16 CST 发现 account snapshot 进程仍持有旧 `core.binance_api_guard` 模块，遇到新版 `core.binance_order_rules` 导入 `record_public_response` 时短暂报 import error；已用 account release `20260602-142145-account-24bf5ab` 重启加载新 core，日志恢复为 `status=cooldown`。后续共享 core 变更后，account 也要在最后重启一次。
+- 14:30 CST cooldown 到期后，public B/v16 `/fapi/v1/klines` 又收到 Binance/Testnet `429/-1003`，但本地 public 60s 计数仅个位数；这更像 IP 级残余冷却或共享 IP 噪声。已把 public guard 默认降到 `120/min`，无明确 `banned until` 的 418/429 fallback cooldown 拉长到 `30min`，避免短间隔反复试探。
 
 ## 2026-06-02 Phase 8 门禁硬化审计首版
 - 继续长期计划，先拉 live context：`2026-06-02T12:33:20+08:00` 显示六个 Tencent 核心服务 active，账户浮盈 `-5.2403`，`6` 仓，attention `P0=0/P1=0/P2=2`。

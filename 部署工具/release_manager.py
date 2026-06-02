@@ -218,6 +218,8 @@ TENCENT_COMPONENTS: dict[str, dict[str, Any]] = {
         + [
             file_pair("部署工具/binance_user_stream_service.py", "binance_user_stream_service.py"),
             file_pair("部署工具/systemd/crypto-binance-user-stream.service", "systemd/crypto-binance-user-stream.service"),
+            file_pair("部署工具/systemd/crypto-binance-user-stream-v16.service", "systemd/crypto-binance-user-stream-v16.service"),
+            file_pair("部署工具/systemd/crypto-binance-user-stream-v14.service", "systemd/crypto-binance-user-stream-v14.service"),
         ],
         "services": [],
         "post": ['{python} -c "import binance_user_stream_service; print(\'binance_user_stream_service import ok\')"'],

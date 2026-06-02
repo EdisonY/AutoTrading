@@ -6,6 +6,7 @@
 - 已做保守 mitigation：`core.binance_api_guard` 默认 signed REST 降到 `90/min` 总量、`45/min` 单账户、`650ms` 最小间隔、`10min` ban grace，保留 `20/min` trade reserve；`account_snapshot_service.py` 先读共享 guard cooldown；A/B/C client 保留 500 字符 Binance 错误体，避免 ban 时间戳截断。随后又加入第一版 public REST guard，统一协调 scanner K线/ticker/depth/funding/aggTrades、sentinel ticker、market-data-cache ticker、order-rule public price check，public 418/429 也会写入同一个 cooldown。
 - 部署记录：第一轮 Tencent `strategy-a` `20260602-134420-strategy-a-c2a583c`、`strategy-b` `20260602-134522-strategy-b-c2a583c`、`strategy-c` `20260602-134607-strategy-c-c2a583c`、`account` `20260602-134646-account-c2a583c`。第二轮 public guard：`strategy-a` `20260602-135806-strategy-a-c2a583c`、`strategy-b` `20260602-135850-strategy-b-c2a583c`、`strategy-c` `20260602-135937-strategy-c-c2a583c`、`sentinel` `20260602-140038-sentinel-c2a583c`。账号服务 journal 显示 `status=cooldown sleep_seconds=1754`，没有继续打 Binance；`2026-06-02T14:01:50+08:00` live pull 六服务 active，但 P0 仍会等交易所冷却过后才能自然清。
 - 仍未完成：这不是 user-data-stream/集中账户状态服务；public guard 是第一层协作式限速，还需要后续 public request 归因、独立队列或集中 account-state。ban 窗口内不要手动强刷账户快照。
+- 14:16 CST 发现 account snapshot 进程仍持有旧 `core.binance_api_guard` 模块，遇到新版 `core.binance_order_rules` 导入 `record_public_response` 时短暂报 import error；已用 account release `20260602-142145-account-24bf5ab` 重启加载新 core，日志恢复为 `status=cooldown`。后续共享 core 变更后，account 也要在最后重启一次。
 
 ## 2026-06-02 Phase 8 门禁硬化审计首版
 - 继续长期计划，先拉 live context：`2026-06-02T12:33:20+08:00` 显示六个 Tencent 核心服务 active，账户浮盈 `-5.2403`，`6` 仓，attention `P0=0/P1=0/P2=2`。

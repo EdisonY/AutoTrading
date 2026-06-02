@@ -16,6 +16,25 @@ class StrategyGateDecision:
     evidence: dict[str, Any] | None = None
 
 
+def evaluate_no_same_symbol_position_gate(
+    *,
+    has_exchange_position: bool,
+    has_local_position: bool,
+) -> StrategyGateDecision:
+    """Evaluate the shared no-same-symbol-stacking gate."""
+    if has_exchange_position or has_local_position:
+        return StrategyGateDecision(
+            False,
+            "position_duplicate",
+            "same_symbol_position_exists",
+            evidence={
+                "has_exchange_position": bool(has_exchange_position),
+                "has_local_position": bool(has_local_position),
+            },
+        )
+    return StrategyGateDecision(True, "position_duplicate", "no_same_symbol_position")
+
+
 def evaluate_a_v11_entry_threshold(
     *,
     timeframe: str,

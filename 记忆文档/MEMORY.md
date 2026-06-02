@@ -247,6 +247,7 @@
 - 2026-06-02：16:44 cooldown 到期后又遇到 A/v11 `positionRisk` 的 `418/-1003`，guard 自动延到 `2026-06-02T17:26:54+08:00`。继续不强拉账户；已把 B/v16/C/v14 的 `exchangeInfo` 从 signed REST 改到 public REST guard，减少账户 API 压力，并部署 `20260602-165634-strategy-b-e038cae` / `20260602-165727-strategy-c-e038cae`。
 - 2026-06-02：继续 P0-B replay/live 同路径。`core.strategy_gates` 已新增 C/v14 15m confirmation gate 和 low-score tail guard，`scanner_v14.py` 改为调用 shared pure functions；本地等价烟测通过，腾讯 `strategy-c` release `20260602-195221-strategy-c-36ccdad` 部署成功。19:53 live pull 显示六服务 active、P0=0、guard cooldown=0、账户浮盈 `+89.5569`、6 仓。public rolling 仍为 `60/60`，后续继续观察 public REST，同时推进 A/v11 confirmation/replacement 与剩余 risk/position/execution gate 抽取。
 - 2026-06-02：继续 P0-B，又抽 A/v11 replacement-signal gate。`core.strategy_gates` 新增 resonance-adjusted effective score 与 strong-signal replacement eligibility，`scanner.py` 只委托 `_effective_signal_score()` / `_can_try_full_replacement()`；本地等价烟测通过。腾讯 `strategy-a` release `20260602-195744-strategy-a-d0a6561` 已落地，虽然本地 apply 命令外层超时，远端 release、service active、journal clean、20:02 live pull 均确认成功。
+- 2026-06-02：继续 P0-B，三策略 no-same-symbol position gate 已共享化。`evaluate_no_same_symbol_position_gate()` 只抽出“交易所或本地已有同币种持仓则拒绝”的布尔判断，A/B/C 原有 OPEN_SKIPPED 原因、字段和风险口径不变。已顺序部署 `20260602-200838-strategy-a-2524ded`、`20260602-201323-strategy-b-2524ded`、`20260602-201602-strategy-c-2524ded`；20:18 live pull 六服务 active，P0=0/P1=4/P2=2，guard cooldown=0。
 
 ---
 ## 2026-05-29 全局运行自检与账户方向口径修复

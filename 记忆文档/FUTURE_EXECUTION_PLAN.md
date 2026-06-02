@@ -16,8 +16,8 @@
 
 2. **P0-B Replay/live 同路径**
    - 目标：A/B/C scanner 和 replay 使用同一套纯策略 gate/decision 函数，实盘只负责编排、下单、持久化。
-   - 已完成：`core.replay` 事件模型、观测型 `ReplayGateResult`、gate audit、OPEN_SKIPPED 归因覆盖；A/v11、B/v16、C/v14 entry-threshold gates 已抽到 `core.strategy_gates` 并由 live scanner 调用；B/v16 15m confirmation gate、C/v14 15m confirmation gate、C/v14 low-score tail guard、A/v11 resonance-adjusted score 与 replacement-signal eligibility 也已抽到 shared pure function。
-   - 未完成：A/v11 releasable-position selection/confirmation/risk/position/execution gates、C/v14 position/risk/market-data/execution gates、B/v16 risk/position/execution gates 继续共享化，scanner 接入更多纯 gate，同输入 replay/live 结论一致性测试。
+   - 已完成：`core.replay` 事件模型、观测型 `ReplayGateResult`、gate audit、OPEN_SKIPPED 归因覆盖；A/v11、B/v16、C/v14 entry-threshold gates 已抽到 `core.strategy_gates` 并由 live scanner 调用；B/v16 15m confirmation gate、C/v14 15m confirmation gate、C/v14 low-score tail guard、A/v11 resonance-adjusted score 与 replacement-signal eligibility、A/B/C no-same-symbol position gate 也已抽到 shared pure function。
+   - 未完成：A/v11 releasable-position selection/confirmation/risk/execution gates、C/v14 market-data/risk/execution gates、B/v16 risk/position/execution gates 继续共享化，scanner 接入更多纯 gate，同输入 replay/live 结论一致性测试。
    - 验收：给定同一时间、币种、上下文，replay 与 live 入场/否决结论一致；关键 OPEN_SKIPPED/OPEN_FAILED 无未知 gate。
 
 ### Long-term P1 - P0 稳住后并行推进

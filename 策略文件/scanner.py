@@ -118,6 +118,7 @@ from core.strategy_gates import (
     effective_a_v11_signal_score,
     evaluate_a_v11_entry_threshold,
     evaluate_a_v11_replacement_signal,
+    evaluate_no_same_symbol_position_gate,
 )
 from core.strategy_engine import StrategyEngine
 
@@ -1963,7 +1964,11 @@ class Scanner:
             return
 
         existing_exchange_pos = self._exchange_symbol_position(inst_id)
-        if existing_exchange_pos or self._has_position(inst_id):
+        position_gate = evaluate_no_same_symbol_position_gate(
+            has_exchange_position=bool(existing_exchange_pos),
+            has_local_position=self._has_position(inst_id),
+        )
+        if not position_gate.allowed:
             existing_qty = float(existing_exchange_pos.get("positionAmt") or 0) if existing_exchange_pos else 0.0
             existing_side = str(existing_exchange_pos.get("positionSide") or "")
             existing_entry = float(existing_exchange_pos.get("entryPrice") or 0) if existing_exchange_pos else 0.0

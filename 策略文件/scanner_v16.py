@@ -37,7 +37,11 @@ from core.binance_api_guard import record_public_response, wait_before_public_re
 from core.position_utils import infer_position_side, leveraged_loss_pct
 from core.sentinel_scanner import fields_from_context, filter_context_by_available, merge_symbols_with_context
 from core.risk_engine import RiskEngine, RiskLimits
-from core.strategy_gates import evaluate_b_v16_confirmation_gate, evaluate_b_v16_entry_threshold
+from core.strategy_gates import (
+    evaluate_b_v16_confirmation_gate,
+    evaluate_b_v16_entry_threshold,
+    evaluate_no_same_symbol_position_gate,
+)
 from core.strategy_engine import StrategyEngine
 
 def console_log_level() -> int:
@@ -1057,7 +1061,11 @@ class ScannerV16:
 
         existing_exchange_pos = self._exchange_symbol_position(sym)
         local_holding = any(sym in tf_pos for tf_pos in self.positions.values())
-        if existing_exchange_pos or local_holding:
+        position_gate = evaluate_no_same_symbol_position_gate(
+            has_exchange_position=bool(existing_exchange_pos),
+            has_local_position=local_holding,
+        )
+        if not position_gate.allowed:
             existing_qty = float(existing_exchange_pos.get("positionAmt") or 0) if existing_exchange_pos else 0.0
             existing_side = infer_position_side(existing_exchange_pos)[0] if existing_exchange_pos else ""
             existing_entry = float(existing_exchange_pos.get("entryPrice") or 0) if existing_exchange_pos else 0.0

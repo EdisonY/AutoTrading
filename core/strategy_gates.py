@@ -545,6 +545,22 @@ def evaluate_c_v14_stale_entry_price_gate(
     return StrategyGateDecision(True, "market_data_guard", "entry_price_fresh", evidence={"recent_prices": window})
 
 
+def evaluate_c_v14_market_microstructure_gate(
+    *,
+    atr: float,
+) -> StrategyGateDecision:
+    """Evaluate C/v14 pre-open market-data sanity gates."""
+    atr_value = float(atr or 0)
+    if atr_value <= 0:
+        return StrategyGateDecision(
+            False,
+            "market_microstructure",
+            "ATR=0",
+            evidence={"atr": atr_value},
+        )
+    return StrategyGateDecision(True, "market_microstructure", "market_microstructure_ok", evidence={"atr": atr_value})
+
+
 def evaluate_b_v16_confirmation_gate(
     *,
     side: str,

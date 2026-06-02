@@ -68,6 +68,7 @@ from core.risk_engine import RiskEngine, RiskLimits
 from core.strategy_gates import (
     evaluate_c_v14_confirmation_gate,
     evaluate_c_v14_entry_threshold,
+    evaluate_c_v14_market_microstructure_gate,
     evaluate_c_v14_stale_entry_price_gate,
     evaluate_c_v14_tail_guard,
     evaluate_no_same_symbol_position_gate,
@@ -1875,12 +1876,13 @@ class Scanner:
             return
 
         # ATR保护
-        if atr <= 0:
+        market_gate = evaluate_c_v14_market_microstructure_gate(atr=atr)
+        if not market_gate.allowed:
             logger.warning(f"  ⚠️ {inst_id}({tf}) ATR=0，跳过")
             ATR_ZERO_BLACKLIST.add(inst_id)
             log_event({
                 "time": now_str, "event": "OPEN_SKIPPED", "symbol": inst_id,
-                "side": side, "price": price, "reason": "ATR=0", "timeframe": tf,
+                "side": side, "price": price, "reason": market_gate.reason, "timeframe": tf,
                 "decision_stage": "market_microstructure",
                 "filter_layer": "market_data",
                 **sentinel_fields(inst_id),

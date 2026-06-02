@@ -2,6 +2,14 @@
 
 This is the durable reason-and-outcome ledger for every material design, code, configuration, deployment, rollback, optimization, or live operational change.
 
+## 2026-06-02 22:15 CST - Extract C/v14 ATR market microstructure gate
+- Trigger / reason: Continue P0-B replay/live same-path work while waiting for the pre-existing Binance cooldown to expire. C/v14 still had an inline pre-open `ATR=0` market-data sanity check.
+- Completed: Added `evaluate_c_v14_market_microstructure_gate()` to `core/strategy_gates.py` and changed C/v14 scanner to use the shared pure gate before opening. The scanner still owns blacklist mutation, event logging, and orchestration; the rejection reason remains `ATR=0`.
+- Not completed / remaining: A/v11 replacement close/open orchestration/confirmation/risk/execution gates, C/v14 remaining risk/execution gates, B/v16 remaining position/execution gates, historical event-driven parity tests, user-data-stream/central account-state, and independent API queue remain open. Binance cooldown from the earlier `A/v11 /fapi/v2/balance` error remains until `22:30:59` and still needs natural verification.
+- Verification: `python -m unittest tests.test_strategy_gates` passed. Source compile-without-pycache passed for `core/strategy_gates.py`, C/v14 scanner, `tests/test_strategy_gates.py`, and `release_manager.py`; `git diff --check` passed. Tencent dry-run passed for `strategy-c`; deploy release `20260602-221943-strategy-c-1594290` completed with `Result=success`, `NRestarts=0`, `ActiveState=active`, `SubState=running`. Post-restart C/v14 journal since `22:19 CST` had no `418/429/-1003`, import, or syntax errors. Live context at `22:23 CST` showed six core services active, account upnl `+32.8852`, `4` positions, attention `P0=0/P1=4/P2=2`; guard still carries the pre-existing cooldown to `22:30:59`.
+- Live impact / deployment: Deployed Tencent C/v14. Intended live behavior is unchanged `ATR=0` rejection through a shared pure gate. No strategy threshold, sizing, leverage, stop formula, order behavior, automatic upgrade, or automatic rollback changed.
+- Files / release / commit: `core/strategy_gates.py`, `策略文件/scanner_v14.py`, `tests/test_strategy_gates.py`, `CHANGELOG.md`, `PROJECT_STATE.md`, `记忆文档/MEMORY.md`, `记忆文档/FUTURE_EXECUTION_PLAN.md`.
+
 ## 2026-06-02 22:04 CST - Extract A/v11 market microstructure gate
 - Trigger / reason: Continue P0-B replay/live same-path work while waiting for the pre-existing Binance cooldown to expire. A/v11 still had inline pre-open market-data sanity checks for `ATR=0` and invalid stop-loss direction.
 - Completed: Added `evaluate_a_v11_market_microstructure_gate()` to `core/strategy_gates.py` and changed A/v11 scanner to use the shared pure gate before opening. The scanner still owns blacklist mutation, event logging, and orchestration; rejection reasons and event stage/layer remain unchanged.

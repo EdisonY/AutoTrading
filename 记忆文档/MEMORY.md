@@ -257,6 +257,7 @@
 - 2026-06-02：21:30:59 cooldown 自然结束时，A/v11 `/fapi/v2/balance` 又触发 signed `429/-1003`，cooldown 延到 `22:30:59`。已继续修 P0-A：A/v11/C/v14 启动同步不再 fallback 到 signed account config/positions/balance，A/B/C scanner 余额摘要 helper 也不再 signed fallback。已部署 `20260602-213858-strategy-a-133ea61` / `20260602-214106-strategy-b-133ea61` / `20260602-214212-strategy-c-133ea61`；21:43 六服务 active，A/B/C journal 无新 API/import/syntax 错误。等待 22:30:59 后自然观察，勿强拉 Binance。
 - 2026-06-02：等待 P0-A cooldown 期间继续 P0-B。B/v16 small-live stage guard 已抽成 `evaluate_b_v16_small_live_stage_guard()`，scanner 只委托 shared pure gate；本地 `tests.test_strategy_gates` / py_compile / diff check 通过。腾讯 B/v16 release `20260602-215704-strategy-b-d9607f8` 部署成功；21:59 六服务 active，B/v16 journal 无新 API/import/syntax 错误，P0=0/P1=4/P2=2。
 - 2026-06-02：继续 P0-B。A/v11 ATR=0 与止损方向 market microstructure gate 已抽成 `evaluate_a_v11_market_microstructure_gate()`，scanner 保留黑名单和日志编排；本地 `tests.test_strategy_gates` / source compile / diff check 通过。腾讯 A/v11 release `20260602-220700-strategy-a-ea58015` 部署成功；22:09 六服务 active，A/v11 journal 无新 API/import/syntax 错误，P0=0/P1=4/P2=2。
+- 2026-06-02：继续 P0-B。C/v14 ATR=0 market microstructure gate 已抽成 `evaluate_c_v14_market_microstructure_gate()`，scanner 保留黑名单和日志编排；本地 `tests.test_strategy_gates` / source compile / diff check 通过。腾讯 C/v14 release `20260602-221943-strategy-c-1594290` 部署成功；22:23 六服务 active，C/v14 journal 无新 API/import/syntax 错误，P0=0/P1=4/P2=2。
 
 ---
 ## 2026-05-29 全局运行自检与账户方向口径修复

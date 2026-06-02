@@ -52,7 +52,7 @@ logger = logging.getLogger("market_mover_sentinel")
 
 def fetch_24h_tickers(timeout: int = 10) -> list[dict[str, Any]]:
     if api_queue_client_enabled():
-        queue_timeout = max(timeout + 5, int(float(os.environ.get("BINANCE_API_QUEUE_CLIENT_TIMEOUT_SEC", "60"))))
+        queue_timeout = max(timeout + 5, int(float(os.environ.get("BINANCE_API_QUEUE_CLIENT_TIMEOUT_SEC", "180"))))
         data = queued_api_request(
             scope="public",
             label="sentinel",

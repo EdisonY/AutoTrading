@@ -8,7 +8,7 @@ Type=simple
 User=ubuntu
 WorkingDirectory=/opt/crypto-auto-trader
 EnvironmentFile=-/etc/crypto-auto-trader/trading.env
-ExecStart=/opt/crypto-auto-trader/.venv/bin/python -u /opt/crypto-auto-trader/binance_api_queue_service.py --interval 15 --execute
+ExecStart=/opt/crypto-auto-trader/.venv/bin/python -u /opt/crypto-auto-trader/binance_api_queue_service.py --interval 60 --execute
 Restart=on-failure
 RestartSec=10
 

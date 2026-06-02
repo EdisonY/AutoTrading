@@ -64,7 +64,7 @@ def queued_api_request(
     poll_interval_sec: float | None = None,
 ) -> Any:
     queue = queue or BinanceApiQueue(default_queue_db_path())
-    timeout = float(timeout_sec if timeout_sec is not None else os.environ.get("BINANCE_API_QUEUE_CLIENT_TIMEOUT_SEC", "60"))
+    timeout = float(timeout_sec if timeout_sec is not None else os.environ.get("BINANCE_API_QUEUE_CLIENT_TIMEOUT_SEC", "180"))
     poll_interval = float(
         poll_interval_sec if poll_interval_sec is not None else os.environ.get("BINANCE_API_QUEUE_CLIENT_POLL_SEC", "0.2")
     )

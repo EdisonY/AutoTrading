@@ -408,7 +408,7 @@ def fetch_json(url: str, timeout: int = 10) -> dict:
     import urllib.request, urllib.error
     global _last_ban_until
     if api_queue_client_enabled():
-        queue_timeout = max(timeout + 5, int(float(os.environ.get("BINANCE_API_QUEUE_CLIENT_TIMEOUT_SEC", "60"))))
+        queue_timeout = max(timeout + 5, int(float(os.environ.get("BINANCE_API_QUEUE_CLIENT_TIMEOUT_SEC", "180"))))
         data = queued_api_request(scope="public", label="C/v14", method="GET", path=url, url=url, timeout_sec=queue_timeout)
         if isinstance(data, dict) and data.get("code") is not None and str(data.get("code")) != "200":
             raise RuntimeError(str(data.get("msg") or data))

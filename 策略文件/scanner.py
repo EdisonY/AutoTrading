@@ -119,6 +119,7 @@ from core.strategy_gates import (
     effective_a_v11_signal_score,
     evaluate_account_state_available_gate,
     evaluate_a_v11_entry_threshold,
+    evaluate_a_v11_margin_sizing_gate,
     evaluate_a_v11_market_microstructure_gate,
     evaluate_a_v11_releasable_position,
     evaluate_a_v11_replacement_signal,
@@ -2037,10 +2038,15 @@ class Scanner:
             if hasattr(self.client, "get_symbol_rules"):
                 rules = self.client.get_symbol_rules(inst_id)
                 min_notional_floor = float(getattr(rules, "min_notional", 0.0) or 0.0) if rules else 0.0
-            min_margin_usdt = risk_usdt * (1 - ORDER_MARGIN_TOLERANCE_PCT)
-            max_margin_usdt = risk_usdt * (1 + ORDER_MARGIN_TOLERANCE_PCT)
-            min_notional_adjustment = min_notional_floor > risk_usdt * self.leverage and expected_notional_usdt <= min_notional_floor * 1.02
-            if not min_notional_adjustment and not min_margin_usdt <= expected_margin_usdt <= max_margin_usdt:
+            sizing_gate = evaluate_a_v11_margin_sizing_gate(
+                quantity=exchange_qty,
+                price=price,
+                risk_usdt=risk_usdt,
+                leverage=self.leverage,
+                order_margin_tolerance_pct=ORDER_MARGIN_TOLERANCE_PCT,
+                min_notional_floor=min_notional_floor,
+            )
+            if not sizing_gate.allowed:
                 logger.warning(
                     f"  ⚠️ {inst_id}({tf}) 保证金校验失败: qty={exchange_qty:g}, "
                     f"预计保证金={expected_margin_usdt:.2f} USDT, 目标={risk_usdt:.2f} USDT"

@@ -5,6 +5,7 @@ from core.strategy_gates import (
     effective_a_v11_signal_score,
     evaluate_account_state_available_gate,
     evaluate_a_v11_entry_threshold,
+    evaluate_a_v11_margin_sizing_gate,
     evaluate_a_v11_market_microstructure_gate,
     evaluate_a_v11_releasable_position,
     evaluate_a_v11_replacement_signal,
@@ -166,6 +167,37 @@ class StrategyGateParityTest(unittest.TestCase):
                 entry_price=10,
             ).allowed
         )
+
+        sizing_ok = evaluate_a_v11_margin_sizing_gate(
+            quantity=40,
+            price=10,
+            risk_usdt=100,
+            leverage=4,
+            order_margin_tolerance_pct=0.05,
+        )
+        self.assertTrue(sizing_ok.allowed)
+        self.assertEqual(sizing_ok.evidence["expected_margin_usdt"], 100)
+
+        sizing_bad = evaluate_a_v11_margin_sizing_gate(
+            quantity=20,
+            price=10,
+            risk_usdt=100,
+            leverage=4,
+            order_margin_tolerance_pct=0.05,
+        )
+        self.assertFalse(sizing_bad.allowed)
+        self.assertEqual(sizing_bad.reason, "margin_sizing_out_of_tolerance")
+
+        min_notional_adjusted = evaluate_a_v11_margin_sizing_gate(
+            quantity=55,
+            price=10,
+            risk_usdt=100,
+            leverage=4,
+            order_margin_tolerance_pct=0.05,
+            min_notional_floor=560,
+        )
+        self.assertTrue(min_notional_adjusted.allowed)
+        self.assertTrue(min_notional_adjusted.evidence["min_notional_adjustment"])
 
     def test_b_v16_threshold_and_confirmation(self):
         confirm = evaluate_b_v16_confirmation_gate(

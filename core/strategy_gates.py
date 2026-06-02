@@ -299,6 +299,42 @@ def evaluate_positive_quantity_gate(
     return StrategyGateDecision(True, "execution", "quantity_positive", evidence={"quantity": qty})
 
 
+def evaluate_a_v11_margin_sizing_gate(
+    *,
+    quantity: float,
+    price: float,
+    risk_usdt: float,
+    leverage: float,
+    order_margin_tolerance_pct: float,
+    min_notional_floor: float = 0.0,
+) -> StrategyGateDecision:
+    """Evaluate A/v11 fixed-margin sizing tolerance."""
+    qty = float(quantity or 0.0)
+    px = float(price or 0.0)
+    risk = float(risk_usdt or 0.0)
+    lev = float(leverage or 0.0)
+    tolerance = float(order_margin_tolerance_pct or 0.0)
+    min_floor = float(min_notional_floor or 0.0)
+    expected_notional = qty * px
+    expected_margin = expected_notional / lev if lev else 0.0
+    min_margin = risk * (1 - tolerance)
+    max_margin = risk * (1 + tolerance)
+    target_notional = risk * lev
+    min_notional_adjustment = min_floor > target_notional and expected_notional <= min_floor * 1.02
+    evidence = {
+        "quantity": qty,
+        "expected_notional_usdt": expected_notional,
+        "expected_margin_usdt": expected_margin,
+        "target_margin_usdt": risk,
+        "min_notional_usdt": min_floor,
+        "margin_tolerance_pct": tolerance * 100,
+        "min_notional_adjustment": bool(min_notional_adjustment),
+    }
+    if not min_notional_adjustment and not min_margin <= expected_margin <= max_margin:
+        return StrategyGateDecision(False, "position_sizing", "margin_sizing_out_of_tolerance", evidence=evidence)
+    return StrategyGateDecision(True, "position_sizing", "margin_sizing_ok", evidence=evidence)
+
+
 def evaluate_b_v16_small_live_stage_guard(
     *,
     enabled: bool,

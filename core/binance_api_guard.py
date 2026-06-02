@@ -69,12 +69,74 @@ def _public_max_requests_per_minute() -> int:
     return max(1, int(os.environ.get("BINANCE_PUBLIC_API_GUARD_MAX_REQUESTS_PER_MIN", "45")))
 
 
+def _post_ban_quiet_ms() -> int:
+    return max(0, int(os.environ.get("BINANCE_API_GUARD_POST_BAN_QUIET_MS", str(5 * 60 * 1000))))
+
+
+def _recovery_window_ms() -> int:
+    return max(0, int(os.environ.get("BINANCE_API_GUARD_RECOVERY_WINDOW_MS", str(30 * 60 * 1000))))
+
+
+def _recovery_min_interval_ms() -> int:
+    return max(0, int(os.environ.get("BINANCE_API_GUARD_RECOVERY_MIN_INTERVAL_MS", "15000")))
+
+
+def _recovery_max_requests_per_minute() -> int:
+    return max(1, int(os.environ.get("BINANCE_API_GUARD_RECOVERY_MAX_REQUESTS_PER_MIN", "4")))
+
+
+def _recovery_phase(state: dict[str, Any], now: int) -> tuple[str, int]:
+    banned_until = int(state.get("banned_until_ms") or 0)
+    if banned_until <= 0:
+        return "", 0
+    if banned_until > now:
+        return "cooldown", banned_until
+    quiet_until = banned_until + _post_ban_quiet_ms()
+    if quiet_until > now:
+        return "quiet", quiet_until
+    recovery_until = quiet_until + _recovery_window_ms()
+    if recovery_until > now:
+        return "recovery", recovery_until
+    return "", 0
+
+
+def _recent_public(state: dict[str, Any], now: int) -> list[dict[str, Any]]:
+    return [
+        item for item in state.get("recent_public_requests", [])
+        if now - int(item.get("ts_ms") or 0) <= 60_000
+    ]
+
+
+def _recent_signed(state: dict[str, Any], now: int) -> list[dict[str, Any]]:
+    return [
+        item for item in state.get("recent_requests", [])
+        if now - int(item.get("ts_ms") or 0) <= 60_000
+    ]
+
+
+def _recent_any(state: dict[str, Any], now: int) -> list[dict[str, Any]]:
+    return sorted(_recent_signed(state, now) + _recent_public(state, now), key=lambda item: int(item.get("ts_ms") or 0))
+
+
+def _record_recovery_state(state: dict[str, Any], phase: str, phase_until: int, now: int) -> None:
+    recent_any = _recent_any(state, now)
+    state["recovery_phase"] = phase
+    state["recovery_until_ms"] = phase_until if phase == "recovery" else 0
+    state["post_ban_quiet_until_ms"] = phase_until if phase == "quiet" else 0
+    state["recovery_rolling_count_60s"] = len(recent_any)
+    state["recovery_max_requests_per_min"] = _recovery_max_requests_per_minute()
+    state["recovery_min_interval_ms"] = _recovery_min_interval_ms()
+
+
 def current_cooldown_seconds(now_ms: int | None = None) -> float:
     """Return shared Binance REST cooldown seconds from the persisted guard state."""
     try:
         now = _now_ms() if now_ms is None else int(now_ms)
-        banned_until = int(_load_state().get("banned_until_ms") or 0)
-        return max(0.0, (banned_until - now) / 1000)
+        state = _load_state()
+        phase, phase_until = _recovery_phase(state, now)
+        if phase in {"cooldown", "quiet"}:
+            return max(0.0, (phase_until - now) / 1000)
+        return 0.0
     except Exception:
         return 0.0
 
@@ -140,37 +202,49 @@ def wait_before_request(account: str, method: str, path: str) -> float:
         with _locked():
             state = _load_state()
             now = _now_ms()
-            banned_until = int(state.get("banned_until_ms") or 0)
-            if banned_until > now:
-                sleep_seconds = min(60.0, max(1.0, (banned_until - now) / 1000))
+            phase, phase_until = _recovery_phase(state, now)
+            if phase in {"cooldown", "quiet"}:
+                _record_recovery_state(state, phase, phase_until, now)
+                _write_state(state)
+                sleep_seconds = min(60.0, max(1.0, (phase_until - now) / 1000))
             else:
+                recovery = phase == "recovery"
                 last_request_ms = int(state.get("last_request_ms") or 0)
-                recent = [
-                    item for item in state.get("recent_requests", [])
-                    if now - int(item.get("ts_ms") or 0) <= 60_000
-                ]
+                recent = _recent_signed(state, now)
+                recent_any = _recent_any(state, now)
                 account_recent = [item for item in recent if str(item.get("account") or "") == account]
                 max_per_min = _max_requests_per_minute()
                 account_max = _max_requests_per_account_per_minute()
                 reserve = min(_trade_priority_reserve_per_minute(), max(0, max_per_min - 1))
                 normal_limit = max(1, max_per_min - reserve)
                 normal_over_budget = priority != "trade" and len(recent) >= normal_limit
-                if len(recent) >= max_per_min or len(account_recent) >= account_max or normal_over_budget:
-                    budget_rows = recent if (len(recent) >= max_per_min or normal_over_budget) else account_recent
+                recovery_max = _recovery_max_requests_per_minute()
+                recovery_over_budget = recovery and len(recent_any) >= recovery_max
+                if len(recent) >= max_per_min or len(account_recent) >= account_max or normal_over_budget or recovery_over_budget:
+                    if recovery_over_budget:
+                        budget_rows = recent_any
+                    else:
+                        budget_rows = recent if (len(recent) >= max_per_min or normal_over_budget) else account_recent
                     oldest = min(int(item.get("ts_ms") or now) for item in budget_rows)
                     sleep_seconds = min(10.0, max(1.0, (oldest + 60_000 - now) / 1000))
                     state["recent_requests"] = recent
                     state["rolling_count_60s"] = len(recent)
                     state["rolling_account_count_60s"] = len(account_recent)
                     state["rolling_limited_account"] = account if len(account_recent) >= account_max else ""
-                    state["rolling_limited_priority"] = "normal_reserved" if normal_over_budget else ""
+                    state["rolling_limited_priority"] = "recovery" if recovery_over_budget else ("normal_reserved" if normal_over_budget else "")
+                    _record_recovery_state(state, phase, phase_until, now)
                     _write_state(state)
                 else:
-                    wait_ms = _min_interval_ms() - (now - last_request_ms)
+                    min_interval = _min_interval_ms()
+                    if recovery:
+                        min_interval = max(min_interval, _recovery_min_interval_ms())
+                        last_request_ms = max(last_request_ms, int(state.get("last_public_request_ms") or 0), int(state.get("last_any_request_ms") or 0))
+                    wait_ms = min_interval - (now - last_request_ms)
                     if wait_ms > 0:
                         sleep_seconds = min(5.0, wait_ms / 1000)
                     else:
                         state["last_request_ms"] = now
+                        state["last_any_request_ms"] = now
                         state["last_account"] = account
                         state["last_method"] = method
                         state["last_path"] = path
@@ -185,6 +259,7 @@ def wait_before_request(account: str, method: str, path: str) -> float:
                         state["max_account_requests_per_min"] = account_max
                         state["trade_priority_reserve_per_min"] = reserve
                         state["normal_priority_limit_per_min"] = normal_limit
+                        _record_recovery_state(state, phase, phase_until, now)
                         stats = state.setdefault("stats", {})
                         key = f"{account}:{method}:{path}"
                         stats[key] = int(stats.get(key) or 0) + 1
@@ -258,29 +333,40 @@ def wait_before_public_request(label: str, url_or_path: str) -> float:
         with _locked():
             state = _load_state()
             now = _now_ms()
-            banned_until = int(state.get("banned_until_ms") or 0)
-            if banned_until > now:
-                sleep_seconds = min(60.0, max(1.0, (banned_until - now) / 1000))
+            phase, phase_until = _recovery_phase(state, now)
+            if phase in {"cooldown", "quiet"}:
+                _record_recovery_state(state, phase, phase_until, now)
+                _write_state(state)
+                sleep_seconds = min(60.0, max(1.0, (phase_until - now) / 1000))
             else:
+                recovery = phase == "recovery"
                 last_request_ms = int(state.get("last_public_request_ms") or 0)
-                recent = [
-                    item for item in state.get("recent_public_requests", [])
-                    if now - int(item.get("ts_ms") or 0) <= 60_000
-                ]
+                recent = _recent_public(state, now)
+                recent_any = _recent_any(state, now)
                 max_per_min = _public_max_requests_per_minute()
-                if len(recent) >= max_per_min:
-                    oldest = min(int(item.get("ts_ms") or now) for item in recent)
+                recovery_max = _recovery_max_requests_per_minute()
+                recovery_over_budget = recovery and len(recent_any) >= recovery_max
+                if len(recent) >= max_per_min or recovery_over_budget:
+                    budget_rows = recent_any if recovery_over_budget else recent
+                    oldest = min(int(item.get("ts_ms") or now) for item in budget_rows)
                     sleep_seconds = min(10.0, max(1.0, (oldest + 60_000 - now) / 1000))
                     state["recent_public_requests"] = recent
                     state["public_rolling_count_60s"] = len(recent)
                     state["public_max_requests_per_min"] = max_per_min
+                    state["public_limited_priority"] = "recovery" if recovery_over_budget else ""
+                    _record_recovery_state(state, phase, phase_until, now)
                     _write_state(state)
                 else:
-                    wait_ms = _public_min_interval_ms() - (now - last_request_ms)
+                    min_interval = _public_min_interval_ms()
+                    if recovery:
+                        min_interval = max(min_interval, _recovery_min_interval_ms())
+                        last_request_ms = max(last_request_ms, int(state.get("last_request_ms") or 0), int(state.get("last_any_request_ms") or 0))
+                    wait_ms = min_interval - (now - last_request_ms)
                     if wait_ms > 0:
                         sleep_seconds = min(2.0, wait_ms / 1000)
                     else:
                         state["last_public_request_ms"] = now
+                        state["last_any_request_ms"] = now
                         state["last_public_label"] = label
                         state["last_public_path"] = path
                         state["updated_at_ms"] = now
@@ -288,6 +374,7 @@ def wait_before_public_request(label: str, url_or_path: str) -> float:
                         state["recent_public_requests"] = recent[-max_per_min:]
                         state["public_rolling_count_60s"] = len(state["recent_public_requests"])
                         state["public_max_requests_per_min"] = max_per_min
+                        _record_recovery_state(state, phase, phase_until, now)
                         public_stats = state.setdefault("public_stats", {})
                         key = f"{label}:{path}"
                         public_stats[key] = int(public_stats.get(key) or 0) + 1

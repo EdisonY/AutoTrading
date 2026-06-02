@@ -258,6 +258,7 @@
 - 2026-06-02：等待 P0-A cooldown 期间继续 P0-B。B/v16 small-live stage guard 已抽成 `evaluate_b_v16_small_live_stage_guard()`，scanner 只委托 shared pure gate；本地 `tests.test_strategy_gates` / py_compile / diff check 通过。腾讯 B/v16 release `20260602-215704-strategy-b-d9607f8` 部署成功；21:59 六服务 active，B/v16 journal 无新 API/import/syntax 错误，P0=0/P1=4/P2=2。
 - 2026-06-02：继续 P0-B。A/v11 ATR=0 与止损方向 market microstructure gate 已抽成 `evaluate_a_v11_market_microstructure_gate()`，scanner 保留黑名单和日志编排；本地 `tests.test_strategy_gates` / source compile / diff check 通过。腾讯 A/v11 release `20260602-220700-strategy-a-ea58015` 部署成功；22:09 六服务 active，A/v11 journal 无新 API/import/syntax 错误，P0=0/P1=4/P2=2。
 - 2026-06-02：继续 P0-B。C/v14 ATR=0 market microstructure gate 已抽成 `evaluate_c_v14_market_microstructure_gate()`，scanner 保留黑名单和日志编排；本地 `tests.test_strategy_gates` / source compile / diff check 通过。腾讯 C/v14 release `20260602-221943-strategy-c-1594290` 部署成功；22:23 六服务 active，C/v14 journal 无新 API/import/syntax 错误，P0=0/P1=4/P2=2。
+- 2026-06-02：P0-A 继续复发。22:31 cooldown 过线后，public C/v14 `/fapi/v1/klines` 低计数仍触发 `418/-1003`；guard 证据显示 account snapshot、market-data-cache、B/C/sentinel 同时恢复请求。已在 `core/binance_api_guard.py` 加 post-ban quiet/recovery ramp：ban 到点后静默 5 分钟，再 30 分钟内 signed+public 合并限 `4/min` 且最小间隔 `15000ms`。已部署 A/B/C/account/sentinel，并重启 market-data-cache。22:48 rollout 中还有一次 public 418，cooldown 到 `23:12:59`；需等新 guard 完整生效后再验收。
 
 ---
 ## 2026-05-29 全局运行自检与账户方向口径修复

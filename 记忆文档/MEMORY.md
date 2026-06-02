@@ -234,6 +234,7 @@
 - 2026-06-02：继续 API 压力第二层。A/v11 平仓提交在执行层已提供 close quantity/order side 时不再重复查 `positionRisk`；A/v11 余额读取从 `/fapi/v2/account` 切到更轻的 `/fapi/v2/balance`；账号快照服务增加保护，裸 SSH 缺少 `BINANCE_*` 环境变量运行时不覆盖最新有效快照。一次裸跑曾短暂写出 stale=3，随后通过 release_manager 重启 account 服务恢复 fresh=3、partial_error=0、system alerts ok/0。
 - 2026-06-02：API guard 加入第一版交易优先级 reserve：普通 signed read 在滚动预算前预留默认 `20/min` 给 order/cancel/leverage/margin 等交易路径；`last_status` 不再残留旧 400，错误改看 `last_error_*`。已部署 A/B/C、account、portal，入口告警 ok，当前 guard 显示 normal/trade priority counts。
 - 2026-06-02：继续补 Binance API P0。审计发现 A/v11 client `exchangeInfo`、VPB funding、counterfactual Kline、daily review/market review 仍有公共 REST 未进 shared guard；已改为 `wait_before_public_request()` + `record_public_response()`。这只降低 REST ban 复发概率，不替代 user-data-stream/central account-state；cooldown 到期后还要复拉 live context 验证账户快照和 attention 是否清零。
+- 2026-06-02：15:44 cooldown 到期后，账户快照只发了低个位数 signed 请求仍收到 C/v14 balance `429/-1003`（无明确 banned until，Binance 提示 IP 每分钟 6000 限额）。判断为残留/共享 IP 压力，不是本地 60s 预算满。`core/binance_api_guard.py` 已加 no-timestamp rate-limit 指数退避：30m→60m→120m，上限 4h；后续不要手动强拉账户，等 guard 到期再复核。
 
 ---
 ## 2026-05-29 全局运行自检与账户方向口径修复

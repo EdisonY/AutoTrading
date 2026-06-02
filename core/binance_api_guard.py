@@ -41,6 +41,14 @@ def _rate_limit_fallback_ms() -> int:
     return max(60_000, int(os.environ.get("BINANCE_API_GUARD_RATE_LIMIT_FALLBACK_MS", str(30 * 60 * 1000))))
 
 
+def _rate_limit_fallback_max_ms() -> int:
+    return max(_rate_limit_fallback_ms(), int(os.environ.get("BINANCE_API_GUARD_RATE_LIMIT_FALLBACK_MAX_MS", str(4 * 60 * 60 * 1000))))
+
+
+def _rate_limit_streak_window_ms() -> int:
+    return max(60_000, int(os.environ.get("BINANCE_API_GUARD_RATE_LIMIT_STREAK_WINDOW_MS", str(2 * 60 * 60 * 1000))))
+
+
 def _max_requests_per_minute() -> int:
     return max(1, int(os.environ.get("BINANCE_API_GUARD_MAX_REQUESTS_PER_MIN", "90")))
 
@@ -199,15 +207,32 @@ def record_response(account: str, method: str, path: str, status_code: int | str
     except Exception:
         pass
     lowered = text.lower()
+    is_rate_limited = status in {"418", "429"} or code in {"-1003"} or "too many requests" in lowered
     banned_until_ms = 0
     match = BAN_UNTIL_RE.search(text)
     if match:
         banned_until_ms = int(match.group(1)) + _ban_grace_ms()
-    elif status in {"418", "429"} or code in {"-1003"} or "too many requests" in lowered:
-        banned_until_ms = _now_ms() + max(_ban_grace_ms(), _rate_limit_fallback_ms())
     with _locked():
         state = _load_state()
         now = _now_ms()
+        fallback_ms = 0
+        if is_rate_limited and not banned_until_ms:
+            previous_at = int(state.get("last_rate_limit_error_at_ms") or 0)
+            previous_streak = int(state.get("rate_limit_error_streak") or 0)
+            if previous_at and now - previous_at <= _rate_limit_streak_window_ms():
+                streak = min(previous_streak + 1, 8)
+            else:
+                streak = 1
+            fallback_ms = min(_rate_limit_fallback_max_ms(), _rate_limit_fallback_ms() * (2 ** max(0, streak - 1)))
+            banned_until_ms = now + max(_ban_grace_ms(), fallback_ms)
+            state["rate_limit_error_streak"] = streak
+            state["rate_limit_fallback_ms"] = fallback_ms
+        elif is_rate_limited:
+            state["rate_limit_error_streak"] = int(state.get("rate_limit_error_streak") or 0) + 1
+            state["rate_limit_fallback_ms"] = 0
+        elif status:
+            state["rate_limit_error_streak"] = 0
+            state["rate_limit_fallback_ms"] = 0
         state["updated_at_ms"] = now
         state["last_status"] = status
         state["last_error_at_ms"] = now
@@ -219,6 +244,9 @@ def record_response(account: str, method: str, path: str, status_code: int | str
         if banned_until_ms:
             state["banned_until_ms"] = max(int(state.get("banned_until_ms") or 0), banned_until_ms)
             state["last_ban_reason"] = text[:500]
+        if is_rate_limited:
+            state["last_rate_limit_error_at_ms"] = now
+            state["last_rate_limit_error_status"] = status
         _write_state(state)
 
 

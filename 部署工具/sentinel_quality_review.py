@@ -37,6 +37,7 @@ FORWARD_TOLERANCE_MIN = 20
 BIG_MOVE_ABS_PCT = 8.0
 BUS_COVERAGE_WINDOW_MIN = 30
 BUS_SCAN_LOOKBACK_MIN = 5
+NEAR_MISS_WINDOW_MIN = 180
 
 
 def parse_dt(value: str | None) -> datetime | None:
@@ -436,6 +437,29 @@ def attribution_label(bucket: str) -> str:
     return labels.get(bucket, bucket)
 
 
+def not_scanned_bucket(row: dict[str, Any], scan_by_symbol: dict[str, list[tuple[datetime, dict[str, Any]]]]) -> str:
+    symbol = str(row.get("symbol") or "")
+    ts = parse_dt(row.get("ts"))
+    scans = scan_by_symbol.get(symbol) or []
+    if not scans:
+        return "never_scanned_in_mirror"
+    if not ts:
+        return "scanned_outside_window"
+    nearest_delta = min(abs((scan_ts - ts).total_seconds()) for scan_ts, _scan in scans)
+    if nearest_delta <= NEAR_MISS_WINDOW_MIN * 60:
+        return "near_window_gap"
+    return "scanned_outside_window"
+
+
+def not_scanned_label(bucket: str) -> str:
+    labels = {
+        "never_scanned_in_mirror": "镜像内从未被策略扫描",
+        "near_window_gap": "扫描窗口错过",
+        "scanned_outside_window": "只在较远时间被扫描",
+    }
+    return labels.get(bucket, bucket)
+
+
 def build_scan_index(scanned: list[dict[str, Any]]) -> dict[str, list[tuple[datetime, dict[str, Any]]]]:
     scan_by_symbol: dict[str, list[tuple[datetime, dict[str, Any]]]] = {}
     for row in scanned:
@@ -491,14 +515,19 @@ def compute_bus_coverage(signals: list[dict[str, Any]], scanned: list[dict[str, 
     covered = 0
     missed: list[dict[str, Any]] = []
     bucket_counts: dict[str, int] = {}
+    not_scanned_counts: dict[str, int] = {}
     examples_by_bucket: dict[str, list[dict[str, Any]]] = {}
+    not_scanned_examples: dict[str, list[dict[str, Any]]] = {}
     scan_results: dict[str, int] = {}
     stages: dict[str, int] = {}
     for row in big_signals:
         matches = find_matching_scans(row, scan_by_symbol)
         representative = choose_representative_scan(matches)
         bucket = attribution_bucket(representative)
+        missed_sub_bucket = not_scanned_bucket(row, scan_by_symbol) if bucket == "not_scanned" else ""
         bucket_counts[bucket] = bucket_counts.get(bucket, 0) + 1
+        if missed_sub_bucket:
+            not_scanned_counts[missed_sub_bucket] = not_scanned_counts.get(missed_sub_bucket, 0) + 1
         if representative:
             covered += 1
             scan_result = str(representative.get("sentinel_scan_result") or "unknown")
@@ -514,6 +543,8 @@ def compute_bus_coverage(signals: list[dict[str, Any]], scanned: list[dict[str, 
             "quote_volume": round(safe_float(row.get("quote_volume")), 2),
             "attribution": bucket,
             "attribution_label": attribution_label(bucket),
+            "not_scanned_bucket": missed_sub_bucket,
+            "not_scanned_label": not_scanned_label(missed_sub_bucket) if missed_sub_bucket else "",
         }
         if representative:
             example.update(
@@ -531,6 +562,10 @@ def compute_bus_coverage(signals: list[dict[str, Any]], scanned: list[dict[str, 
         examples_by_bucket.setdefault(bucket, [])
         if len(examples_by_bucket[bucket]) < 5:
             examples_by_bucket[bucket].append(example)
+        if missed_sub_bucket:
+            not_scanned_examples.setdefault(missed_sub_bucket, [])
+            if len(not_scanned_examples[missed_sub_bucket]) < 5:
+                not_scanned_examples[missed_sub_bucket].append(example)
         if bucket == "not_scanned" and len(missed) < 15:
             missed.append(example)
     total = len(big_signals)
@@ -549,6 +584,17 @@ def compute_bus_coverage(signals: list[dict[str, Any]], scanned: list[dict[str, 
         ],
         "scan_results": dict(sorted(scan_results.items(), key=lambda item: item[1], reverse=True)),
         "decision_stages": dict(sorted(stages.items(), key=lambda item: item[1], reverse=True)),
+        "not_scanned_breakdown": [
+            {
+                "bucket": key,
+                "label": not_scanned_label(key),
+                "count": count,
+                "pct_of_big_moves": round(count / max(total, 1) * 100.0, 2),
+                "pct_of_not_scanned": round(count / max(bucket_counts.get("not_scanned", 0), 1) * 100.0, 2),
+                "examples": not_scanned_examples.get(key, []),
+            }
+            for key, count in sorted(not_scanned_counts.items(), key=lambda item: item[1], reverse=True)
+        ],
     }
     return {
         "bus_signals": len(signals),
@@ -687,6 +733,18 @@ def write_markdown(output: dict, path: Path) -> None:
         top_results = "；".join(f"{k}: {v}" for k, v in list(attribution.get("scan_results", {}).items())[:8])
         lines.append("")
         lines.append(f"- 已扫描大行情 scan_result 分布: {top_results}")
+    not_scanned_breakdown = attribution.get("not_scanned_breakdown") or []
+    if not_scanned_breakdown:
+        lines.extend(["", "### 未进入策略扫描细分", ""])
+        lines.append("| 细分 | 数量 | 占全部大行情 | 占未扫描 | 样例 |")
+        lines.append("|------|-----:|-------------:|---------:|------|")
+        for bucket in not_scanned_breakdown:
+            examples = ", ".join(str(row.get("symbol") or "") for row in (bucket.get("examples") or [])[:4])
+            lines.append(
+                f"| {bucket.get('label') or bucket.get('bucket')} | {int(bucket.get('count') or 0)} | "
+                f"{float(bucket.get('pct_of_big_moves') or 0):.2f}% | "
+                f"{float(bucket.get('pct_of_not_scanned') or 0):.2f}% | {examples} |"
+            )
 
     lines.append("")
     path.write_text("\n".join(lines), encoding="utf-8")
@@ -756,6 +814,11 @@ def main(argv: list[str] | None = None) -> int:
             print("Attribution:")
             for row in attribution[:5]:
                 print(f"  {row.get('bucket')}: {row.get('count')} ({row.get('pct')}%)")
+        not_scanned = (coverage.get("attribution") or {}).get("not_scanned_breakdown") or []
+        if not_scanned:
+            print("Not scanned breakdown:")
+            for row in not_scanned[:5]:
+                print(f"  {row.get('bucket')}: {row.get('count')} ({row.get('pct_of_not_scanned')}%)")
 
         return 0
     finally:

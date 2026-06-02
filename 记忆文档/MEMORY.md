@@ -1,5 +1,10 @@
 # MEMORY.md - 长期记忆
 
+## 2026-06-02 N6 未扫描大行情细分
+- 继续 N6，仍为 report-only。`sentinel_quality_review.py` 对 `not_scanned` 大行情新增二级细分：`scanned_outside_window`（镜像中曾被扫到但不在 -5m/+30m 命中窗口）、`never_scanned_in_mirror`（镜像内从未进入策略 `sentinel_scans`）、`near_window_gap`（180 分钟内有扫描但命中窗口错过）。
+- 本地 3 日镜像结果：大行情 `1065`，覆盖 `158/1065=14.84%`；`not_scanned=907` 中，较远时间扫描 `538 / 59.32%`，镜像内从未扫 `301 / 33.19%`，近窗口错过 `68 / 7.50%`。入口页新增“未扫描细分”表。
+- 解读：最大问题更像扫描窗口/周期与总线信号时点不同步，其次才是 scanner universe 或镜像截断。但当前没有 durable watchlist snapshot 历史，不能把 `never_scanned_in_mirror` 精确判成“未进 watchlist”或“镜像截断”。不要据此直接扩大 scanner cadence。
+
 ## 2026-06-02 N6 大行情归因首版
 - 继续 N6，仍保持 report-only，不改哨兵筛选、不改三策略阈值/仓位/风控、不新增 Binance API 调用。`sentinel_quality_review.py` 现在会把 abs(change)>=8% 的 `SENTINEL_SIGNAL` 大行情按附近策略 `sentinel_scans` 粗归因。
 - 归因分桶：未进入策略扫描、已扫描但无信号、策略拒绝、风控/冷却/仓位拒绝、确认层拒绝、执行/交易所规则拒绝、行情数据拒绝、预过滤拒绝、分析/数据错误、其他。入口页 `哨兵贡献` 区新增“大行情归因”表。

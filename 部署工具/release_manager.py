@@ -173,8 +173,12 @@ TENCENT_COMPONENTS: dict[str, dict[str, Any]] = {
         + [
             file_pair("策略文件/market_mover_sentinel.py", "market_mover_sentinel.py"),
             file_pair("策略文件/market_data_service.py", "market_data_service.py"),
+            file_pair("部署工具/systemd/crypto-market-mover-sentinel.service", "systemd/crypto-market-mover-sentinel.service"),
         ],
         "services": ["crypto-market-mover-sentinel.service"],
+        "post": [
+            "sudo cp systemd/crypto-market-mover-sentinel.service /etc/systemd/system/crypto-market-mover-sentinel.service && sudo systemctl daemon-reload",
+        ],
     },
     "account": {
         "files": CORE_FILES

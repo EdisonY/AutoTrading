@@ -18,7 +18,9 @@ from core.binance_api_queue import (
     PRIORITY_NORMAL,
     PRIORITY_TRADE,
     STATUS_DONE,
+    STATUS_DEFERRED,
     STATUS_FAILED,
+    STATUS_QUEUED,
     BinanceApiQueue,
 )
 
@@ -62,10 +64,19 @@ def queued_api_request(
     poll_interval_sec: float | None = None,
 ) -> Any:
     queue = queue or BinanceApiQueue(default_queue_db_path())
-    timeout = float(timeout_sec if timeout_sec is not None else os.environ.get("BINANCE_API_QUEUE_CLIENT_TIMEOUT_SEC", "20"))
+    timeout = float(timeout_sec if timeout_sec is not None else os.environ.get("BINANCE_API_QUEUE_CLIENT_TIMEOUT_SEC", "60"))
     poll_interval = float(
         poll_interval_sec if poll_interval_sec is not None else os.environ.get("BINANCE_API_QUEUE_CLIENT_POLL_SEC", "0.2")
     )
+    cooldown_until, cooldown_reason = queue.active_cooldown(scope=scope, account=account)
+    if cooldown_until:
+        return {
+            "code": "-1",
+            "msg": f"queued request blocked by active cooldown: {cooldown_reason}".strip(),
+            "queue_status": "cooldown",
+            "cooldown_until_ms": cooldown_until,
+            "cooldown_reason": cooldown_reason,
+        }
     request = queue.submit_request(
         scope=scope,
         account=account,
@@ -87,10 +98,19 @@ def queued_api_request(
         if current.status == STATUS_FAILED:
             return {"code": "-1", "msg": current.error or f"queued request failed: {request.request_id}"}
         if time.monotonic() >= deadline:
+            cancelled = False
+            if current.status in {STATUS_QUEUED, STATUS_DEFERRED}:
+                queue.fail_request(
+                    current.request_id,
+                    error=f"client timeout cancelled queued request: {current.status} {current.error}".strip(),
+                    retry=False,
+                )
+                cancelled = True
             return {
                 "code": "-1",
                 "msg": f"queued request timeout: {current.status} {current.error}".strip(),
                 "request_id": current.request_id,
                 "queue_status": current.status,
+                "request_cancelled": cancelled,
             }
         time.sleep(max(0.02, poll_interval))

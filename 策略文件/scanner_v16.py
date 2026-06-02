@@ -333,7 +333,8 @@ def fetch_json(url: str, timeout: int = 10) -> dict:
     global _last_ban_until
     import urllib.request, urllib.error
     if api_queue_client_enabled():
-        data = queued_api_request(scope="public", label="B/v16", method="GET", path=url, url=url, timeout_sec=timeout + 5)
+        queue_timeout = max(timeout + 5, int(float(os.environ.get("BINANCE_API_QUEUE_CLIENT_TIMEOUT_SEC", "60"))))
+        data = queued_api_request(scope="public", label="B/v16", method="GET", path=url, url=url, timeout_sec=queue_timeout)
         if isinstance(data, dict) and data.get("code") is not None and str(data.get("code")) != "200":
             raise RuntimeError(str(data.get("msg") or data))
         return data
@@ -566,7 +567,8 @@ def fetch_live_agg_trades(symbol: str, limit: int = CVD_LIMIT):
     url = f"{LIVE_BASE_URL}/fapi/v1/aggTrades?symbol={symbol}&limit={limit}"
     try:
         if api_queue_client_enabled():
-            data = queued_api_request(scope="public", label="B/v16-live", method="GET", path=url, url=url, timeout_sec=12)
+            queue_timeout = max(12, int(float(os.environ.get("BINANCE_API_QUEUE_CLIENT_TIMEOUT_SEC", "60"))))
+            data = queued_api_request(scope="public", label="B/v16-live", method="GET", path=url, url=url, timeout_sec=queue_timeout)
             return data if isinstance(data, list) else []
         wait_before_public_request("B/v16-live", url)
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})

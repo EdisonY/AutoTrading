@@ -59,6 +59,27 @@ class BinanceApiQueueClientTest(unittest.TestCase):
 
         self.assertEqual(result["code"], "-1")
         self.assertEqual(result["queue_status"], "queued")
+        self.assertTrue(result["request_cancelled"])
+        self.assertEqual(queue.summary()["counts"], {"failed": 1})
+
+    def test_active_cooldown_blocks_submit(self):
+        queue = self.make_queue()
+        now = int(time.time() * 1000)
+        queue.set_cooldown(scope="public", until_ms=now + 60_000, reason="HTTP 418")
+
+        result = queued_api_request(
+            scope="public",
+            label="test",
+            method="GET",
+            path="/fapi/v1/klines",
+            queue=queue,
+            timeout_sec=0.1,
+            poll_interval_sec=0.02,
+        )
+
+        self.assertEqual(result["code"], "-1")
+        self.assertEqual(result["queue_status"], "cooldown")
+        self.assertEqual(queue.summary()["counts"], {})
 
     def test_trade_paths_have_trade_priority(self):
         self.assertGreater(priority_for_request("POST", "/fapi/v1/order"), priority_for_request("GET", "/fapi/v2/balance"))

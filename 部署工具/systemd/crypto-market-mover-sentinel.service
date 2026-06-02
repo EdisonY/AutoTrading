@@ -1,0 +1,18 @@
+[Unit]
+Description=Crypto Market Mover Sentinel
+After=network-online.target crypto-binance-api-queue.service
+Wants=network-online.target crypto-binance-api-queue.service
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/opt/crypto-auto-trader
+Environment=LEGACY_JSONL_ENABLED=0
+Environment=PYTHONUNBUFFERED=1
+Environment=SENTINEL_CONSOLE_LOG_LEVEL=WARNING
+ExecStart=/opt/crypto-auto-trader/.venv/bin/python -u /opt/crypto-auto-trader/market_mover_sentinel.py --root /opt/crypto-auto-trader --interval 15
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

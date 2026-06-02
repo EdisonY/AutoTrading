@@ -52,7 +52,15 @@ logger = logging.getLogger("market_mover_sentinel")
 
 def fetch_24h_tickers(timeout: int = 10) -> list[dict[str, Any]]:
     if api_queue_client_enabled():
-        data = queued_api_request(scope="public", label="sentinel", method="GET", path="/fapi/v1/ticker/24hr", url=TICKER_URL, timeout_sec=timeout + 5)
+        queue_timeout = max(timeout + 5, int(float(os.environ.get("BINANCE_API_QUEUE_CLIENT_TIMEOUT_SEC", "60"))))
+        data = queued_api_request(
+            scope="public",
+            label="sentinel",
+            method="GET",
+            path="/fapi/v1/ticker/24hr",
+            url=TICKER_URL,
+            timeout_sec=queue_timeout,
+        )
         return data if isinstance(data, list) else []
     wait_before_public_request("sentinel", TICKER_URL)
     req = urllib.request.Request(TICKER_URL, headers={"User-Agent": "Mozilla/5.0"})

@@ -2,6 +2,14 @@
 
 This is the durable reason-and-outcome ledger for every material design, code, configuration, deployment, rollback, optimization, or live operational change.
 
+## 2026-06-03 07:03 CST - Extract A/v11 pool-capacity replacement gate
+- Trigger / reason: Continue P0-B replay/live same-path work while P0-A public cooldown remains active. A/v11 still had scanner-local orchestration logic for "timeframe pool full, only strong signal may attempt replacement".
+- Completed: Added `evaluate_a_v11_pool_capacity_replacement_gate()` to `core.strategy_gates` and routed A/v11 resonance, single-timeframe, and VPB pool-full checks through it. Existing behavior and messages are preserved: non-full pools pass, full pools pass only when `_can_try_full_replacement()` allows, and VPB keeps its VPB-specific rejection text. No threshold, sizing, leverage, stop, order behavior, or service start state changed.
+- Not completed / remaining: P0-B still needs deeper A/v11 replacement close/open orchestration extraction, confirmation/risk/execution gates, and event-driven same-input replay/live parity tests.
+- Verification: Local `python -m unittest tests.test_strategy_gates` passed (`11` tests); `py_compile` passed for `core/strategy_gates.py` and A/v11 scanner; `git diff --check` passed. Tencent `strategy-a` dry-run and `--apply --no-restart` release `20260603-070308-strategy-a-e9ae872` uploaded the changed core/scanner files. Remote service check confirmed A/B/C scanners, sentinel, and market-data-cache stayed inactive while API queue + A/B/C user-stream stayed active.
+- Live impact / deployment: Disk-only P0-B code deploy inside Testnet construction mode. A/v11 scanner remains inactive; no Binance API request was intentionally sent by this change; no trading behavior activated.
+- Files / release / commit: `core/strategy_gates.py`, `策略文件/scanner.py`, `tests/test_strategy_gates.py`, `CHANGELOG.md`, `记忆文档/MEMORY.md`, `记忆文档/FUTURE_EXECUTION_PLAN.md`.
+
 ## 2026-06-03 06:56 CST - Slow construction API queue for next public fresh-run
 - Trigger / reason: Continue P0-A during the active public cooldown without forcing Binance calls. The previous fresh-run showed that `15s` queue execution plus scanner Kline pressure could still trip Binance Testnet public `HTTP 418/-1003`.
 - Completed: Made the next construction fresh-run more conservative: `crypto-binance-api-queue.service` now runs the executor at `--interval 60 --execute`, and `core.binance_api_queue_client` defaults to `180s` wait time. A/v11, B/v16, C/v14, sentinel, and market-data public queue callers also now wait at least `180s` so the slower queue does not create false client-timeout cancellations. Deployed `api-queue` and restarted only `crypto-binance-api-queue.service`; deployed sentinel/market-data and A/B/C strategy bundles with `--no-restart`, leaving all public producers stopped.

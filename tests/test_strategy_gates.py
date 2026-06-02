@@ -7,6 +7,7 @@ from core.strategy_gates import (
     evaluate_a_v11_entry_threshold,
     evaluate_a_v11_margin_sizing_gate,
     evaluate_a_v11_market_microstructure_gate,
+    evaluate_a_v11_pool_capacity_replacement_gate,
     evaluate_a_v11_releasable_position,
     evaluate_a_v11_replacement_signal,
     evaluate_active_position_limit_gate,
@@ -167,6 +168,28 @@ class StrategyGateParityTest(unittest.TestCase):
                 entry_price=10,
             ).allowed
         )
+
+        pool_has_room = evaluate_a_v11_pool_capacity_replacement_gate(
+            timeframe_full=False,
+            replacement_signal_allowed=False,
+        )
+        self.assertTrue(pool_has_room.allowed)
+        self.assertEqual(pool_has_room.reason, "timeframe_pool_has_capacity")
+
+        pool_full_allowed = evaluate_a_v11_pool_capacity_replacement_gate(
+            timeframe_full=True,
+            replacement_signal_allowed=True,
+        )
+        self.assertTrue(pool_full_allowed.allowed)
+        self.assertEqual(pool_full_allowed.reason, "timeframe_pool_full_replacement_allowed")
+
+        pool_full_rejected = evaluate_a_v11_pool_capacity_replacement_gate(
+            timeframe_full=True,
+            replacement_signal_allowed=False,
+            reject_reason="VPB周期池满且未达到强信号替换条件",
+        )
+        self.assertFalse(pool_full_rejected.allowed)
+        self.assertEqual(pool_full_rejected.reason, "VPB周期池满且未达到强信号替换条件")
 
         sizing_ok = evaluate_a_v11_margin_sizing_gate(
             quantity=40,

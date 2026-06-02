@@ -121,6 +121,7 @@ from core.strategy_gates import (
     evaluate_a_v11_entry_threshold,
     evaluate_a_v11_margin_sizing_gate,
     evaluate_a_v11_market_microstructure_gate,
+    evaluate_a_v11_pool_capacity_replacement_gate,
     evaluate_a_v11_releasable_position,
     evaluate_a_v11_replacement_signal,
     evaluate_no_same_symbol_position_gate,
@@ -1815,9 +1816,13 @@ class Scanner:
                 sig = next((s for s in all_signals.get(tf, []) if s["symbol"] == sym), None)
                 if sig:
                     tf_full = self._pos_count(tf) >= self.max_positions
-                    if tf_full and not self._can_try_full_replacement(sig, resonance=True):
+                    pool_gate = evaluate_a_v11_pool_capacity_replacement_gate(
+                        timeframe_full=tf_full,
+                        replacement_signal_allowed=self._can_try_full_replacement(sig, resonance=True),
+                    )
+                    if not pool_gate.allowed:
                         log_sentinel_scan(
-                            sym, tf, "position_rejected", "周期池满且未达到强信号替换条件",
+                            sym, tf, "position_rejected", pool_gate.reason,
                             side=sig.get("trade_side", ""),
                             score=abs(float(sig.get("net_score") or 0)),
                             decision_stage="position_replacement",
@@ -1845,9 +1850,13 @@ class Scanner:
                     )
                     continue
                 tf_full = self._pos_count(tf) >= self.max_positions
-                if tf_full and not self._can_try_full_replacement(sig, resonance=False):
+                pool_gate = evaluate_a_v11_pool_capacity_replacement_gate(
+                    timeframe_full=tf_full,
+                    replacement_signal_allowed=self._can_try_full_replacement(sig, resonance=False),
+                )
+                if not pool_gate.allowed:
                     log_sentinel_scan(
-                        sig["symbol"], tf, "position_rejected", "周期池满且未达到强信号替换条件",
+                        sig["symbol"], tf, "position_rejected", pool_gate.reason,
                         side=sig.get("trade_side", ""),
                         score=abs(float(sig.get("net_score") or 0)),
                         decision_stage="position_replacement",
@@ -1866,9 +1875,14 @@ class Scanner:
                 if cd and now < cd:
                     continue
                 tf_full = self._pos_count(tf) >= self.max_positions
-                if tf_full and not self._can_try_full_replacement(vsig, resonance=vsig.get("vpb_resonance", False)):
+                pool_gate = evaluate_a_v11_pool_capacity_replacement_gate(
+                    timeframe_full=tf_full,
+                    replacement_signal_allowed=self._can_try_full_replacement(vsig, resonance=vsig.get("vpb_resonance", False)),
+                    reject_reason="VPB周期池满且未达到强信号替换条件",
+                )
+                if not pool_gate.allowed:
                     log_sentinel_scan(
-                        sym, tf, "position_rejected", "VPB周期池满且未达到强信号替换条件",
+                        sym, tf, "position_rejected", pool_gate.reason,
                         side=vsig.get("trade_side", ""),
                         score=abs(float(vsig.get("vpb_score") or vsig.get("net_score") or 0)),
                         decision_stage="position_replacement",

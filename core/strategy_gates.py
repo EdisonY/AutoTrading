@@ -455,6 +455,35 @@ def evaluate_a_v11_replacement_signal(
     )
 
 
+def evaluate_a_v11_pool_capacity_replacement_gate(
+    *,
+    timeframe_full: bool,
+    replacement_signal_allowed: bool,
+    reject_reason: str = "周期池满且未达到强信号替换条件",
+) -> StrategyGateDecision:
+    """Evaluate whether A/v11 can proceed when a timeframe pool is full."""
+    if not timeframe_full:
+        return StrategyGateDecision(
+            True,
+            "position_replacement",
+            "timeframe_pool_has_capacity",
+            evidence={"timeframe_full": False, "replacement_signal_allowed": bool(replacement_signal_allowed)},
+        )
+    if replacement_signal_allowed:
+        return StrategyGateDecision(
+            True,
+            "position_replacement",
+            "timeframe_pool_full_replacement_allowed",
+            evidence={"timeframe_full": True, "replacement_signal_allowed": True},
+        )
+    return StrategyGateDecision(
+        False,
+        "position_replacement",
+        str(reject_reason),
+        evidence={"timeframe_full": True, "replacement_signal_allowed": False},
+    )
+
+
 def evaluate_a_v11_market_microstructure_gate(
     *,
     atr: float,

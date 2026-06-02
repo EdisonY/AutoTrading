@@ -65,7 +65,11 @@ from core.binance_api_guard import current_cooldown_seconds, record_public_respo
 from core.position_utils import infer_position_side, leveraged_loss_pct
 from core.sentinel_scanner import fields_from_context, filter_context_by_available, merge_symbols_with_context
 from core.risk_engine import RiskEngine, RiskLimits
-from core.strategy_gates import evaluate_c_v14_entry_threshold
+from core.strategy_gates import (
+    evaluate_c_v14_confirmation_gate,
+    evaluate_c_v14_entry_threshold,
+    evaluate_c_v14_tail_guard,
+)
 from core.strategy_engine import StrategyEngine
 
 def console_log_level() -> int:
@@ -1149,46 +1153,29 @@ class Scanner:
 
     def _passes_15m_confirmation(self, sym: str, side: str, entry_score: float) -> tuple[bool, str]:
         sig = self.strategy_engine.analyze(sym, CONFIRM_TIMEFRAME)
-        if not sig:
-            if entry_score >= NO_CONFIRM_HIGH_SCORE_PASS:
-                return True, f"扩样放行:{CONFIRM_TIMEFRAME}无信号但1h高分{entry_score:.0f}"
-            return False, "15m无有效确认"
-        confirm_score = abs(sig.get("net_score", 0))
-        if sig.get("trade_side") != side:
-            if confirm_score < WEAK_CONFIRM_MIN_SCORE and entry_score >= NO_CONFIRM_HIGH_SCORE_PASS:
-                return True, f"扩样放行:15m弱反向{confirm_score:.0f}+1h高分{entry_score:.0f}"
-            return False, f"15m方向相反:{sig.get('trade_side')}"
-        if not sig.get("can_trade"):
-            if entry_score >= NO_CONFIRM_HIGH_SCORE_PASS:
-                return True, f"扩样放行:15m弱同向{confirm_score:.0f}+1h高分{entry_score:.0f}"
-            return False, "15m无有效确认"
-        if confirm_score < CONFIRM_MIN_SCORE:
-            if confirm_score >= WEAK_CONFIRM_MIN_SCORE and entry_score >= NO_CONFIRM_HIGH_SCORE_PASS:
-                return True, f"扩样放行:15m弱确认{confirm_score:.0f}+1h高分{entry_score:.0f}"
-            return False, f"15m确认分不足:{confirm_score:.0f}"
-        return True, f"15m确认{confirm_score:.0f}"
+        decision = evaluate_c_v14_confirmation_gate(
+            side=side,
+            entry_score=entry_score,
+            confirm_signal=sig,
+            confirm_timeframe=CONFIRM_TIMEFRAME,
+            no_confirm_high_score_pass=NO_CONFIRM_HIGH_SCORE_PASS,
+            weak_confirm_min_score=WEAK_CONFIRM_MIN_SCORE,
+            confirm_min_score=CONFIRM_MIN_SCORE,
+        )
+        return decision.allowed, decision.reason
 
     def _passes_tail_guard(self, sig: dict, side: str) -> tuple[bool, str]:
         """Reduce low-score entries that are likely chasing the tail of a move."""
-        abs_score = abs(sig.get("net_score", 0))
-        if abs_score >= TAIL_GUARD_MIN_SCORE:
-            return True, "tail_guard_pass_high_score"
-
-        bb_pos = float(sig.get("bb_pos") or 50.0)
-        rsi = float(sig.get("rsi") or 50.0)
-        vol_ratio = float(sig.get("vol_ratio") or 1.0)
-        atr_pct = float(sig.get("atr_pct") or 0.0)
-        st_flipped = bool(sig.get("st_flipped"))
-
-        if atr_pct >= TAIL_GUARD_MAX_ATR_PCT:
-            return False, f"硬顶尾部过滤:波动过高 atr_pct={atr_pct:.3f} score={abs_score:.0f}"
-        if st_flipped and vol_ratio < TAIL_GUARD_MIN_VOL_RATIO:
-            return False, f"硬顶尾部过滤:ST翻转但放量不足 vol={vol_ratio:.1f} score={abs_score:.0f}"
-        if side == "long" and bb_pos >= TAIL_GUARD_LONG_BB_POS and rsi >= 55:
-            return False, f"硬顶尾部过滤:多头高位追涨 bb_pos={bb_pos:.0f} rsi={rsi:.0f}"
-        if side == "short" and bb_pos <= TAIL_GUARD_SHORT_BB_POS and rsi <= 45:
-            return False, f"硬顶尾部过滤:空头低位追跌 bb_pos={bb_pos:.0f} rsi={rsi:.0f}"
-        return True, "tail_guard_pass"
+        decision = evaluate_c_v14_tail_guard(
+            signal=sig,
+            side=side,
+            tail_guard_min_score=TAIL_GUARD_MIN_SCORE,
+            tail_guard_long_bb_pos=TAIL_GUARD_LONG_BB_POS,
+            tail_guard_short_bb_pos=TAIL_GUARD_SHORT_BB_POS,
+            tail_guard_min_vol_ratio=TAIL_GUARD_MIN_VOL_RATIO,
+            tail_guard_max_atr_pct=TAIL_GUARD_MAX_ATR_PCT,
+        )
+        return decision.allowed, decision.reason
 
     def _sync_exchange_state(self):
         """启动时同步交易所账户状态"""

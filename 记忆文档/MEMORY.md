@@ -245,6 +245,7 @@
 - 2026-06-02：15:44 cooldown 到期后，账户快照只发了低个位数 signed 请求仍收到 C/v14 balance `429/-1003`（无明确 banned until，Binance 提示 IP 每分钟 6000 限额）。判断为残留/共享 IP 压力，不是本地 60s 预算满。`core/binance_api_guard.py` 已加 no-timestamp rate-limit 指数退避：30m→60m→120m，上限 4h；已把远端 guard cooldown 手动延到 `2026-06-02T16:44:57+08:00`、streak=2，并重启 market-data-cache 载入新 guard。后续不要手动强拉账户，等 guard 到期再复核。
 - 2026-06-02：阻塞等待期间继续推进 P1。新增 `rollback_watch_review.py`，把 A/v11/B/v16 四个 rollback-watch 汇总成行动矩阵。当前本地结果：P0=0/P1=4，最差 B/v16 24h 扣费后 `-94.456 USDT`，四项动作均为 `pause_expansion_review_quality`；这表示暂停扩张/复核质量，不是自动回滚。
 - 2026-06-02：16:44 cooldown 到期后又遇到 A/v11 `positionRisk` 的 `418/-1003`，guard 自动延到 `2026-06-02T17:26:54+08:00`。继续不强拉账户；已把 B/v16/C/v14 的 `exchangeInfo` 从 signed REST 改到 public REST guard，减少账户 API 压力，并部署 `20260602-165634-strategy-b-e038cae` / `20260602-165727-strategy-c-e038cae`。
+- 2026-06-02：继续 P0-B replay/live 同路径。`core.strategy_gates` 已新增 C/v14 15m confirmation gate 和 low-score tail guard，`scanner_v14.py` 改为调用 shared pure functions；本地等价烟测通过，腾讯 `strategy-c` release `20260602-195221-strategy-c-36ccdad` 部署成功。19:53 live pull 显示六服务 active、P0=0、guard cooldown=0、账户浮盈 `+89.5569`、6 仓。public rolling 仍为 `60/60`，后续继续观察 public REST，同时推进 A/v11 confirmation/replacement 与剩余 risk/position/execution gate 抽取。
 
 ---
 ## 2026-05-29 全局运行自检与账户方向口径修复

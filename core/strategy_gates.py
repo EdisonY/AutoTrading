@@ -138,6 +138,77 @@ def evaluate_c_v14_entry_threshold(
     )
 
 
+def evaluate_c_v14_confirmation_gate(
+    *,
+    side: str,
+    entry_score: float,
+    confirm_signal: Mapping[str, Any] | None,
+    confirm_timeframe: str,
+    no_confirm_high_score_pass: float,
+    weak_confirm_min_score: float,
+    confirm_min_score: float,
+) -> StrategyGateDecision:
+    """Evaluate the C/v14 confirmation gate from a supplied confirmation signal."""
+    side_key = str(side or "").lower()
+    score = float(entry_score)
+    if not confirm_signal:
+        if score >= float(no_confirm_high_score_pass):
+            return StrategyGateDecision(True, "confirmation", f"扩样放行:{confirm_timeframe}无信号但1h高分{score:.0f}")
+        return StrategyGateDecision(False, "confirmation", "15m无有效确认")
+
+    confirm_score = abs(float(confirm_signal.get("net_score") or 0))
+    confirm_side = str(confirm_signal.get("trade_side") or "").lower()
+    if confirm_side != side_key:
+        if confirm_score < float(weak_confirm_min_score) and score >= float(no_confirm_high_score_pass):
+            return StrategyGateDecision(True, "confirmation", f"扩样放行:15m弱反向{confirm_score:.0f}+1h高分{score:.0f}")
+        return StrategyGateDecision(False, "confirmation", f"15m方向相反:{confirm_signal.get('trade_side')}")
+
+    if not confirm_signal.get("can_trade"):
+        if score >= float(no_confirm_high_score_pass):
+            return StrategyGateDecision(True, "confirmation", f"扩样放行:15m弱同向{confirm_score:.0f}+1h高分{score:.0f}")
+        return StrategyGateDecision(False, "confirmation", "15m无有效确认")
+
+    if confirm_score < float(confirm_min_score):
+        if confirm_score >= float(weak_confirm_min_score) and score >= float(no_confirm_high_score_pass):
+            return StrategyGateDecision(True, "confirmation", f"扩样放行:15m弱确认{confirm_score:.0f}+1h高分{score:.0f}")
+        return StrategyGateDecision(False, "confirmation", f"15m确认分不足:{confirm_score:.0f}")
+
+    return StrategyGateDecision(True, "confirmation", f"15m确认{confirm_score:.0f}")
+
+
+def evaluate_c_v14_tail_guard(
+    *,
+    signal: Mapping[str, Any],
+    side: str,
+    tail_guard_min_score: float,
+    tail_guard_long_bb_pos: float,
+    tail_guard_short_bb_pos: float,
+    tail_guard_min_vol_ratio: float,
+    tail_guard_max_atr_pct: float,
+) -> StrategyGateDecision:
+    """Evaluate C/v14 low-score tail-chasing guard."""
+    abs_score = abs(float(signal.get("net_score") or 0))
+    if abs_score >= float(tail_guard_min_score):
+        return StrategyGateDecision(True, "tail_guard", "tail_guard_pass_high_score", adjusted_score=abs_score)
+
+    bb_pos = float(signal.get("bb_pos") or 50.0)
+    rsi = float(signal.get("rsi") or 50.0)
+    vol_ratio = float(signal.get("vol_ratio") or 1.0)
+    atr_pct = float(signal.get("atr_pct") or 0.0)
+    st_flipped = bool(signal.get("st_flipped"))
+    side_key = str(side or "").lower()
+
+    if atr_pct >= float(tail_guard_max_atr_pct):
+        return StrategyGateDecision(False, "tail_guard", f"硬顶尾部过滤:波动过高 atr_pct={atr_pct:.3f} score={abs_score:.0f}", adjusted_score=abs_score)
+    if st_flipped and vol_ratio < float(tail_guard_min_vol_ratio):
+        return StrategyGateDecision(False, "tail_guard", f"硬顶尾部过滤:ST翻转但放量不足 vol={vol_ratio:.1f} score={abs_score:.0f}", adjusted_score=abs_score)
+    if side_key == "long" and bb_pos >= float(tail_guard_long_bb_pos) and rsi >= 55:
+        return StrategyGateDecision(False, "tail_guard", f"硬顶尾部过滤:多头高位追涨 bb_pos={bb_pos:.0f} rsi={rsi:.0f}", adjusted_score=abs_score)
+    if side_key == "short" and bb_pos <= float(tail_guard_short_bb_pos) and rsi <= 45:
+        return StrategyGateDecision(False, "tail_guard", f"硬顶尾部过滤:空头低位追跌 bb_pos={bb_pos:.0f} rsi={rsi:.0f}", adjusted_score=abs_score)
+    return StrategyGateDecision(True, "tail_guard", "tail_guard_pass", adjusted_score=abs_score)
+
+
 def evaluate_b_v16_confirmation_gate(
     *,
     side: str,

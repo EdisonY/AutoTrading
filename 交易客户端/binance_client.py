@@ -30,6 +30,7 @@ from core.binance_api_guard import (
     wait_before_public_request,
     wait_before_request,
 )
+from core.binance_api_queue_client import api_queue_client_enabled, queued_api_request
 
 logger = logging.getLogger("binance_client")
 
@@ -105,6 +106,18 @@ def _sign(params: dict) -> str:
 
 def _request(method: str, path: str, params: dict = None) -> dict:
     """发送带签名的请求"""
+    if api_queue_client_enabled():
+        data = queued_api_request(
+            scope="signed",
+            account="A",
+            label="A/v11",
+            method=method,
+            path=path,
+            body=dict(params or {}),
+        )
+        if isinstance(data, dict) and data.get("code") is not None and str(data.get("code")) != "200":
+            logger.error(f"Binance queued API错误: {data}")
+        return data
     wait_before_request("A/v11", method, path)
     timestamp = int(time.time() * 1000)
     params = params or {}
@@ -165,50 +178,61 @@ def get_markets() -> dict:
 
     url = f"{BASE_URL}/fapi/v1/exchangeInfo"
     try:
-        wait_before_public_request("A/v11-client", url)
-        with urllib.request.urlopen(url, timeout=15) as resp:
-            data = json.loads(resp.read())
-            markets = {}
-            for s in data.get("symbols", []):
-                if s.get("status") != "TRADING":
-                    continue
-                symbol = s["symbol"]
-                # 从 filters 提取 LOT_SIZE（stepSize = 每份合约面值）
-                step_size = 1.0
-                min_qty = 0.0
-                max_qty = 0.0
-                min_notional = 0.0
-                tick_size = 0.0
-                for f in s.get("filters", []):
-                    if f.get("filterType") == "LOT_SIZE":
-                        step_size = float(f.get("stepSize", 1.0))
-                        min_qty = float(f.get("minQty", 0.0))
-                        max_qty = float(f.get("maxQty", 0.0))
-                    elif f.get("filterType") == "PRICE_FILTER":
-                        tick_size = float(f.get("tickSize", 0.0))
-                    elif f.get("filterType") in {"MIN_NOTIONAL", "NOTIONAL"}:
-                        min_notional = float(f.get("notional") or f.get("minNotional") or 0.0)
+        if api_queue_client_enabled():
+            data = queued_api_request(
+                scope="public",
+                label="A/v11-client",
+                method="GET",
+                path="/fapi/v1/exchangeInfo",
+            )
+        else:
+            wait_before_public_request("A/v11-client", url)
+            with urllib.request.urlopen(url, timeout=15) as resp:
+                data = json.loads(resp.read())
+        if isinstance(data, dict) and data.get("code") is not None and str(data.get("code")) != "200":
+            logger.error(f"加载市场数据失败: {data}")
+            return {}
+        markets = {}
+        for s in data.get("symbols", []):
+            if s.get("status") != "TRADING":
+                continue
+            symbol = s["symbol"]
+            # 从 filters 提取 LOT_SIZE（stepSize = 每份合约面值）
+            step_size = 1.0
+            min_qty = 0.0
+            max_qty = 0.0
+            min_notional = 0.0
+            tick_size = 0.0
+            for f in s.get("filters", []):
+                if f.get("filterType") == "LOT_SIZE":
+                    step_size = float(f.get("stepSize", 1.0))
+                    min_qty = float(f.get("minQty", 0.0))
+                    max_qty = float(f.get("maxQty", 0.0))
+                elif f.get("filterType") == "PRICE_FILTER":
+                    tick_size = float(f.get("tickSize", 0.0))
+                elif f.get("filterType") in {"MIN_NOTIONAL", "NOTIONAL"}:
+                    min_notional = float(f.get("notional") or f.get("minNotional") or 0.0)
 
-                markets[symbol] = {
-                    "symbol": symbol,
-                    "base": s["baseAsset"],
-                    "quote": s["quoteAsset"],
-                    "contractSize": step_size,  # stepSize = 每份面值（BTC系用BTC单位）
-                    "pricePrecision": s.get("pricePrecision", 8),
-                    "qtyPrecision": s.get("quantityPrecision", 8),
-                    "minQty": min_qty,
-                    "maxQty": max_qty,
-                    "tickSize": tick_size,
-                    "stepSize": step_size,
-                    "minNotional": min_notional,
-                    "status": s.get("status", ""),
-                    "contractType": s.get("contractType", ""),
-                    "active": True,
-                    "info": s,
-                }
-            _markets_cache = markets
-            logger.info(f"市场数据加载: {len(markets)} 个交易对")
-            return markets
+            markets[symbol] = {
+                "symbol": symbol,
+                "base": s["baseAsset"],
+                "quote": s["quoteAsset"],
+                "contractSize": step_size,  # stepSize = 每份面值（BTC系用BTC单位）
+                "pricePrecision": s.get("pricePrecision", 8),
+                "qtyPrecision": s.get("quantityPrecision", 8),
+                "minQty": min_qty,
+                "maxQty": max_qty,
+                "tickSize": tick_size,
+                "stepSize": step_size,
+                "minNotional": min_notional,
+                "status": s.get("status", ""),
+                "contractType": s.get("contractType", ""),
+                "active": True,
+                "info": s,
+            }
+        _markets_cache = markets
+        logger.info(f"市场数据加载: {len(markets)} 个交易对")
+        return markets
     except urllib.error.HTTPError as e:
         body = e.read().decode("utf-8", errors="replace")
         record_public_response("A/v11-client", url, e.code, body)

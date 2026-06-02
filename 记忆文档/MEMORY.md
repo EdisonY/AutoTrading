@@ -271,6 +271,7 @@
 - 2026-06-03：继续 P0-A stream offset/dedup。`account_state_service.py --stream-events` 现在写 `runtime/account_state_stream_offsets.json`，按 strategy + event type/time/update id 或稳定 SHA256 去重，并记录每策略 last event。重复 JSONL 不会二次应用余额/持仓事件。
 - 2026-06-03：继续 P0-A websocket transport foundation。新增 `core/binance_user_stream_runtime.py` 与 `binance_user_stream_service.py`：可解析 user-stream message、写 `logs/binance_user_stream_events.jsonl` 与 latest event 文件、用 messages-file 离线回放并应用中心状态；可选 websocket 模式运行时才 import `websocket-client`。新增 `crypto-binance-user-stream.service` 草案，但服务仍未启动。
 - 2026-06-03：继续 P0-A listen-key 串联。`refresh_listen_key_via_queue()` 现在可通过 central API queue executor start/keepalive listen-key，并写 listen-key state；`binance_user_stream_service.py` websocket 模式无 listen-key 时会自动走该路径。systemd 草案不再依赖预置 `BINANCE_A_LISTEN_KEY`。
+- 2026-06-03：继续 P0-A scanner/client 接队列。新增 `core/binance_api_queue_client.py`，A/v11、B/v16、C/v14 Binance client 的 signed REST 与 client public exchangeInfo 默认提交 central API queue 并等待 executor；executor 未运行时 fail-closed，不回退直连 REST。当前服务仍暂停，fresh-run 验证未开始。
 
 ---
 ## 2026-05-29 全局运行自检与账户方向口径修复

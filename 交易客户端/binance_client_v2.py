@@ -32,6 +32,7 @@ from core.binance_api_guard import (
     wait_before_public_request,
     wait_before_request,
 )
+from core.binance_api_queue_client import api_queue_client_enabled, queued_api_request
 
 logger = logging.getLogger("binance_client_v2")
 
@@ -172,6 +173,18 @@ def _sign(params: dict) -> str:
 
 def _request(method: str, path: str, params: dict = None) -> dict:
     """发送带签名的请求"""
+    if api_queue_client_enabled():
+        data = queued_api_request(
+            scope="signed",
+            account="B",
+            label="B/v16",
+            method=method,
+            path=path,
+            body=dict(params or {}),
+        )
+        if isinstance(data, dict) and data.get("code") is not None and str(data.get("code")) != "200":
+            logger.error(f"Binance queued API错误: {data}")
+        return data
     wait_before_request("B/v16", method, path)
     timestamp = int(time.time() * 1000)
     params = params or {}
@@ -210,6 +223,8 @@ def _public_request(path: str) -> dict:
     """发送公共 REST 请求，不占 signed 账户预算。"""
     url = f"{BASE_URL}{path}"
     try:
+        if api_queue_client_enabled():
+            return queued_api_request(scope="public", label="B/v16-client", method="GET", path=path)
         wait_before_public_request("B/v16-client", url)
         with urllib.request.urlopen(url, timeout=15) as resp:
             return json.loads(resp.read().decode("utf-8", errors="replace"))

@@ -43,6 +43,7 @@ A_V11_TARGET_MARGIN_USDT = 100.0
 A_V11_MARGIN_TOLERANCE_PCT = 0.05
 BAN_UNTIL_RE = re.compile(r"banned until\s+(\d{12,})", re.IGNORECASE)
 BAN_RESUME_PADDING_SECONDS = 5 * 60
+ACCOUNT_COLLECTION_GAP_SECONDS = max(0.0, float(os.environ.get("ACCOUNT_SNAPSHOT_ACCOUNT_GAP_SEC", "65")))
 
 
 def _sizing_violations(account: dict[str, Any], positions: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -236,13 +237,36 @@ def _collect_account(key: str, version: str, desc: str, module_name: str, class_
 def collect_accounts_resilient() -> tuple[list[dict[str, Any]], list[str]]:
     accounts: list[dict[str, Any]] = []
     errors: list[str] = []
-    for key, version, desc, module_name, class_name, hard in ACCOUNTS:
+    total = len(ACCOUNTS)
+    for index, (key, version, desc, module_name, class_name, hard) in enumerate(ACCOUNTS):
+        collected_success = False
+        guard_delay = current_cooldown_seconds()
+        if guard_delay > 0:
+            error = f"shared guard cooldown active before {key}/{version}: {int(guard_delay)}s"
+            errors.append(error)
+            accounts.append(_last_account_snapshot(key, version, desc, hard, error))
+            for rest in ACCOUNTS[index + 1:]:
+                rest_key, rest_version, rest_desc, _, _, rest_hard = rest
+                rest_error = f"shared guard cooldown active before {rest_key}/{rest_version}: {int(guard_delay)}s"
+                errors.append(rest_error)
+                accounts.append(_last_account_snapshot(rest_key, rest_version, rest_desc, rest_hard, rest_error))
+            break
         try:
             accounts.append(_collect_account(key, version, desc, module_name, class_name, hard))
+            collected_success = True
         except Exception as exc:
             error = str(exc)
             errors.append(error)
             accounts.append(_last_account_snapshot(key, version, desc, hard, error))
+            if "418" in error or "429" in error or "-1003" in error or "too many requests" in error.lower():
+                for rest in ACCOUNTS[index + 1:]:
+                    rest_key, rest_version, rest_desc, _, _, rest_hard = rest
+                    rest_error = f"stopped after rate-limit error from {key}/{version}: {error}"
+                    errors.append(rest_error)
+                    accounts.append(_last_account_snapshot(rest_key, rest_version, rest_desc, rest_hard, rest_error))
+                break
+        if collected_success and index < total - 1 and ACCOUNT_COLLECTION_GAP_SECONDS > 0:
+            time.sleep(ACCOUNT_COLLECTION_GAP_SECONDS)
     return accounts, errors
 
 

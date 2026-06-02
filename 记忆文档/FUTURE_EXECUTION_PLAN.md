@@ -10,8 +10,8 @@
 
 1. **P0-A Binance API 根治**
    - 目标：把余额/仓位读取从轮询迁到 user-data-stream 或集中账户状态服务；把 guard 从协作式文件锁升级为独立队列/集中限速；避免 IP 级 418/429 反复拖住账户快照和策略扫描。
-   - 已完成：signed/public guard、指数冷却、trade reserve、部分重复 `positionRisk` 合并、B/C `exchangeInfo` 迁出 signed REST、开仓风控门禁优先读取新鲜 `account_snapshot_latest.json` 中心状态（过期/标记 stale 则不用且暂停新开仓，不再回退 signed REST）、runtime 非订单持仓同步/硬顶扫描改为 fresh central state 优先且 stale 时跳过、public 60秒 top path/source 归因、public guard 默认平滑到 `60/min`。
-   - 未完成：user-data-stream/central account-state、跨操作 open/close confirmation 状态服务、独立 API 队列服务、冷却后 30 分钟自然恢复验证。
+   - 已完成：signed/public guard、指数冷却、trade reserve、部分重复 `positionRisk` 合并、B/C `exchangeInfo` 迁出 signed REST、开仓风控门禁优先读取新鲜 `account_snapshot_latest.json` 中心状态（过期/标记 stale 则不用且暂停新开仓，不再回退 signed REST）、runtime 非订单持仓同步/硬顶扫描改为 fresh central state 优先且 stale 时跳过、account snapshot 多账户采集默认间隔 `65s` 并遇到 rate-limit 即停止后续账户、public 60秒 top path/source 归因、public guard 默认平滑到 `60/min`、19:29 CST 自然恢复验证 `fresh_accounts=3/partial_error=0/P0=0`。
+   - 未完成：user-data-stream/central account-state、跨操作 open/close confirmation 状态服务、独立 API 队列服务、连续 30 分钟无新 418/429/-1003 观察。
    - 验收：30 分钟内 journal 无 418/429/-1003；账户快照可自然保持 fresh；策略服务遇到单点 ban 不继续延长 ban；入口页显示 cooldown/source/top paths。
 
 2. **P0-B Replay/live 同路径**

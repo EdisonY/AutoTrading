@@ -513,8 +513,10 @@ def collect_alerts() -> dict[str, Any]:
         offenders = sorted(by_service.items(), key=lambda item: int(item[1]), reverse=True)
         offender_text = "，".join(f"{name}:{count}" for name, count in offenders[:4])
         only_account_snapshot = set(by_service) <= {"crypto-account-snapshot.service"}
-        level = "warn" if account_in_cooldown and only_account_snapshot else "bad"
         ban_until = api_rate_limits.get("ban_until") or (account_retry.isoformat() if account_retry else "")
+        ban_until_dt = parse_dt(ban_until) if ban_until else None
+        resolved_cooldown = bool(ban_until_dt and ban_until_dt <= now and not api_guard.get("in_cooldown"))
+        level = "warn" if ((account_in_cooldown and only_account_snapshot) or resolved_cooldown) else "bad"
         ban_note = f"；封禁到 {ban_until}" if ban_until else ""
         latest_note = f"；最新 {str(api_rate_limits.get('latest') or '')[:180]}" if api_rate_limits.get("latest") else ""
         alerts.append({

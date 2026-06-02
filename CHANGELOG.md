@@ -2,6 +2,14 @@
 
 This is the durable reason-and-outcome ledger for every material design, code, configuration, deployment, rollback, optimization, or live operational change.
 
+## 2026-06-02 16:55 CST - Move B/C exchangeInfo off signed REST
+- Trigger / reason: Binance/Testnet returned another IP-level `418/-1003` after the 16:44 cooldown expired, even though the local signed guard had only four recent requests. While the new cooldown must not be forced, B/v16 and C/v14 still had `exchangeInfo` running through signed REST, needlessly occupying account API pressure.
+- Completed: Changed B/v16 and C/v14 Binance clients so `/fapi/v1/exchangeInfo` uses the shared public REST guard (`wait_before_public_request` / `record_public_response`) and the existing 60-second exchange-info cache. `get_exchange_info()` now returns that cached public result instead of sending a signed request.
+- Not completed / remaining: This is another low-risk REST-pressure reduction, not the durable user-data-stream / centralized account-state service. It does not clear the active Binance cooldown; fresh account snapshots must still wait for the guard window and a clean exchange response.
+- Verification: Local `py_compile` passed for `交易客户端/binance_client_v2.py` and `交易客户端/binance_client_v3.py`; `git diff --check` passed.
+- Live impact / deployment: Source change pending deployment after commit/push. Intended live impact is signed REST pressure reduction only. No threshold, sizing, leverage, stop, scanner cadence, order direction, automatic upgrade, or automatic rollback change.
+- Files / release / commit: `交易客户端/binance_client_v2.py`, `交易客户端/binance_client_v3.py`, `CHANGELOG.md`, `PROJECT_STATE.md`, `记忆文档/MEMORY.md`.
+
 ## 2026-06-02 16:30 CST - Add rollback-watch action matrix
 - Trigger / reason: User asked whether work can continue while the Binance API blocker cools down. The P0 Binance cooldown cannot be forced safely, but P1 rollback-watch items can be advanced without touching Binance or live parameters.
 - Completed: Added read-only `rollback_watch_review.py`. It reads `runtime/strategy_evolution_latest.json`, extracts active P0/P1 `rollback_watch` / `rollback_required` decisions, and outputs a compact action matrix with 24h closed samples, after-cost PnL, forced-close rate, open-fail rate, regime, and recommended action. It is integrated into Aliyun refresh/shadow review, reverse sync, live-context pull, release bundles, and the command-center function cards.

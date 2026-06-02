@@ -26,7 +26,12 @@ from core.binance_order_rules import (
     validate_market_price,
     validate_open_quantity,
 )
-from core.binance_api_guard import record_response, wait_before_request
+from core.binance_api_guard import (
+    record_public_response,
+    record_response,
+    wait_before_public_request,
+    wait_before_request,
+)
 
 logger = logging.getLogger("binance_client_v2")
 
@@ -100,7 +105,7 @@ def _get_exchange_info_cached() -> dict:
     now = time.time()
     if _exchange_info_cache is not None and (now - _exchange_info_cache_time) < 60:
         return _exchange_info_cache
-    info = _request("GET", "/fapi/v1/exchangeInfo")
+    info = _public_request("/fapi/v1/exchangeInfo")
     _exchange_info_cache = info
     _exchange_info_cache_time = now
     return info
@@ -201,6 +206,23 @@ def _request(method: str, path: str, params: dict = None) -> dict:
         return {"code": "-1", "msg": str(e)}
 
 
+def _public_request(path: str) -> dict:
+    """发送公共 REST 请求，不占 signed 账户预算。"""
+    url = f"{BASE_URL}{path}"
+    try:
+        wait_before_public_request("B/v16-client", url)
+        with urllib.request.urlopen(url, timeout=15) as resp:
+            return json.loads(resp.read().decode("utf-8", errors="replace"))
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", errors="replace")
+        logger.error(f"HTTP {e.code}: {body[:500]}")
+        record_public_response("B/v16-client", url, e.code, body)
+        return {"code": str(e.code), "msg": body[:500]}
+    except Exception as e:
+        logger.error(f"公共请求异常: {e}")
+        return {"code": "-1", "msg": str(e)}
+
+
 def _is_reduce_only_rejected(result: dict) -> bool:
     if not isinstance(result, dict):
         return False
@@ -280,7 +302,7 @@ class BinanceClientV2:
 
     def get_exchange_info(self) -> dict:
         """查询交易对信息（合约规模、最小下单量等）"""
-        return _request("GET", "/fapi/v1/exchangeInfo")
+        return _get_exchange_info_cached()
 
     # ── 合约下单 ────────────────────────────────────────────────
 

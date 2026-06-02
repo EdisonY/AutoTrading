@@ -516,6 +516,7 @@ def strategy_truth_summary(path: Path | None) -> dict[str, Any]:
         "summary": {},
         "strategy_stats": {},
         "recovery_stats": {},
+        "recovery_review": {},
     }
     payload = read_json(path) if path else None
     if not isinstance(payload, dict):
@@ -529,6 +530,7 @@ def strategy_truth_summary(path: Path | None) -> dict[str, Any]:
         "summary": payload.get("summary") or {},
         "strategy_stats": payload.get("strategy_stats") or {},
         "recovery_stats": payload.get("recovery_stats") or {},
+        "recovery_review": payload.get("recovery_review") or {},
     }
 
 
@@ -2217,6 +2219,29 @@ def render_html(out_dir: Path) -> str:
             f'<td class="num {"pos" if rec_upnl >= 0 else "neg"}">{rec_upnl:+.2f}</td></tr>'
         )
     quality_rows = "".join(quality_rows_parts) or '<tr><td colspan="9">暂无真相台账数据</td></tr>'
+    recovery_review = truth.get("recovery_review") or {}
+    recovery_risk = recovery_review.get("risk_counts") or {}
+    recovery_positions = recovery_review.get("positions") or []
+    recovery_review_rows = "".join(
+        f"""
+<tr>
+  <td>{h(pos.get('strategy'))}</td>
+  <td>{h(pos.get('symbol'))}</td>
+  <td>{h(pos.get('side'))}</td>
+  <td>{float(pos.get('age_hours') or 0):.2f}</td>
+  <td class="num {'pos' if float(pos.get('unrealized_pnl_usdt') or 0) >= 0 else 'neg'}">{float(pos.get('unrealized_pnl_usdt') or 0):+.2f}</td>
+  <td>{float(pos.get('unrealized_pnl_pct_on_margin') or 0):+.2f}%</td>
+  <td>{h(pos.get('risk'))}</td>
+  <td>{h(pos.get('shadow_action'))}</td>
+</tr>
+""".strip()
+        for pos in recovery_positions[:10]
+    ) or '<tr><td colspan="8">当前无恢复仓</td></tr>'
+    recovery_total_upnl = float(
+        truth_summary.get("total_recovery_unrealized_pnl_usdt")
+        or truth_summary.get("total_recovery_unrealized_pnl_usd")
+        or 0
+    )
 
     account_rows = "".join(
         f"""
@@ -2756,7 +2781,12 @@ th {{ background:#f1f5f9; color:#334155; }}
       <thead><tr><th>策略</th><th>已平仓</th><th>胜率</th><th>净PnL</th><th>PF</th><th>盈亏比</th><th>硬顶</th><th>恢复仓</th><th>恢复仓浮盈</th></tr></thead>
       <tbody>{quality_rows}</tbody>
     </table>
-    <p class="note">主动策略累计 PnL: <b class="{'pos' if float(truth_summary.get('total_active_pnl_usd', 0)) >= 0 else 'neg'}">{float(truth_summary.get('total_active_pnl_usd', 0)):+.2f}</b> USDT；恢复仓未实现 PnL: <b class="{'pos' if float(truth_summary.get('total_recovery_unrealized_pnl_usdt', 0)) >= 0 else 'neg'}">{float(truth_summary.get('total_recovery_unrealized_pnl_usdt', 0)):+.2f}</b> USDT。</p>
+    <p class="note">主动策略累计 PnL: <b class="{'pos' if float(truth_summary.get('total_active_pnl_usd', 0)) >= 0 else 'neg'}">{float(truth_summary.get('total_active_pnl_usd', 0)):+.2f}</b> USDT；恢复仓未实现 PnL: <b class="{'pos' if recovery_total_upnl >= 0 else 'neg'}">{recovery_total_upnl:+.2f}</b> USDT。</p>
+    <p class="note">恢复仓独立审查：review={int(recovery_risk.get('review') or 0)}，watch={int(recovery_risk.get('watch') or 0)}，none={int(recovery_risk.get('none') or 0)}；只读 shadow，不自动平仓。</p>
+    <table>
+      <thead><tr><th>策略</th><th>币种</th><th>方向</th><th>年龄h</th><th>浮盈</th><th>浮盈/保证金</th><th>风险</th><th>Shadow动作</th></tr></thead>
+      <tbody>{recovery_review_rows}</tbody>
+    </table>
   </section>
 
   <section class="section panel">

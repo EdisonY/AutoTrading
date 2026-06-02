@@ -56,6 +56,28 @@ def safe_float(val: Any, default: float = 0.0) -> float:
         return default
 
 
+def payload_float(payload: dict[str, Any], *keys: str, default: float = 0.0) -> float:
+    raw = payload.get("raw") if isinstance(payload.get("raw"), dict) else {}
+    for key in keys:
+        if key in payload:
+            return safe_float(payload.get(key), default)
+        if key in raw:
+            return safe_float(raw.get(key), default)
+    return default
+
+
+def payload_text(payload: dict[str, Any], *keys: str) -> str:
+    raw = payload.get("raw") if isinstance(payload.get("raw"), dict) else {}
+    for key in keys:
+        value = payload.get(key)
+        if value not in (None, ""):
+            return str(value)
+        value = raw.get(key)
+        if value not in (None, ""):
+            return str(value)
+    return ""
+
+
 def load_open_events(con: sqlite3.Connection, days: int = 30) -> list[dict[str, Any]]:
     """Load OPEN events from the events table."""
     cutoff = (datetime.now(CST) - timedelta(days=days)).isoformat()
@@ -104,12 +126,12 @@ def load_close_events(con: sqlite3.Connection, days: int = 30) -> list[dict[str,
             "symbol": row[3],
             "event_type": row[4],
             "side": row[5],
-            "exit_price": safe_float(payload.get("exit_price")),
-            "pnl_usd": safe_float(payload.get("pnl_usd")),
-            "pnl_pct": safe_float(payload.get("pnl_pct")),
-            "reason": payload.get("reason", ""),
-            "entry_price": safe_float(payload.get("entry_price")),
-            "entry_time": payload.get("entry_time", ""),
+            "exit_price": payload_float(payload, "exit_price", "price", "close_price"),
+            "pnl_usd": payload_float(payload, "pnl_usd", "pnl_usdt", "realized_pnl_usdt", "pnl"),
+            "pnl_pct": payload_float(payload, "pnl_pct", "pnl_percent", "return_pct"),
+            "reason": payload_text(payload, "reason", "close_reason"),
+            "entry_price": payload_float(payload, "entry_price"),
+            "entry_time": payload_text(payload, "entry_time"),
         })
     return events
 
@@ -307,6 +329,69 @@ def evaluate_recovery_exit_policies(recovery: list[dict]) -> dict[str, Any]:
     return policies
 
 
+def review_recovery_positions(recovery: list[dict]) -> dict[str, Any]:
+    """Build read-only recovery-position review facts without changing exit behavior."""
+    now = datetime.now(CST)
+    positions: list[dict[str, Any]] = []
+    risk_counts = {"none": 0, "watch": 0, "review": 0}
+    total_margin = 0.0
+    total_upnl = 0.0
+    oldest_age = 0.0
+    for pos in recovery:
+        snap_dt = parse_dt(pos.get("snapshot_ts"))
+        age_hours = (now - snap_dt).total_seconds() / 3600 if snap_dt else 0.0
+        margin = safe_float(pos.get("margin"))
+        upnl = safe_float(pos.get("unrealized_pnl"))
+        upnl_pct = upnl / margin * 100 if margin > 0 else 0.0
+        oldest_age = max(oldest_age, age_hours)
+        total_margin += margin
+        total_upnl += upnl
+        if age_hours >= 24 or upnl_pct <= -5:
+            risk = "review"
+            action = "manual_review"
+        elif age_hours >= 8 or upnl_pct <= -2:
+            risk = "watch"
+            action = "keep_shadow_monitoring"
+        else:
+            risk = "none"
+            action = "hold_baseline"
+        risk_counts[risk] += 1
+        positions.append(
+            {
+                "strategy": pos.get("strategy"),
+                "account": pos.get("account"),
+                "symbol": pos.get("symbol"),
+                "side": pos.get("side"),
+                "age_hours": round(age_hours, 2),
+                "entry_price": pos.get("entry_price"),
+                "mark_price": pos.get("mark_price"),
+                "qty": pos.get("qty"),
+                "margin_usdt": round(margin, 2),
+                "unrealized_pnl_usdt": round(upnl, 2),
+                "unrealized_pnl_pct_on_margin": round(upnl_pct, 2),
+                "risk": risk,
+                "shadow_action": action,
+                "note": "只读审查；不自动平仓、不改变退出规则。",
+            }
+        )
+    positions.sort(
+        key=lambda item: (
+            {"review": 0, "watch": 1, "none": 2}.get(str(item.get("risk")), 3),
+            -abs(float(item.get("unrealized_pnl_pct_on_margin") or 0)),
+            -float(item.get("age_hours") or 0),
+        )
+    )
+    return {
+        "count": len(recovery),
+        "risk_counts": risk_counts,
+        "oldest_age_hours": round(oldest_age, 2),
+        "total_margin_usdt": round(total_margin, 2),
+        "total_unrealized_pnl_usdt": round(total_upnl, 2),
+        "positions": positions,
+        "policy": "report_only_no_auto_exit",
+    }
+
+
 def compute_strategy_stats(trades: list[dict]) -> dict[str, dict]:
     """Compute per-strategy statistics."""
     stats: dict[str, dict] = {}
@@ -420,6 +505,7 @@ def build_output(
 
     # Recovery exit policy evaluation
     recovery_exit_policies = evaluate_recovery_exit_policies(recovery)
+    recovery_review = review_recovery_positions(recovery)
 
     # Account summary
     account_summary = []
@@ -448,6 +534,7 @@ def build_output(
         },
         "strategy_stats": strategy_stats,
         "recovery_stats": recovery_stats,
+        "recovery_review": recovery_review,
         "recovery_exit_policies": recovery_exit_policies,
         "daily_facts": daily_facts,
         "account_summary": account_summary,
@@ -497,6 +584,37 @@ def write_markdown(output: dict, path: Path) -> None:
     lines.extend(["", "## 账户快照", ""])
     for acct in output.get("account_summary", []):
         lines.append(f"- **{acct['account']}**: 钱包 {acct['wallet_usdt']:.2f} USDT, 浮盈 {acct['unrealized_pnl_usdt']:.2f} USDT, {acct['open_positions']} 持仓")
+
+    review = output.get("recovery_review") or {}
+    lines.extend(["", "## 恢复仓独立审查", ""])
+    lines.append(
+        f"- 恢复仓: {int(review.get('count') or 0)} 个；"
+        f"最老快照年龄: {float(review.get('oldest_age_hours') or 0):.2f}h；"
+        f"保证金: {float(review.get('total_margin_usdt') or 0):.2f} USDT；"
+        f"未实现 PnL: {float(review.get('total_unrealized_pnl_usdt') or 0):+.2f} USDT"
+    )
+    risk_counts = review.get("risk_counts") or {}
+    lines.append(
+        f"- 风险分层: review={int(risk_counts.get('review') or 0)}, "
+        f"watch={int(risk_counts.get('watch') or 0)}, none={int(risk_counts.get('none') or 0)}"
+    )
+    positions = review.get("positions") or []
+    if positions:
+        lines.append("")
+        lines.append("| 策略 | 币种 | 方向 | 年龄h | 保证金 | 浮盈 | 浮盈/保证金 | 风险 | Shadow动作 |")
+        lines.append("|------|------|------|------:|------:|------:|------------:|------|------------|")
+        for pos in positions[:20]:
+            lines.append(
+                f"| {pos.get('strategy')} | {pos.get('symbol')} | {pos.get('side')} | "
+                f"{float(pos.get('age_hours') or 0):.2f} | "
+                f"{float(pos.get('margin_usdt') or 0):.2f} | "
+                f"{float(pos.get('unrealized_pnl_usdt') or 0):+.2f} | "
+                f"{float(pos.get('unrealized_pnl_pct_on_margin') or 0):+.2f}% | "
+                f"{pos.get('risk')} | {pos.get('shadow_action')} |"
+            )
+    else:
+        lines.append("- 当前无恢复仓；主动策略 alpha 未被恢复仓浮盈扭曲。")
+    lines.append("- 本节只读审查，不自动平仓、不改变退出规则。")
 
     lines.extend(["", "## 每日明细", ""])
     daily = output.get("daily_facts", {})

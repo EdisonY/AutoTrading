@@ -1,5 +1,11 @@
 # MEMORY.md - 长期记忆
 
+## 2026-06-02 Phase 7 truth ledger PnL 修正 + 恢复仓审查
+- 继续长期计划，先拉 live context：`2026-06-02T11:06:10+08:00` 显示六个 Tencent 核心服务 active，账户浮盈 `+8.4778`，`10` 仓，attention `P0=0/P1=0/P2=2`。
+- 发现 `strategy_truth_ledger.py` 的 CLOSE/FORCED_CLOSE PnL 只读顶层 payload，没读嵌套 `payload.raw`，导致当前 30 日 truth ledger 已平仓 `437` 笔但 active PnL 显示 `0`。已改为 PnL、exit price、reason、entry 字段同时读顶层和 `raw`。
+- 本地 30 日复验：主动策略 PnL `+163.00 USDT`；A/v11 `-80.89`、B/v16 `+167.31`、C/v14 `+76.58`；当前恢复仓 `0`。这是真相台账/入口页证据修正，不改任何实盘交易逻辑。
+- Phase 7 首版恢复仓独立审查已加入 truth ledger 和 portal：恢复仓数、最老年龄、保证金、未实现 PnL、风险分层、单仓 age/PnL%/shadow_action。当前因恢复仓样本为 0，接管后 MFE/MAE、反向信号退出证据仍待后续样本或 replay。
+
 ## 2026-06-02 N6 watchlist 历史持久化
 - 为继续拆解 `never_scanned_in_mirror`，哨兵现在会把每轮 `market_mover_watchlist.json` 追加写入 `runtime/market_mover_watchlist_history.jsonl` 和每日分片。现有 latest JSON 仍保留，watchlist 构造逻辑、scanner cadence、策略阈值都不变。
 - `shadow_sync_from_tencent.py` 会把 watchlist history 和当前 watchlist 带到阿里云 bounded mirror；`sentinel_quality_review.py` 会报告 watchlist history 是否可用；入口页显示 watchlist snapshot 数、去重币种和时间范围。上线前本地历史为 0，这是预期，因为 durable 采集从本轮部署后开始。部署后阿里云短刷新已读到 `Watchlist snapshots: 63`，说明 Tencent daily shard 到 Aliyun mirror 到 portal 的链路已通。

@@ -61,7 +61,7 @@ from core.event_store import EventStoreWriter
 from core.market_watchlist import load_sentinel_context
 from core.market_data_cache import cached_available_symbols, cached_top_symbols
 from core.kline_cache import load_cached_klines, save_cached_klines
-from core.binance_api_guard import current_cooldown_seconds, record_public_response, wait_before_public_request
+from core.binance_api_guard import record_public_response, wait_before_public_request
 from core.position_utils import infer_position_side, leveraged_loss_pct
 from core.sentinel_scanner import fields_from_context, filter_context_by_available, merge_symbols_with_context
 from core.risk_engine import RiskEngine, RiskLimits
@@ -1079,7 +1079,11 @@ class Scanner:
         return {}
 
     def _account_balance_summary(self) -> tuple[float, float]:
-        return usdt_balance_summary(self.client.get_balance())
+        cached_state = load_cached_account_state(PROJECT_ROOT, "C/v14")
+        if not cached_state:
+            logger.debug("  中心账户状态不可用，余额摘要返回 0，避免 signed REST")
+            return 0.0, 0.0
+        return usdt_balance_summary(cached_state.balance)
 
     def _can_open_new_position(self, risk_usdt: float, now_str: str, tf: str, sym: str, side: str, score: float) -> bool:
         try:
@@ -1187,22 +1191,13 @@ class Scanner:
         """启动时同步交易所账户状态"""
         logger.info("同步交易所账户状态...")
         cached_state = load_cached_account_state(PROJECT_ROOT, "C/v14")
-        if current_cooldown_seconds() > 0 and not cached_state:
-            logger.warning("  Binance guard 冷却中且中心账户状态不可用，跳过启动 REST 同步")
+        if not cached_state:
+            logger.warning("  中心账户状态不可用，跳过启动同步，避免 signed REST 探测")
             return
 
-        if current_cooldown_seconds() <= 0:
-            result = self.client.get_account_config()
-            if isinstance(result, dict):
-                if result.get("dualSidePosition") == "true":
-                    logger.info("  持仓模式: 双向持仓 ✓")
-                else:
-                    logger.info("  设置持仓模式为双向持仓...")
-                    self.client.set_position_mode("long_short_mode")
-        else:
-            logger.info("  Binance guard 冷却中，跳过启动持仓模式 REST 检查")
+        logger.info("  使用中心账户状态恢复本地持仓；跳过启动持仓模式 REST 检查")
 
-        positions = cached_state.positions if cached_state else self.client.get_positions()
+        positions = cached_state.positions
         active_positions = []
         if isinstance(positions, list):
             for pos in positions:
@@ -1266,7 +1261,7 @@ class Scanner:
         else:
             logger.info("  当前无持仓 ✓")
 
-        bal = cached_state.balance if cached_state else self.client.get_balance()
+        bal = cached_state.balance
         if isinstance(bal, list):
             for item in bal:
                 if item.get("asset") == "USDT":

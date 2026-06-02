@@ -814,7 +814,11 @@ class ScannerV16:
             self.positions.setdefault(tf, {})[symbol] = pos
 
     def _account_balance_summary(self):
-        return usdt_balance_summary(self.client.get_balance())
+        cached_state = load_cached_account_state(PROJECT_ROOT, "B/v16")
+        if not cached_state:
+            logger.debug("中心账户状态不可用，余额摘要返回 0，避免 signed REST")
+            return 0.0, 0.0
+        return usdt_balance_summary(cached_state.balance)
 
     def _can_open_new_position(self, risk_usdt, tf, sym, side, score):
         try:

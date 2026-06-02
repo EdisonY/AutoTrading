@@ -254,6 +254,7 @@
 - 2026-06-02：继续 P0-B，C/v14 同方向持仓、止损保护、赛道上限，以及 B/v16 止损保护已抽到 shared pure gates：`evaluate_same_side_position_gate()`、`evaluate_symbol_stop_loss_gate()`、`evaluate_sector_position_gate()`。已部署 `20260602-205218-strategy-b-30bce43` / `20260602-205321-strategy-c-30bce43`；20:56 live pull 六服务 active，P0=0/P1=4/P2=2，guard cooldown=0。
 - 2026-06-02：继续 P0-B，B/C score max gate 与 B/v16 active-position limit gate 已抽到 shared pure functions。已部署 `20260602-210404-strategy-b-637c35e` / `20260602-210538-strategy-c-637c35e`；21:07 live pull 六服务 active，P0=0/P1=4/P2=2。
 - 2026-06-02：P0-A 仍未根治。21:06 guard 显示 `public:C/v14 GET /fapi/v1/klines` 新 429，cooldown 到 `2026-06-02T21:30:59+08:00`。已把 public guard 默认从 `60/min + 1000ms` 降到 `45/min + 1400ms`，部署 A/B/C/sentinel，并重启 market-data-cache。21:21 live pull 六服务 active，P0=0/P1=4/P2=2；需要 cooldown 自然过期后观察 30 分钟无新 418/429/-1003。
+- 2026-06-02：21:30:59 cooldown 自然结束时，A/v11 `/fapi/v2/balance` 又触发 signed `429/-1003`，cooldown 延到 `22:30:59`。已继续修 P0-A：A/v11/C/v14 启动同步不再 fallback 到 signed account config/positions/balance，A/B/C scanner 余额摘要 helper 也不再 signed fallback。已部署 `20260602-213858-strategy-a-133ea61` / `20260602-214106-strategy-b-133ea61` / `20260602-214212-strategy-c-133ea61`；21:43 六服务 active，A/B/C journal 无新 API/import/syntax 错误。等待 22:30:59 后自然观察，勿强拉 Binance。
 
 ---
 ## 2026-05-29 全局运行自检与账户方向口径修复

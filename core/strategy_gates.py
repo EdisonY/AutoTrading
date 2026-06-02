@@ -121,6 +121,66 @@ def evaluate_active_position_limit_gate(
     return StrategyGateDecision(True, "risk_gate", "active_position_limit_ok", evidence={"open_positions": count})
 
 
+def evaluate_b_v16_small_live_stage_guard(
+    *,
+    enabled: bool,
+    signal: Mapping[str, Any],
+    side: str,
+    score: float,
+    min_score: float,
+    reverse_pass_score: float,
+) -> StrategyGateDecision:
+    """Evaluate the B/v16 small-live stage guard."""
+    if not enabled:
+        return StrategyGateDecision(True, "small_live_stage_guard", "")
+
+    side_key = str(side or "").lower()
+    own_reasons = signal.get(f"reasons_{side_key}", []) or []
+    opposite_side = "short" if side_key == "long" else "long"
+    opposite_reasons = signal.get(f"reasons_{opposite_side}", []) or []
+    score_value = float(score)
+    min_score_value = float(min_score)
+    reverse_pass_score_value = float(reverse_pass_score)
+    reverse_stage = (
+        (side_key == "long" and any("EMA空头" in str(reason) for reason in opposite_reasons))
+        or (side_key == "short" and any("EMA多头" in str(reason) for reason in opposite_reasons))
+    )
+    if score_value < min_score_value:
+        return StrategyGateDecision(
+            False,
+            "small_live_stage_guard",
+            f"小仓阶段保护: 分数{score_value:.1f}<{min_score_value:.0f}",
+            adjusted_score=score_value,
+            threshold=min_score_value,
+        )
+    if reverse_stage and score_value < reverse_pass_score_value:
+        return StrategyGateDecision(
+            False,
+            "small_live_stage_guard",
+            f"小仓阶段保护: 逆势EMA且分数{score_value:.1f}<{reverse_pass_score_value:.0f}",
+            adjusted_score=score_value,
+            threshold=reverse_pass_score_value,
+            evidence={"reverse_stage": True},
+        )
+    has_orderflow = any("CVD+OFI强势" in str(reason) for reason in own_reasons)
+    has_rsi_structure = any("RSI" in str(reason) for reason in own_reasons)
+    if not has_orderflow and not has_rsi_structure:
+        return StrategyGateDecision(
+            False,
+            "small_live_stage_guard",
+            "小仓阶段保护: 缺少订单流强共振或RSI结构",
+            adjusted_score=score_value,
+            evidence={"has_orderflow": False, "has_rsi_structure": False},
+        )
+    return StrategyGateDecision(
+        True,
+        "small_live_stage_guard",
+        "small_live_stage_guard_pass",
+        adjusted_score=score_value,
+        evidence={"reverse_stage": reverse_stage, "has_orderflow": has_orderflow, "has_rsi_structure": has_rsi_structure},
+    )
+
+
 def evaluate_a_v11_entry_threshold(
     *,
     timeframe: str,

@@ -8,6 +8,7 @@ from core.strategy_gates import (
     evaluate_active_position_limit_gate,
     evaluate_b_v16_confirmation_gate,
     evaluate_b_v16_entry_threshold,
+    evaluate_b_v16_small_live_stage_guard,
     evaluate_c_v14_confirmation_gate,
     evaluate_c_v14_entry_threshold,
     evaluate_c_v14_stale_entry_price_gate,
@@ -142,6 +143,61 @@ class StrategyGateParityTest(unittest.TestCase):
         )
         self.assertFalse(decision.allowed)
         self.assertEqual(decision.threshold, 93)
+
+        disabled = evaluate_b_v16_small_live_stage_guard(
+            enabled=False,
+            signal={},
+            side="long",
+            score=0,
+            min_score=55,
+            reverse_pass_score=65,
+        )
+        self.assertTrue(disabled.allowed)
+        self.assertEqual(disabled.reason, "")
+
+        low_score = evaluate_b_v16_small_live_stage_guard(
+            enabled=True,
+            signal={"reasons_long": ["CVD+OFI强势"]},
+            side="long",
+            score=54.9,
+            min_score=55,
+            reverse_pass_score=65,
+        )
+        self.assertFalse(low_score.allowed)
+        self.assertEqual(low_score.reason, "小仓阶段保护: 分数54.9<55")
+
+        reverse = evaluate_b_v16_small_live_stage_guard(
+            enabled=True,
+            signal={"reasons_long": ["CVD+OFI强势"], "reasons_short": ["EMA空头"]},
+            side="long",
+            score=64.9,
+            min_score=55,
+            reverse_pass_score=65,
+        )
+        self.assertFalse(reverse.allowed)
+        self.assertEqual(reverse.reason, "小仓阶段保护: 逆势EMA且分数64.9<65")
+
+        no_structure = evaluate_b_v16_small_live_stage_guard(
+            enabled=True,
+            signal={"reasons_long": ["量能放大"]},
+            side="long",
+            score=70,
+            min_score=55,
+            reverse_pass_score=65,
+        )
+        self.assertFalse(no_structure.allowed)
+        self.assertEqual(no_structure.reason, "小仓阶段保护: 缺少订单流强共振或RSI结构")
+
+        ok = evaluate_b_v16_small_live_stage_guard(
+            enabled=True,
+            signal={"reasons_short": ["RSI背离"], "reasons_long": ["EMA空头"]},
+            side="short",
+            score=70,
+            min_score=55,
+            reverse_pass_score=65,
+        )
+        self.assertTrue(ok.allowed)
+        self.assertEqual(ok.reason, "small_live_stage_guard_pass")
 
     def test_c_v14_threshold_confirmation_and_tail(self):
         threshold = evaluate_c_v14_entry_threshold(

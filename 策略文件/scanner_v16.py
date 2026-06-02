@@ -41,6 +41,7 @@ from core.strategy_gates import (
     evaluate_active_position_limit_gate,
     evaluate_b_v16_confirmation_gate,
     evaluate_b_v16_entry_threshold,
+    evaluate_b_v16_small_live_stage_guard,
     evaluate_no_same_symbol_position_gate,
     evaluate_score_max_gate,
     evaluate_symbol_stop_loss_gate,
@@ -897,24 +898,15 @@ class ScannerV16:
 
     def _passes_small_live_stage_guard(self, sym, tf, sig, side, score):
         """Small-live approval for HYP-2026-05-22-B-v16-reverse_trade-stage-guard."""
-        if not STAGE_GUARD_SMALL_LIVE_ENABLED:
-            return True, ""
-        own_reasons = sig.get(f"reasons_{side}", []) or []
-        opposite_side = "short" if side == "long" else "long"
-        opposite_reasons = sig.get(f"reasons_{opposite_side}", []) or []
-        reverse_stage = (
-            (side == "long" and any("EMA空头" in str(r) for r in opposite_reasons))
-            or (side == "short" and any("EMA多头" in str(r) for r in opposite_reasons))
+        decision = evaluate_b_v16_small_live_stage_guard(
+            enabled=STAGE_GUARD_SMALL_LIVE_ENABLED,
+            signal=sig,
+            side=side,
+            score=score,
+            min_score=STAGE_GUARD_MIN_SCORE,
+            reverse_pass_score=STAGE_GUARD_REVERSE_PASS_SCORE,
         )
-        if score < STAGE_GUARD_MIN_SCORE:
-            return False, f"小仓阶段保护: 分数{score:.1f}<{STAGE_GUARD_MIN_SCORE:.0f}"
-        if reverse_stage and score < STAGE_GUARD_REVERSE_PASS_SCORE:
-            return False, f"小仓阶段保护: 逆势EMA且分数{score:.1f}<{STAGE_GUARD_REVERSE_PASS_SCORE:.0f}"
-        has_orderflow = any("CVD+OFI强势" in str(r) for r in own_reasons)
-        has_rsi_structure = any("RSI" in str(r) for r in own_reasons)
-        if not has_orderflow and not has_rsi_structure:
-            return False, "小仓阶段保护: 缺少订单流强共振或RSI结构"
-        return True, "small_live_stage_guard_pass"
+        return decision.allowed, decision.reason
 
     def _adjusted_score(self, sym, score):
         if sym in WATCHLIST_SYMBOLS:

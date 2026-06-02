@@ -266,6 +266,7 @@
 - 2026-06-03：Testnet 施工模式继续推进 P0-A。继中心 account-state 和 execution confirmation 中心状态证明路径后，新增 `core/binance_api_queue.py` 独立 API 队列 foundation：SQLite 持久化请求、优先级、cooldown defer、lease、幂等键、结果/错误记录；新增 `binance_api_queue_service.py` 与 `crypto-binance-api-queue.service` 草案，并接入 release `api-queue` 组件。当前 scanner/client 尚未切到队列，服务不启动，P0-A 仍需 user-data-stream、队列执行器接入、fresh-run 30 分钟无 418/429/-1003 验收。
 - 2026-06-03：P0-A user-data-stream 先落纯事件归并层。新增 `core/account_state_stream.py`，可把 Binance Futures `ACCOUNT_UPDATE` 的余额、持仓增减、方向、upnl/notional 归并进中心 account-state payload；测试覆盖开仓/余额更新、零仓移除、非账户事件忽略。listen-key/websocket transport 尚未启动，后续还要把事件源接入 account-state service。
 - 2026-06-03：继续 P0-A，把 stream reducer 接进 `account_state_service.py`。新增 `--stream-events` 与 `--stream-strategy`，可把 newline-delimited user-stream JSONL 离线应用到 `runtime/account_state_latest.json`；测试覆盖写入后可由 `load_central_account_state()` 读取。仍未做 websocket/listen-key、offset 去重、实时服务启动。
+- 2026-06-03：继续 P0-A listen-key 底座。新增 `core/binance_user_stream.py`，持久化 `runtime/binance_user_stream_listen_keys.json`，能判断 listen-key keepalive/restart 到期，并生成 start/keepalive/close 的 API 队列请求规格。当前不直接调用 Binance、不打开 websocket。
 
 ---
 ## 2026-05-29 全局运行自检与账户方向口径修复

@@ -273,6 +273,7 @@
 - 2026-06-03：继续 P0-A listen-key 串联。`refresh_listen_key_via_queue()` 现在可通过 central API queue executor start/keepalive listen-key，并写 listen-key state；`binance_user_stream_service.py` websocket 模式无 listen-key 时会自动走该路径。systemd 草案不再依赖预置 `BINANCE_A_LISTEN_KEY`。
 - 2026-06-03：继续 P0-A scanner/client 接队列。新增 `core/binance_api_queue_client.py`，A/v11、B/v16、C/v14 Binance client 的 signed REST 与 client public exchangeInfo 默认提交 central API queue 并等待 executor；executor 未运行时 fail-closed，不回退直连 REST。当前服务仍暂停，fresh-run 验证未开始。
 - 2026-06-03：继续 P0-A public REST 收口。scanner Kline/ticker/depth/funding、B/v16 live aggTrades、sentinel ticker、market-data-cache ticker、VPB funding/premium、order-rule public price check、counterfactual Kline、daily review market fetch 默认走 central API queue；只有显式 `BINANCE_API_QUEUE_CLIENT_ENABLED=0` 才回到旧 guard/urlopen。
+- 2026-06-03：继续 P0-A execution confirmation 收口。`ExecutionEngine` 默认要求 fresh central account-state 做 open/close 确认；缺失或时间早于订单提交时返回 `*_confirm_account_state_unavailable`，不再 fallback 到 client `get_positions()`，旧 fallback 只可显式 `CENTRAL_ACCOUNT_STATE_CONFIRM_REQUIRE=0` 开启。
 
 ---
 ## 2026-05-29 全局运行自检与账户方向口径修复

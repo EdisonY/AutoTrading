@@ -16,6 +16,10 @@ from core.position_utils import infer_position_side
 Side = Literal["long", "short"]
 
 
+class ConfirmationStateUnavailable(RuntimeError):
+    pass
+
+
 @dataclass(slots=True)
 class OpenRequest:
     symbol: str
@@ -91,6 +95,7 @@ class ExecutionEngine:
         *,
         account_state_root: str | Path | None = None,
         central_confirmation_max_age_seconds: float | None = None,
+        require_central_confirmation: bool | None = None,
     ):
         self.client = client
         self.name = name
@@ -104,6 +109,11 @@ class ExecutionEngine:
             if central_confirmation_max_age_seconds is not None
             else os.environ.get("CENTRAL_ACCOUNT_STATE_CONFIRM_MAX_AGE_SEC", "15")
         )
+        if require_central_confirmation is None:
+            value = os.environ.get("CENTRAL_ACCOUNT_STATE_CONFIRM_REQUIRE", "1").strip().lower()
+            self.require_central_confirmation = value not in {"0", "false", "no", "off"}
+        else:
+            self.require_central_confirmation = bool(require_central_confirmation)
 
     def calc_quantity(self, symbol: str, price: float, risk_usdt: float, leverage: int, max_quantity: float | None = None) -> float:
         qty = float(self.client.calc_size(symbol, price, risk_usdt, leverage))
@@ -161,7 +171,13 @@ class ExecutionEngine:
         ok = self._is_success(raw)
         if not ok:
             if self._is_status_unknown(raw):
-                exec_qty = self._confirm_position_qty(req.symbol, req.side, attempts=3)
+                try:
+                    exec_qty = self._confirm_position_qty(req.symbol, req.side, attempts=3)
+                except ConfirmationStateUnavailable as exc:
+                    exec_qty = 0.0
+                    confirm_error = str(exc)
+                else:
+                    confirm_error = ""
                 if exec_qty > 0:
                     return ExecutionResult(
                         True,
@@ -175,6 +191,8 @@ class ExecutionEngine:
                         message=self._raw_message(raw),
                         raw=raw,
                     )
+                if confirm_error:
+                    return ExecutionResult(False, "open", req.symbol, req.side, qty, code="open_confirm_account_state_unavailable", message=confirm_error, raw=raw)
             if self._is_exchange_min_notional_reject(raw):
                 return ExecutionResult(
                     False,
@@ -209,7 +227,21 @@ class ExecutionEngine:
         exec_qty = self._executed_quantity(raw)
         if req.confirm_position:
             confirm_cache = {"min_observed_at": submitted_at}
-            confirmed_qty = self._confirm_position_qty(req.symbol, req.side, cache=confirm_cache)
+            try:
+                confirmed_qty = self._confirm_position_qty(req.symbol, req.side, cache=confirm_cache)
+            except ConfirmationStateUnavailable as exc:
+                return ExecutionResult(
+                    False,
+                    "open",
+                    req.symbol,
+                    req.side,
+                    qty,
+                    order_id=str(raw.get("orderId", "")) if isinstance(raw, dict) else "",
+                    status="OPEN_CONFIRM_ACCOUNT_STATE_UNAVAILABLE",
+                    code="open_confirm_account_state_unavailable",
+                    message=str(exc),
+                    raw=raw,
+                )
             if confirmed_qty > 0:
                 exec_qty = confirmed_qty
         if exec_qty <= 0:
@@ -230,7 +262,10 @@ class ExecutionEngine:
             self._cancel_open_orders(req.symbol)
         confirm_cache: dict[str, Any] = {}
         qty = float(req.quantity or 0.0)
-        close_target = self._close_target(req.symbol, req.side, confirm_cache)
+        try:
+            close_target = self._close_target(req.symbol, req.side, confirm_cache)
+        except ConfirmationStateUnavailable as exc:
+            return ExecutionResult(False, "close", req.symbol, req.side, qty, code="close_confirm_account_state_unavailable", message=str(exc))
         if qty <= 0:
             qty = float(close_target.get("quantity") or 0.0)
         if qty <= 0:
@@ -253,13 +288,27 @@ class ExecutionEngine:
         if self._is_success(raw):
             remaining_qty = 0.0
             if req.confirm_position:
-                remaining_qty = self._confirm_position_qty(
-                    req.symbol,
-                    req.side,
-                    attempts=req.confirm_attempts,
-                    delay_seconds=1.0,
-                    cache=confirm_cache,
-                )
+                try:
+                    remaining_qty = self._confirm_position_qty(
+                        req.symbol,
+                        req.side,
+                        attempts=req.confirm_attempts,
+                        delay_seconds=1.0,
+                        cache=confirm_cache,
+                    )
+                except ConfirmationStateUnavailable as exc:
+                    return ExecutionResult(
+                        False,
+                        "close",
+                        req.symbol,
+                        req.side,
+                        qty,
+                        order_id=str(raw.get("orderId", "")) if isinstance(raw, dict) else "",
+                        status="CLOSE_CONFIRM_ACCOUNT_STATE_UNAVAILABLE",
+                        code="close_confirm_account_state_unavailable",
+                        message=str(exc),
+                        raw={"initial": raw},
+                    )
                 if remaining_qty > 0:
                     retry_raw = None
                     try:
@@ -279,13 +328,27 @@ class ExecutionEngine:
                             raw={"initial": raw, "retry": retry_raw, "remaining_qty": remaining_qty},
                         )
                     if self._is_success(retry_raw):
-                        remaining_qty = self._confirm_position_qty(
-                            req.symbol,
-                            req.side,
-                            attempts=req.confirm_attempts,
-                            delay_seconds=1.0,
-                            cache=confirm_cache,
-                        )
+                        try:
+                            remaining_qty = self._confirm_position_qty(
+                                req.symbol,
+                                req.side,
+                                attempts=req.confirm_attempts,
+                                delay_seconds=1.0,
+                                cache=confirm_cache,
+                            )
+                        except ConfirmationStateUnavailable as exc:
+                            return ExecutionResult(
+                                False,
+                                "close",
+                                req.symbol,
+                                req.side,
+                                qty,
+                                order_id=str(raw.get("orderId", "")) if isinstance(raw, dict) else "",
+                                status="CLOSE_CONFIRM_ACCOUNT_STATE_UNAVAILABLE",
+                                code="close_confirm_account_state_unavailable",
+                                message=str(exc),
+                                raw={"initial": raw, "retry": retry_raw},
+                            )
                     if remaining_qty > 0:
                         return ExecutionResult(
                             False,
@@ -310,13 +373,26 @@ class ExecutionEngine:
                 raw={"initial": raw, "remaining_qty": remaining_qty} if req.confirm_position else raw,
             )
         if req.confirm_position:
-            remaining_qty = self._confirm_position_qty(
-                req.symbol,
-                req.side,
-                attempts=req.confirm_attempts,
-                delay_seconds=1.0,
-                cache=confirm_cache,
-            )
+            try:
+                remaining_qty = self._confirm_position_qty(
+                    req.symbol,
+                    req.side,
+                    attempts=req.confirm_attempts,
+                    delay_seconds=1.0,
+                    cache=confirm_cache,
+                )
+            except ConfirmationStateUnavailable as exc:
+                return ExecutionResult(
+                    False,
+                    "close",
+                    req.symbol,
+                    req.side,
+                    qty,
+                    status="CLOSE_CONFIRM_ACCOUNT_STATE_UNAVAILABLE",
+                    code="close_confirm_account_state_unavailable",
+                    message=str(exc),
+                    raw=raw,
+                )
             if remaining_qty <= 0:
                 return ExecutionResult(
                     True,
@@ -364,6 +440,8 @@ class ExecutionEngine:
                     "position_side": raw_position_side,
                     "order_side": "SELL" if amt > 0 else "BUY",
                 }
+        except ConfirmationStateUnavailable:
+            raise
         except Exception:
             return {}
         return {}
@@ -410,6 +488,8 @@ class ExecutionEngine:
                         qty = 0.0
                     if qty > 0:
                         return qty
+        except ConfirmationStateUnavailable:
+            raise
         except Exception:
             return 0.0
         return 0.0
@@ -431,6 +511,8 @@ class ExecutionEngine:
                 cache["positions_ts"] = now
                 cache["positions_source"] = "central_account_state"
             return central_positions
+        if self.require_central_confirmation:
+            raise ConfirmationStateUnavailable("fresh central account state unavailable for confirmation")
         if hasattr(self.client, "invalidate_account_snapshot"):
             self.client.invalidate_account_snapshot()
         positions = list(self.client.get_positions())

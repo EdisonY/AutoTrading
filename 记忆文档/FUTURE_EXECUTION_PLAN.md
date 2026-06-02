@@ -63,8 +63,11 @@
 - [x] A/v11 平仓提交在执行层已提供 `quantity/order_side` 时不再二次查询 `positionRisk`；A/v11 余额读取切到 `/fapi/v2/balance`；账号快照裸跑缺少 `BINANCE_*` 环境变量时不覆盖最新有效快照。
 - [x] API guard 增加第一版交易关键路径优先级：普通 signed read 在总预算前预留默认 `20/min` 额度给 order/cancel/leverage/margin 等交易路径；系统告警显示 priority counts、normal limit、trade reserve 和 `last_error_*`。
 - [x] open/close confirmation 重复 `positionRisk` 合并第一步：`ExecutionEngine` 在单次 close 操作内复用 0.75 秒内的新鲜仓位快照，避免 close target 与紧接 retry target 连续重复读取；带 sleep 的确认仍刷新。
+- [x] 2026-06-02 API ban 复发后保守降压：signed REST 默认总量 `90/min`、单账户 `45/min`、最小间隔 `650ms`、ban grace `10min`；账户快照先尊重共享 guard cooldown；A/B/C client 保留更长错误体用于解析 `banned until`。
+- [x] public market-data polling 纳入第一层统一预算：A/B/C scanner public `fetch_json`、B/v16 live aggTrades、sentinel ticker、market-data-cache ticker、order-rule bookTicker/premiumIndex 共用 `BINANCE_PUBLIC_API_GUARD_MAX_REQUESTS_PER_MIN`（默认 `600/min`）和同一 ban cooldown。
 - [ ] 下一步：把账户余额/仓位迁到 user-data-stream 或更低频的集中账户状态服务，减少 `positionRisk` 轮询。
 - [ ] 下一步：把 open confirmation 与跨操作账户状态迁到 user-data-stream/集中账户状态服务；close 确认缓存继续用真实 live 结果验证是否还可扩大 TTL。
+- [ ] 下一步：做 public request 归因/缓存审计，定位 6000 requests/min IP 级限制是否主要来自 K线/ticker/depth/aggTrades 或外部共享 IP 噪声。
 - [ ] 下一步：guard 升级为独立队列服务或集中 account-state 服务内置限速，进一步替代协作式文件锁。
 
 验收口径：
@@ -484,13 +487,15 @@
 **运行位置**：阿里云
 
 **实现**：
-- [ ] 扩展 `strategy_evolution_gate.py`：
+- [x] 扩展 `strategy_evolution_gate.py` 首版 Phase 8 门禁硬化审计：
   - 按策略和变更类型的最小样本检查
   - 3/7/14/30天窗口一致性
   - 手续费/滑点调整
   - 行情状态分层：趋势日/震荡日/高波动日/低流动性尾部币
   - 当前账户风险检查
   - 回滚触发定义
+  - 入口页显示 gate-hardening 状态；只读审计，不自动升级/回滚
+- [ ] 继续补齐策略/变更类型差异化样本阈值、纸面 fill/slippage 仿真、跨 regime 稳健性评分
 
 **晋级规则**：
 - P0：强多窗口证据 + 足够样本 + 风险可接受 + 明确回滚规则 + 仍需人工审批

@@ -1,5 +1,18 @@
 # MEMORY.md - 长期记忆
 
+## 2026-06-02 API 限流复发与保守降压
+- 继续长期计划时先拉 live context：`2026-06-02T13:36:13+08:00` 显示六个 Tencent 核心服务 active，账户浮盈 `+59.3176`，`6` 仓，attention `P0=0/P1=0/P2=4`；随后部署 Phase 8 报告链并复拉，发现最新 attention 升为 `P0=1/P1=6/P2=4`。
+- P0 根因是 Binance `HTTP 418/-1003` IP ban，来源 `crypto-account-snapshot.service`，封禁到 `2026-06-02T14:11:54+08:00`，共享 guard 加 grace 后 cooldown 到 `14:16:54+08:00`；账户快照保持 `2026-06-02T12:28:03+08:00` 的最后有效快照。
+- 已做保守 mitigation：`core.binance_api_guard` 默认 signed REST 降到 `90/min` 总量、`45/min` 单账户、`650ms` 最小间隔、`10min` ban grace，保留 `20/min` trade reserve；`account_snapshot_service.py` 先读共享 guard cooldown；A/B/C client 保留 500 字符 Binance 错误体，避免 ban 时间戳截断。随后又加入第一版 public REST guard，统一协调 scanner K线/ticker/depth/funding/aggTrades、sentinel ticker、market-data-cache ticker、order-rule public price check，public 418/429 也会写入同一个 cooldown。
+- 部署记录：第一轮 Tencent `strategy-a` `20260602-134420-strategy-a-c2a583c`、`strategy-b` `20260602-134522-strategy-b-c2a583c`、`strategy-c` `20260602-134607-strategy-c-c2a583c`、`account` `20260602-134646-account-c2a583c`。第二轮 public guard：`strategy-a` `20260602-135806-strategy-a-c2a583c`、`strategy-b` `20260602-135850-strategy-b-c2a583c`、`strategy-c` `20260602-135937-strategy-c-c2a583c`、`sentinel` `20260602-140038-sentinel-c2a583c`。账号服务 journal 显示 `status=cooldown sleep_seconds=1754`，没有继续打 Binance；`2026-06-02T14:01:50+08:00` live pull 六服务 active，但 P0 仍会等交易所冷却过后才能自然清。
+- 仍未完成：这不是 user-data-stream/集中账户状态服务；public guard 是第一层协作式限速，还需要后续 public request 归因、独立队列或集中 account-state。ban 窗口内不要手动强刷账户快照。
+
+## 2026-06-02 Phase 8 门禁硬化审计首版
+- 继续长期计划，先拉 live context：`2026-06-02T12:33:20+08:00` 显示六个 Tencent 核心服务 active，账户浮盈 `-5.2403`，`6` 仓，attention `P0=0/P1=0/P2=2`。
+- `strategy_evolution_gate.py` 新增 `promotion_gate_hardening` 只读审计：汇总 P0/P1 与 full-live 候选是否具备最小样本、3/7/14/30天窗口、手续费/滑点扣减、行情 regime 标签、账户风险检查、回滚触发证据。审计明确 `auto_rollout_enabled=false`，不会自动升级或自动回滚。
+- 本地验证：gate 生成 `decisions=10`、`P0=4/P1=0/P2=2`；Phase 8 审计 `status=ok`、`priority_items=4`、`full_live_items=4`、`post_approval_ready_windows=6`、`regime_counts={'trend': 12}`，无 gate/window gaps。portal 首屏显示“门禁硬化：ok；P0/P1候选 4；放开后就绪窗口 6；自动升级/回滚关闭”。
+- 已部署 Tencent research `20260602-133748-research-c2a583c`、Tencent portal `20260602-133853-portal-c2a583c`、Aliyun shadow `20260602-133921-shadow-c2a583c`。仍未完成：按策略/变更类型差异化样本阈值、纸面 fill/slippage 仿真、跨 regime 稳健性评分；这些仍是 Phase 8 后续，不要据此开启自动升级。
+
 ## 2026-06-02 Phase 7 truth ledger PnL 修正 + 恢复仓审查
 - 继续长期计划，先拉 live context：`2026-06-02T11:06:10+08:00` 显示六个 Tencent 核心服务 active，账户浮盈 `+8.4778`，`10` 仓，attention `P0=0/P1=0/P2=2`。
 - 发现 `strategy_truth_ledger.py` 的 CLOSE/FORCED_CLOSE PnL 只读顶层 payload，没读嵌套 `payload.raw`，导致当前 30 日 truth ledger 已平仓 `437` 笔但 active PnL 显示 `0`。已改为 PnL、exit price、reason、entry 字段同时读顶层和 `raw`。

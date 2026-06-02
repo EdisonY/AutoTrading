@@ -110,6 +110,7 @@ from core.event_store import EventStoreWriter
 from core.market_watchlist import load_sentinel_context
 from core.market_data_cache import cached_available_symbols, cached_spike_symbols, cached_top_symbols
 from core.kline_cache import load_cached_klines, save_cached_klines
+from core.binance_api_guard import record_public_response, wait_before_public_request
 from core.sentinel_scanner import fields_from_context, filter_context_by_available, merge_symbols_with_context
 from core.risk_engine import RiskEngine, RiskLimits
 from core.strategy_engine import StrategyEngine
@@ -310,6 +311,7 @@ def fetch_json(url: str, timeout: int = 10) -> dict:
     """拉取JSON，内置限流和ban退避"""
     import urllib.request, urllib.error
     global _last_ban_until
+    wait_before_public_request("A/v11", url)
     now = time.time()
     # IP ban退避 - 完全暂停直到解封
     if _last_ban_until > now:
@@ -328,8 +330,10 @@ def fetch_json(url: str, timeout: int = 10) -> dict:
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
         return json.loads(urllib.request.urlopen(req, timeout=timeout).read())
     except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", errors="replace")
+        if e.code in {418, 429}:
+            record_public_response("A/v11", url, e.code, body)
         if e.code == 418:
-            body = str(e.read())
             if "banned until" in body:
                 import re
                 m = re.search(r"banned until (\d+)", body)

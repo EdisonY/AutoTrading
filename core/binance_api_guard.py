@@ -12,6 +12,7 @@ import json
 import os
 import re
 import time
+import urllib.parse
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
@@ -29,23 +30,41 @@ def _now_ms() -> int:
 
 
 def _min_interval_ms() -> int:
-    return max(0, int(os.environ.get("BINANCE_API_GUARD_MIN_INTERVAL_MS", "350")))
+    return max(0, int(os.environ.get("BINANCE_API_GUARD_MIN_INTERVAL_MS", "650")))
 
 
 def _ban_grace_ms() -> int:
-    return max(0, int(os.environ.get("BINANCE_API_GUARD_BAN_GRACE_MS", str(5 * 60 * 1000))))
+    return max(0, int(os.environ.get("BINANCE_API_GUARD_BAN_GRACE_MS", str(10 * 60 * 1000))))
 
 
 def _max_requests_per_minute() -> int:
-    return max(1, int(os.environ.get("BINANCE_API_GUARD_MAX_REQUESTS_PER_MIN", "120")))
+    return max(1, int(os.environ.get("BINANCE_API_GUARD_MAX_REQUESTS_PER_MIN", "90")))
 
 
 def _max_requests_per_account_per_minute() -> int:
-    return max(1, int(os.environ.get("BINANCE_API_GUARD_MAX_ACCOUNT_REQUESTS_PER_MIN", "80")))
+    return max(1, int(os.environ.get("BINANCE_API_GUARD_MAX_ACCOUNT_REQUESTS_PER_MIN", "45")))
 
 
 def _trade_priority_reserve_per_minute() -> int:
     return max(0, int(os.environ.get("BINANCE_API_GUARD_TRADE_PRIORITY_RESERVE_PER_MIN", "20")))
+
+
+def _public_min_interval_ms() -> int:
+    return max(0, int(os.environ.get("BINANCE_PUBLIC_API_GUARD_MIN_INTERVAL_MS", "50")))
+
+
+def _public_max_requests_per_minute() -> int:
+    return max(1, int(os.environ.get("BINANCE_PUBLIC_API_GUARD_MAX_REQUESTS_PER_MIN", "600")))
+
+
+def current_cooldown_seconds(now_ms: int | None = None) -> float:
+    """Return shared Binance REST cooldown seconds from the persisted guard state."""
+    try:
+        now = _now_ms() if now_ms is None else int(now_ms)
+        banned_until = int(_load_state().get("banned_until_ms") or 0)
+        return max(0.0, (banned_until - now) / 1000)
+    except Exception:
+        return 0.0
 
 
 def _request_priority(method: str, path: str) -> str:
@@ -55,6 +74,12 @@ def _request_priority(method: str, path: str) -> str:
     if path in {"/fapi/v1/order", "/fapi/v1/leverage", "/fapi/v1/marginType", "/fapi/v1/allOpenOrders"}:
         return "trade"
     return "normal"
+
+
+def _public_path(url_or_path: str) -> str:
+    parsed = urllib.parse.urlparse(str(url_or_path))
+    path = parsed.path or str(url_or_path)
+    return path or "/"
 
 
 def _load_state() -> dict[str, Any]:
@@ -191,3 +216,56 @@ def record_response(account: str, method: str, path: str, status_code: int | str
             state["banned_until_ms"] = max(int(state.get("banned_until_ms") or 0), banned_until_ms)
             state["last_ban_reason"] = text[:500]
         _write_state(state)
+
+
+def wait_before_public_request(label: str, url_or_path: str) -> float:
+    """Throttle public Binance REST requests across scanners and market services."""
+    total_sleep = 0.0
+    path = _public_path(url_or_path)
+    while True:
+        with _locked():
+            state = _load_state()
+            now = _now_ms()
+            banned_until = int(state.get("banned_until_ms") or 0)
+            if banned_until > now:
+                sleep_seconds = min(60.0, max(1.0, (banned_until - now) / 1000))
+            else:
+                last_request_ms = int(state.get("last_public_request_ms") or 0)
+                recent = [
+                    item for item in state.get("recent_public_requests", [])
+                    if now - int(item.get("ts_ms") or 0) <= 60_000
+                ]
+                max_per_min = _public_max_requests_per_minute()
+                if len(recent) >= max_per_min:
+                    oldest = min(int(item.get("ts_ms") or now) for item in recent)
+                    sleep_seconds = min(10.0, max(1.0, (oldest + 60_000 - now) / 1000))
+                    state["recent_public_requests"] = recent
+                    state["public_rolling_count_60s"] = len(recent)
+                    state["public_max_requests_per_min"] = max_per_min
+                    _write_state(state)
+                else:
+                    wait_ms = _public_min_interval_ms() - (now - last_request_ms)
+                    if wait_ms > 0:
+                        sleep_seconds = min(2.0, wait_ms / 1000)
+                    else:
+                        state["last_public_request_ms"] = now
+                        state["last_public_label"] = label
+                        state["last_public_path"] = path
+                        state["updated_at_ms"] = now
+                        recent.append({"ts_ms": now, "label": label, "path": path})
+                        state["recent_public_requests"] = recent[-max_per_min:]
+                        state["public_rolling_count_60s"] = len(state["recent_public_requests"])
+                        state["public_max_requests_per_min"] = max_per_min
+                        public_stats = state.setdefault("public_stats", {})
+                        key = f"{label}:{path}"
+                        public_stats[key] = int(public_stats.get(key) or 0) + 1
+                        _write_state(state)
+                        return total_sleep
+        time.sleep(sleep_seconds)
+        total_sleep += sleep_seconds
+
+
+def record_public_response(label: str, url_or_path: str, status_code: int | str | None, body: str = "") -> None:
+    """Share public REST ban evidence with signed REST callers."""
+    path = _public_path(url_or_path)
+    record_response(f"public:{label}", "GET", path, status_code, body)

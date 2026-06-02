@@ -325,6 +325,7 @@ def strategy_evolution_summary(path: Path | None) -> dict[str, Any]:
         "summary": {},
         "regime_summary": {},
         "expansion_readiness": {},
+        "promotion_gate_hardening": {},
         "top": {},
         "decisions": [],
     }
@@ -369,6 +370,7 @@ def strategy_evolution_summary(path: Path | None) -> dict[str, Any]:
             "close_failed_24h": live_close_failed,
         },
         "expansion_readiness": summary.get("expansion_readiness") if isinstance(summary.get("expansion_readiness"), dict) else {},
+        "promotion_gate_hardening": summary.get("promotion_gate_hardening") if isinstance(summary.get("promotion_gate_hardening"), dict) else {},
         "top": top or {},
         "decisions": decisions,
     }
@@ -1840,6 +1842,7 @@ def build_executive_summary(data: dict[str, Any]) -> dict[str, Any]:
     evolution_counts = evolution.get("counts") or {}
     regime_summary = evolution.get("regime_summary") or {}
     expansion = evolution.get("expansion_readiness") or {}
+    gate_hardening = evolution.get("promotion_gate_hardening") or {}
     evolution_alert = evolution_action_alert(evolution)
     rollback_brief = rollback_watch_brief(evolution)
     replay_gate = data.get("replay_gate") or {}
@@ -1940,6 +1943,10 @@ def build_executive_summary(data: dict[str, Any]) -> dict[str, Any]:
             f"扩样成熟度：已放开 {int(expansion.get('approved_count') or 0)} 个，"
             f"成熟 {int(expansion.get('ready_count') or 0)}，继续收样 {int(expansion.get('maturing_count') or 0)}，"
             f"需暂停复核 {int(expansion.get('pause_count') or 0)}，24h样本缺口 {int(expansion.get('missing_samples_24h') or 0)}。"
+        ),
+        (
+            f"门禁硬化：{gate_hardening.get('status') or 'unknown'}；P0/P1候选 {int(gate_hardening.get('priority_items') or 0)}，"
+            f"放开后就绪窗口 {int(gate_hardening.get('post_approval_ready_windows') or 0)}；自动升级/回滚关闭。"
         ),
         "扩样决策：不再全局盲目放宽。A/v11保持稳定，B/v16观察已批准全量候选，C/v14维持当前受控扩样窗口。",
     ]
@@ -2494,6 +2501,7 @@ def render_html(out_dir: Path) -> str:
 
     evolution = data.get("strategy_evolution") or {}
     evolution_counts = evolution.get("counts") or {}
+    gate_hardening = evolution.get("promotion_gate_hardening") or {}
     evolution_rows = "".join(
         f"""
 <tr>
@@ -2750,6 +2758,7 @@ th {{ background:#f1f5f9; color:#334155; }}
   <section class="section panel">
     <h2>策略进化门禁</h2>
     <p class="note">统一裁判口径：只有这里判定为 P0/P1 的候选，才会作为“更优方案”进入首页最高优先级。当前统计：P0 {int(evolution_counts.get('P0') or 0)}，P1 {int(evolution_counts.get('P1') or 0)}，P2 {int(evolution_counts.get('P2') or 0)}，拒绝 {int(evolution_counts.get('REJECT') or 0)}；更新 {h(evolution.get('age', '无门禁'))}。</p>
+    <p class="note">Phase 8门禁硬化：{h(gate_hardening.get('status') or 'unknown')}；P0/P1候选 {int(gate_hardening.get('priority_items') or 0)}；放开后就绪窗口 {int(gate_hardening.get('post_approval_ready_windows') or 0)}；自动升级/回滚关闭。</p>
     <table>
       <thead><tr><th>优先级</th><th>状态</th><th>策略</th><th>候选</th><th>证据分</th><th>风险分</th><th>建议动作</th><th>关键阻塞</th></tr></thead>
       <tbody>{evolution_rows}</tbody>

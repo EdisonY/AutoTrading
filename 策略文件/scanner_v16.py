@@ -32,6 +32,7 @@ from core.event_store import EventStoreWriter
 from core.market_watchlist import load_sentinel_context
 from core.market_data_cache import cached_available_symbols, cached_top_symbols
 from core.kline_cache import load_cached_klines, save_cached_klines
+from core.binance_api_guard import record_public_response, wait_before_public_request
 from core.position_utils import infer_position_side, leveraged_loss_pct
 from core.sentinel_scanner import fields_from_context, filter_context_by_available, merge_symbols_with_context
 from core.risk_engine import RiskEngine, RiskLimits
@@ -314,6 +315,7 @@ def fetch_json(url: str, timeout: int = 10) -> dict:
     """拉取JSON，内置限流和ban退避"""
     global _last_ban_until
     import urllib.request, urllib.error
+    wait_before_public_request("B/v16", url)
     now = time.time()
     # IP ban退避 - 完全暂停直到解封
     if _last_ban_until > now:
@@ -331,8 +333,10 @@ def fetch_json(url: str, timeout: int = 10) -> dict:
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
         return json.loads(urllib.request.urlopen(req, timeout=timeout).read())
     except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", errors="replace")
+        if e.code in {418, 429}:
+            record_public_response("B/v16", url, e.code, body)
         if e.code == 418:
-            body = str(e.read())
             if "banned until" in body:
                 import re
                 m = re.search(r"banned until (\d+)", body)
@@ -536,13 +540,20 @@ def merge_sentinel_symbols(symbols, limit=30):
 
 def fetch_live_agg_trades(symbol: str, limit: int = CVD_LIMIT):
     """获取实盘 aggTrades。腾讯云新加坡节点直连 fapi.binance.com，阿里云则自动降级为空结果。"""
-    import urllib.request
+    import urllib.request, urllib.error
     url = f"{LIVE_BASE_URL}/fapi/v1/aggTrades?symbol={symbol}&limit={limit}"
     try:
+        wait_before_public_request("B/v16-live", url)
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
         with urllib.request.urlopen(req, timeout=8) as resp:
             data = json.loads(resp.read())
             return data if isinstance(data, list) else []
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", errors="replace")
+        if e.code in {418, 429}:
+            record_public_response("B/v16-live", url, e.code, body)
+        logger.debug(f"fetch_live_agg_trades {symbol} failed: HTTP {e.code}: {body[:200]}")
+        return []
     except Exception as e:
         logger.debug(f"fetch_live_agg_trades {symbol} failed: {e}")
         return []

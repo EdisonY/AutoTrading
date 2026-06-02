@@ -4,6 +4,7 @@ import argparse
 import json
 import sys
 import time
+import urllib.error
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
@@ -18,11 +19,20 @@ if sys.platform == "win32":
 
 TESTNET_TICKER_URL = "https://testnet.binancefuture.com/fapi/v1/ticker/24hr"
 
+from core.binance_api_guard import record_public_response, wait_before_public_request
+
 
 def fetch_json(url: str, timeout: int = 12):
+    wait_before_public_request("market-data-cache", url)
     req = urllib.request.Request(url, headers={"User-Agent": "AutoTrading-MarketDataService/1.0"})
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        return json.loads(resp.read().decode("utf-8", errors="replace"))
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return json.loads(resp.read().decode("utf-8", errors="replace"))
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="replace")
+        if exc.code in {418, 429}:
+            record_public_response("market-data-cache", url, exc.code, body)
+        raise
 
 
 def build_payload(prev_volumes: dict[str, float], top_limit: int) -> tuple[dict, dict[str, float]]:

@@ -31,6 +31,7 @@ sys.path.insert(0, str(ROOT.parent))
 
 from core.market_watchlist import WATCHLIST_RELATIVE_PATH, watchlist_path
 from core.audit_log import write_jsonl_with_daily_shard
+from core.binance_api_guard import record_public_response, wait_before_public_request
 from core.event_store import insert_events
 from core.sentinel_event_bus import append_sentinel_events
 
@@ -49,9 +50,16 @@ logger = logging.getLogger("market_mover_sentinel")
 
 
 def fetch_24h_tickers(timeout: int = 10) -> list[dict[str, Any]]:
+    wait_before_public_request("sentinel", TICKER_URL)
     req = urllib.request.Request(TICKER_URL, headers={"User-Agent": "Mozilla/5.0"})
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        data = json.loads(resp.read())
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            data = json.loads(resp.read())
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="replace")
+        if exc.code in {418, 429}:
+            record_public_response("sentinel", TICKER_URL, exc.code, body)
+        raise
     return data if isinstance(data, list) else []
 
 

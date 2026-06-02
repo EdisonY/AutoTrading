@@ -1102,6 +1102,74 @@ def summarize_expansion_readiness(decisions: list[dict[str, Any]]) -> dict[str, 
     }
 
 
+def audit_promotion_gate_hardening(decisions: list[dict[str, Any]]) -> dict[str, Any]:
+    """Summarize Phase 8 gate coverage without changing gate decisions."""
+    required_rules = {
+        "min_samples": f"P0>={MIN_SAMPLE_FOR_P0}, P1>={MIN_SAMPLE_FOR_P1}",
+        "multi_window": "3d/7d/14d/30d experiment windows",
+        "fee_slippage": f"{FEE_SLIPPAGE_ADJUSTMENT_PCT}% round-trip cost adjustment",
+        "regime": "post-approval trend/range/high_volatility/low_liquidity label",
+        "account_risk": "sizing, hard-stop risk, unrealized PnL",
+        "rollback": "OPEN_FAILED, PF/PnL decay, hard-stop increase, close-failed, account loss",
+        "manual_approval": "P0/P1 are review actions, not automatic rollout",
+    }
+    priority_items = [d for d in decisions if d.get("priority") in {"P0", "P1"}]
+    full_live_items = [d for d in decisions if d.get("approved_full_live")]
+    gaps: list[str] = []
+    for d in priority_items:
+        cid = str(d.get("candidate_id") or "")
+        status = str(d.get("status") or "")
+        if status in {"rollback_required", "rollback_watch"}:
+            if not d.get("blockers"):
+                gaps.append(f"{cid}: rollback item missing trigger evidence")
+            if not d.get("post_approval_live") and d.get("approved_full_live"):
+                gaps.append(f"{cid}: rollback item missing post-approval windows")
+            continue
+        latest = d.get("latest_experiment") or {}
+        sample = to_int(latest.get("sample_trades"))
+        if d.get("priority") == "P0" and sample < MIN_SAMPLE_FOR_P0:
+            gaps.append(f"{cid}: P0 sample {sample}/{MIN_SAMPLE_FOR_P0}")
+        if d.get("priority") == "P1" and sample < MIN_SAMPLE_FOR_P1:
+            gaps.append(f"{cid}: P1 sample {sample}/{MIN_SAMPLE_FOR_P1}")
+        windows = d.get("windows") or {}
+        missing = [label for label in ("3d", "7d", "14d", "30d") if not windows.get(label) or windows.get(label, {}).get("status") == "insufficient"]
+        if missing:
+            gaps.append(f"{cid}: missing windows {','.join(missing)}")
+        if not d.get("account_risk"):
+            gaps.append(f"{cid}: missing account risk")
+        if not d.get("blockers") and d.get("priority") in {"P0", "P1"} and d.get("status") not in {"verified_upgrade_ready", "ready_for_review"}:
+            gaps.append(f"{cid}: missing explicit blockers/action rationale")
+    post_approval_gaps: list[str] = []
+    regimes: collections.Counter[str] = collections.Counter()
+    rollback_ready = 0
+    for d in full_live_items:
+        cid = str(d.get("candidate_id") or "")
+        windows = (d.get("post_approval_live") or {}).get("windows") or {}
+        for label in ("24h", "72h", "168h"):
+            metrics = windows.get(label) or {}
+            if not metrics:
+                post_approval_gaps.append(f"{cid}: missing {label}")
+                continue
+            regime = (metrics.get("regime") or {}).get("label")
+            if regime:
+                regimes[str(regime)] += 1
+            quality = metrics.get("quality") or {}
+            if to_int(quality.get("required_closed_samples")) and to_int(quality.get("closed_samples")) >= to_int(quality.get("required_closed_samples")):
+                rollback_ready += 1
+    return {
+        "status": "ok" if not gaps else "needs_attention",
+        "rules": required_rules,
+        "priority_items": len(priority_items),
+        "full_live_items": len(full_live_items),
+        "priority_gate_gaps": gaps[:12],
+        "post_approval_window_gaps": post_approval_gaps[:12],
+        "post_approval_ready_windows": rollback_ready,
+        "regime_counts": dict(regimes),
+        "auto_rollout_enabled": False,
+        "note": "Phase 8 audit is report-only; it hardens evidence visibility but does not auto-upgrade or auto-rollback.",
+    }
+
+
 def build_payload(args: argparse.Namespace) -> dict[str, Any]:
     memory_dir = Path(args.memory_dir)
     experiments_dir = Path(args.experiments_dir)
@@ -1119,6 +1187,7 @@ def build_payload(args: argparse.Namespace) -> dict[str, Any]:
     counterfactual = read_json(reports_dir / "counterfactual_open_skips_latest.json")
     decisions = build_decisions(candidates, experiments, reviews, counterfactual, account_snapshot, full_live_approvals, post_approval_windows)
     expansion_readiness = summarize_expansion_readiness(decisions)
+    gate_hardening = audit_promotion_gate_hardening(decisions)
     counts = {p: sum(1 for d in decisions if d.get("priority") == p) for p in ("P0", "P1", "P2", "P3", "REJECT")}
     top = next((d for d in decisions if d.get("priority") in {"P0", "P1", "P2"}), None)
     return {
@@ -1144,6 +1213,7 @@ def build_payload(args: argparse.Namespace) -> dict[str, Any]:
             "rollback_watch_count": sum(1 for d in decisions if d.get("status") in {"rollback_required", "rollback_watch"}),
             "post_approval_window_count": sum(1 for d in decisions if d.get("post_approval_live")),
             "expansion_readiness": expansion_readiness,
+            "promotion_gate_hardening": gate_hardening,
         },
         "decisions": decisions,
     }
@@ -1159,6 +1229,7 @@ def render_md(payload: dict[str, Any]) -> str:
         f"- Full-live 观察: {payload['summary'].get('full_live_watch_count', 0)}，回滚观察/要求: {payload['summary'].get('rollback_watch_count', 0)}",
         f"- 放开后实盘窗口: {payload['summary'].get('post_approval_window_count', 0)} 个候选已生成 24h/72h/168h 观察窗",
         f"- 扩样成熟度: {payload['summary'].get('expansion_readiness', {})}",
+        f"- Phase 8 门禁硬化审计: {payload['summary'].get('promotion_gate_hardening', {})}",
         "",
         "| 优先级 | 状态 | 策略 | 候选 | 证据分 | 风险分 | 建议动作 | 关键阻塞 |",
         "|---|---|---|---|---:|---:|---|---|",
@@ -1174,6 +1245,7 @@ def render_md(payload: dict[str, Any]) -> str:
 
 
 def render_html(payload: dict[str, Any]) -> str:
+    hardening = (payload.get("summary") or {}).get("promotion_gate_hardening") or {}
     rows = "".join(
         f"""
 <tr>
@@ -1234,6 +1306,8 @@ dd {{ margin:0; }}
     <h1>策略进化统一门禁</h1>
     <p>生成时间 {h(payload.get('generated_at'))}。只读裁判层：合并候选、影子实验、反事实、人工审批和账户风险，不改实盘。</p>
     <p>优先级统计：{h(payload.get('summary', {}).get('counts'))}</p>
+    <p>Phase 8 门禁硬化：{h(hardening.get('status'))}；P0/P1候选 {h(hardening.get('priority_items'))}；放开后窗口就绪 {h(hardening.get('post_approval_ready_windows'))}；自动上线/回滚：关闭。</p>
+    <p>门禁缺口：{h('; '.join((hardening.get('priority_gate_gaps') or hardening.get('post_approval_window_gaps') or [])[:5]) or '-')}</p>
   </header>
   <section class="table-wrap">
     <table>

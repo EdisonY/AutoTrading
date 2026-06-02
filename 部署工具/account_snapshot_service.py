@@ -29,6 +29,7 @@ if (ROOT / "交易客户端").exists():
 
 from account_snapshot_html import ACCOUNTS, api_error_payload, build_html, parse_balance, position_row
 from core.audit_log import write_jsonl_with_daily_shard
+from core.binance_api_guard import current_cooldown_seconds
 from core.event_store import insert_account_snapshot
 
 
@@ -315,6 +316,9 @@ def retry_at_from_error(text: str) -> datetime | None:
 
 
 def retry_delay_from_error_file(now: datetime) -> float:
+    guard_delay = current_cooldown_seconds()
+    if guard_delay > 0:
+        return guard_delay
     if not ERROR_PATH.exists():
         return 0.0
     try:

@@ -6,10 +6,13 @@ import math
 import re
 import time
 import json
+import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from typing import Any
+
+from core.binance_api_guard import record_public_response, wait_before_public_request
 
 
 TRADFI_PERP_BASES = {
@@ -244,8 +247,15 @@ def validate_open_quantity(
 def public_get_json(base_url: str, path: str, params: dict[str, Any], timeout: int = 5) -> Any:
     query = urllib.parse.urlencode(params)
     url = f"{base_url}{path}?{query}" if query else f"{base_url}{path}"
-    with urllib.request.urlopen(url, timeout=timeout) as resp:
-        return json.loads(resp.read().decode("utf-8", errors="replace"))
+    wait_before_public_request("order-rules", url)
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as resp:
+            return json.loads(resp.read().decode("utf-8", errors="replace"))
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="replace")
+        if exc.code in {418, 429}:
+            record_public_response("order-rules", url, exc.code, body)
+        raise
 
 
 def validate_market_price(base_url: str, rules: SymbolRules | None, symbol: str, side: str) -> QuantityCheck:

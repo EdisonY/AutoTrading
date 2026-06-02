@@ -79,7 +79,7 @@ def _request(method: str, path: str, params: dict = None) -> dict:
         body = e.read().decode("utf-8", errors="replace")
         logger.error(f"HTTP {e.code}: {body[:500]}")
         record_response("C/v14", method, path, e.code, body)
-        return {"code": str(e.code), "msg": body[:200]}
+        return {"code": str(e.code), "msg": body[:500]}
     except Exception as e:
         logger.error(f"请求异常: {e}")
         return {"code": "-1", "msg": str(e)}

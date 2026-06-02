@@ -41,6 +41,7 @@ from core.strategy_gates import (
     evaluate_b_v16_confirmation_gate,
     evaluate_b_v16_entry_threshold,
     evaluate_no_same_symbol_position_gate,
+    evaluate_symbol_stop_loss_gate,
 )
 from core.strategy_engine import StrategyEngine
 
@@ -953,7 +954,11 @@ class ScannerV16:
                 if self.has_position(tf, sym):
                     scan_stats["has_position"] += 1
                     continue
-                if self.sl_counts.get(sym, 0) >= MAX_SL_PER_SYMBOL:
+                symbol_sl_gate = evaluate_symbol_stop_loss_gate(
+                    stop_loss_count=self.sl_counts.get(sym, 0),
+                    max_stop_loss_per_symbol=MAX_SL_PER_SYMBOL,
+                )
+                if not symbol_sl_gate.allowed:
                     scan_stats["symbol_sl_cooldown"] += 1
                     continue
                 cd = self.cooldowns.get(tf, {}).get(sym, 0)

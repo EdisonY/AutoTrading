@@ -35,6 +35,55 @@ def evaluate_no_same_symbol_position_gate(
     return StrategyGateDecision(True, "position_duplicate", "no_same_symbol_position")
 
 
+def evaluate_same_side_position_gate(
+    *,
+    has_same_side_position: bool,
+) -> StrategyGateDecision:
+    """Evaluate a cross-timeframe same-symbol/same-side position guard."""
+    if has_same_side_position:
+        return StrategyGateDecision(False, "position_gate", "same_side_position_exists")
+    return StrategyGateDecision(True, "position_gate", "no_same_side_position")
+
+
+def evaluate_symbol_stop_loss_gate(
+    *,
+    stop_loss_count: int,
+    max_stop_loss_per_symbol: int,
+) -> StrategyGateDecision:
+    """Evaluate per-symbol stop-loss cooldown/ban guard."""
+    count = int(stop_loss_count or 0)
+    limit = int(max_stop_loss_per_symbol)
+    if count >= limit:
+        return StrategyGateDecision(
+            False,
+            "cooldown",
+            f"当日止损{count}次已达上限",
+            evidence={"stop_loss_count": count, "max_stop_loss_per_symbol": limit},
+        )
+    return StrategyGateDecision(True, "cooldown", "symbol_stop_loss_allowed", evidence={"stop_loss_count": count})
+
+
+def evaluate_sector_position_gate(
+    *,
+    sector: str,
+    sector_position_count: int,
+    max_positions_per_sector: int,
+    exempt_sector: str = "Other",
+) -> StrategyGateDecision:
+    """Evaluate sector concentration limit."""
+    sector_key = str(sector or "")
+    count = int(sector_position_count or 0)
+    limit = int(max_positions_per_sector)
+    if sector_key != str(exempt_sector) and count >= limit:
+        return StrategyGateDecision(
+            False,
+            "sector_guard",
+            f"赛道[{sector_key}]已满{limit}仓",
+            evidence={"sector": sector_key, "sector_position_count": count, "max_positions_per_sector": limit},
+        )
+    return StrategyGateDecision(True, "sector_guard", "sector_allowed", evidence={"sector": sector_key, "sector_position_count": count})
+
+
 def evaluate_a_v11_entry_threshold(
     *,
     timeframe: str,

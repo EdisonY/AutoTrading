@@ -12,6 +12,9 @@ from core.strategy_gates import (
     evaluate_c_v14_stale_entry_price_gate,
     evaluate_c_v14_tail_guard,
     evaluate_no_same_symbol_position_gate,
+    evaluate_same_side_position_gate,
+    evaluate_sector_position_gate,
+    evaluate_symbol_stop_loss_gate,
 )
 
 
@@ -197,6 +200,35 @@ class StrategyGateParityTest(unittest.TestCase):
             evaluate_no_same_symbol_position_gate(
                 has_exchange_position=False,
                 has_local_position=True,
+            ).allowed
+        )
+
+        self.assertFalse(evaluate_same_side_position_gate(has_same_side_position=True).allowed)
+        self.assertTrue(evaluate_same_side_position_gate(has_same_side_position=False).allowed)
+
+    def test_risk_position_gates(self):
+        sl_gate = evaluate_symbol_stop_loss_gate(stop_loss_count=2, max_stop_loss_per_symbol=2)
+        self.assertFalse(sl_gate.allowed)
+        self.assertEqual(sl_gate.reason, "当日止损2次已达上限")
+        self.assertTrue(
+            evaluate_symbol_stop_loss_gate(
+                stop_loss_count=1,
+                max_stop_loss_per_symbol=2,
+            ).allowed
+        )
+
+        sector_gate = evaluate_sector_position_gate(
+            sector="AI",
+            sector_position_count=3,
+            max_positions_per_sector=3,
+        )
+        self.assertFalse(sector_gate.allowed)
+        self.assertEqual(sector_gate.reason, "赛道[AI]已满3仓")
+        self.assertTrue(
+            evaluate_sector_position_gate(
+                sector="Other",
+                sector_position_count=99,
+                max_positions_per_sector=3,
             ).allowed
         )
 

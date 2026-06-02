@@ -71,6 +71,9 @@ from core.strategy_gates import (
     evaluate_c_v14_stale_entry_price_gate,
     evaluate_c_v14_tail_guard,
     evaluate_no_same_symbol_position_gate,
+    evaluate_same_side_position_gate,
+    evaluate_sector_position_gate,
+    evaluate_symbol_stop_loss_gate,
 )
 from core.strategy_engine import StrategyEngine
 
@@ -1687,7 +1690,8 @@ class Scanner:
 
                 # 否决: 同方向持仓已存在（跨周期检查）
                 already_holding = self._has_position(sym, side)
-                if already_holding:
+                same_side_gate = evaluate_same_side_position_gate(has_same_side_position=already_holding)
+                if not same_side_gate.allowed:
                     log_sentinel_scan(
                         sym, tf, "position_rejected", "同方向持仓已存在",
                         side=side, score=abs(sig["net_score"]),
@@ -1707,10 +1711,14 @@ class Scanner:
 
                 # 否决: 同币种止损保护
                 sl_cnt = self.sl_counts.get(sym, 0)
-                if sl_cnt >= MAX_SL_PER_SYMBOL:
+                symbol_sl_gate = evaluate_symbol_stop_loss_gate(
+                    stop_loss_count=sl_cnt,
+                    max_stop_loss_per_symbol=MAX_SL_PER_SYMBOL,
+                )
+                if not symbol_sl_gate.allowed:
                     logger.info(f"  ⏭️ [{tf}] {sym} 当日止损{sl_cnt}次已达上限，跳过")
                     log_sentinel_scan(
-                        sym, tf, "cooldown_rejected", f"当日止损{sl_cnt}次已达上限",
+                        sym, tf, "cooldown_rejected", symbol_sl_gate.reason,
                         side=side, score=abs_score, decision_stage="cooldown",
                         filter_layer="risk",
                     )
@@ -1718,16 +1726,20 @@ class Scanner:
 
                 # 否决: 同赛道分散（v14优化）
                 sec = get_sector(sym)
-                if sec != "Other":
-                    sector_counts = count_positions_by_sector(self.positions)
-                    if sector_counts.get(sec, 0) >= MAX_POS_PER_SECTOR:
-                        logger.info(f"  ⏭️ [{tf}] {sym} 赛道[{sec}]已满{MAX_POS_PER_SECTOR}仓，跳过")
-                        log_sentinel_scan(
-                            sym, tf, "risk_rejected", f"赛道[{sec}]已满{MAX_POS_PER_SECTOR}仓",
-                            side=side, score=abs_score, decision_stage="sector_guard",
-                            filter_layer="risk",
-                        )
-                        continue
+                sector_counts = count_positions_by_sector(self.positions) if sec != "Other" else {}
+                sector_gate = evaluate_sector_position_gate(
+                    sector=sec,
+                    sector_position_count=sector_counts.get(sec, 0),
+                    max_positions_per_sector=MAX_POS_PER_SECTOR,
+                )
+                if not sector_gate.allowed:
+                    logger.info(f"  ⏭️ [{tf}] {sym} {sector_gate.reason}，跳过")
+                    log_sentinel_scan(
+                        sym, tf, "risk_rejected", sector_gate.reason,
+                        side=side, score=abs_score, decision_stage="sector_guard",
+                        filter_layer="risk",
+                    )
+                    continue
 
                 # 多头额外门槛 + 趋势惩罚
                 threshold, trend_penalty = entry_threshold_for(tf, side, trend_dir, trend_str)

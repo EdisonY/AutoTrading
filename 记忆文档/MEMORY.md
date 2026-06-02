@@ -251,6 +251,7 @@
 - 2026-06-02：P0-B 增加第一版 shared gate parity smoke：`tests/test_strategy_gates.py` 覆盖 A/v11 threshold/effective/replacement、B/v16 threshold/confirmation、C/v14 threshold/confirmation/tail、A/B/C same-symbol gate。`python -m unittest tests.test_strategy_gates` 已通过。后续抽新 gate 时继续扩这个测试，而不是只靠一次性临时脚本。
 - 2026-06-02：继续 P0-B，C/v14 stale entry-price market-data gate 已抽到 `core.strategy_gates` 并纳入 parity smoke。`scanner_v14.py` 仍保留原黑名单与 OPEN_SKIPPED 记录口径。腾讯 `strategy-c` release `20260602-203336-strategy-c-9a50c01` 部署成功；20:35 live pull 六服务 active，P0=0/P1=4/P2=2，guard cooldown=0。
 - 2026-06-02：继续 P0-B，A/v11 releasable-position selection 已抽到 `evaluate_a_v11_releasable_position()`：强信号、同币种排除、preferred tf、same-side、elite/min-age、hard/soft profit protect、score gap、release rank 都进 shared pure gate；PnL/age 读取和 close/open 执行仍留 scanner/execution。腾讯 `strategy-a` release `20260602-204233-strategy-a-8867f13` 部署成功；20:43 live pull 六服务 active，P0=0/P1=4/P2=2，guard cooldown=0。
+- 2026-06-02：继续 P0-B，C/v14 同方向持仓、止损保护、赛道上限，以及 B/v16 止损保护已抽到 shared pure gates：`evaluate_same_side_position_gate()`、`evaluate_symbol_stop_loss_gate()`、`evaluate_sector_position_gate()`。已部署 `20260602-205218-strategy-b-30bce43` / `20260602-205321-strategy-c-30bce43`；20:56 live pull 六服务 active，P0=0/P1=4/P2=2，guard cooldown=0。
 
 ---
 ## 2026-05-29 全局运行自检与账户方向口径修复

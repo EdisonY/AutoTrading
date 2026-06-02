@@ -46,6 +46,8 @@ REPLAY_FEATURE_JSON = ROOT / "runtime" / "replay_feature_dataset_latest.json"
 REPLAY_FEATURE_MD = REPORTS_DIR / "replay_feature_dataset_latest.md"
 REPLAY_GATE_JSON = ROOT / "runtime" / "replay_gate_audit_latest.json"
 REPLAY_GATE_MD = REPORTS_DIR / "replay_gate_audit_latest.md"
+ROLLBACK_WATCH_JSON = ROOT / "runtime" / "rollback_watch_review_latest.json"
+ROLLBACK_WATCH_MD = REPORTS_DIR / "rollback_watch_review_latest.md"
 A_V11_ROLLOUT_JSON = ROOT / "runtime" / "a_v11_rollout_review_latest.json"
 A_V11_ROLLOUT_MD = REPORTS_DIR / "a_v11_rollout_review_latest.md"
 SENTINEL_QUALITY_JSON = ROOT / "runtime" / "sentinel_quality_latest.json"
@@ -655,6 +657,29 @@ def a_v11_rollout_summary(path: Path | None) -> dict[str, Any]:
         "decision": payload.get("decision") if isinstance(payload.get("decision"), dict) else empty["decision"],
         "windows": payload.get("windows") if isinstance(payload.get("windows"), dict) else {},
         "selected_live_parameter": payload.get("selected_live_parameter") or {},
+    }
+
+
+def rollback_watch_summary(path: Path | None) -> dict[str, Any]:
+    empty = {
+        "available": False,
+        "path": ROLLBACK_WATCH_MD,
+        "age": "No rollback-watch review",
+        "fresh": False,
+        "summary": {"items": 0, "p0": 0, "p1": 0, "actions": {}},
+        "items": [],
+    }
+    payload = read_json(path) if path else None
+    if not isinstance(payload, dict):
+        return empty
+    generated_at = parse_dt(payload.get("generated_at"))
+    return {
+        "available": True,
+        "path": ROLLBACK_WATCH_MD,
+        "age": age_text(generated_at),
+        "fresh": bool(generated_at and (datetime.now(CST) - generated_at).total_seconds() < 4 * 3600),
+        "summary": payload.get("summary") if isinstance(payload.get("summary"), dict) else empty["summary"],
+        "items": payload.get("items") if isinstance(payload.get("items"), list) else [],
     }
 
 
@@ -1410,6 +1435,8 @@ def function_status_cards(data: dict[str, Any]) -> list[dict[str, str]]:
     replay_summary = replay_feature.get("summary") or {}
     replay_gate = data.get("replay_gate") or {}
     replay_gate_summary_data = replay_gate.get("summary") or {}
+    rollback_watch = data.get("rollback_watch") or {}
+    rollback_watch_summary_data = rollback_watch.get("summary") or {}
     a_v11_rollout = data.get("a_v11_rollout") or {}
     a_v11_rollout_decision = a_v11_rollout.get("decision") or {}
     a_v11_rollout_72h = (a_v11_rollout.get("windows") or {}).get("72h") or {}
@@ -1593,6 +1620,31 @@ def function_status_cards(data: dict[str, Any]) -> list[dict[str, str]]:
                 f"updated {replay_gate.get('age')}."
                 if replay_gate.get("available")
                 else "Live events have not been audited through core.replay yet."
+            ),
+        },
+        {
+            "level": (
+                "bad"
+                if int(rollback_watch_summary_data.get("p0") or 0) > 0
+                else "warn"
+                if int(rollback_watch_summary_data.get("p1") or 0) > 0
+                else "ok"
+                if rollback_watch.get("fresh")
+                else "warn"
+            ),
+            "name": "Rollback watch",
+            "value": (
+                f"P0 {int(rollback_watch_summary_data.get('p0') or 0)} / P1 {int(rollback_watch_summary_data.get('p1') or 0)}"
+                if rollback_watch.get("available")
+                else "not built"
+            ),
+            "body": (
+                f"items {int(rollback_watch_summary_data.get('items') or 0)}; "
+                f"worst {rollback_watch_summary_data.get('worst_candidate') or '-'} "
+                f"{float(rollback_watch_summary_data.get('worst_pnl_after_cost_24h') or 0):+.2f}; "
+                f"updated {rollback_watch.get('age')}."
+                if rollback_watch.get("available")
+                else "P1 rollback-watch action matrix missing from report chain."
             ),
         },
         {
@@ -2050,6 +2102,8 @@ def build_data() -> dict[str, Any]:
     data["replay_feature_html"] = REPLAY_FEATURE_MD
     data["replay_gate"] = replay_gate_summary(REPLAY_GATE_JSON)
     data["replay_gate_html"] = REPLAY_GATE_MD
+    data["rollback_watch"] = rollback_watch_summary(ROLLBACK_WATCH_JSON)
+    data["rollback_watch_html"] = ROLLBACK_WATCH_MD
     data["a_v11_rollout"] = a_v11_rollout_summary(A_V11_ROLLOUT_JSON)
     data["a_v11_rollout_html"] = A_V11_ROLLOUT_MD
     data["function_status"] = function_status_cards(data)

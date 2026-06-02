@@ -283,6 +283,22 @@ def evaluate_active_position_limit_gate(
     return StrategyGateDecision(True, "risk_gate", "active_position_limit_ok", evidence={"open_positions": count})
 
 
+def evaluate_positive_quantity_gate(
+    *,
+    quantity: float,
+) -> StrategyGateDecision:
+    """Evaluate whether execution quantity is positive."""
+    qty = float(quantity or 0.0)
+    if qty <= 0:
+        return StrategyGateDecision(
+            False,
+            "execution",
+            "qty<=0",
+            evidence={"quantity": qty},
+        )
+    return StrategyGateDecision(True, "execution", "quantity_positive", evidence={"quantity": qty})
+
+
 def evaluate_b_v16_small_live_stage_guard(
     *,
     enabled: bool,

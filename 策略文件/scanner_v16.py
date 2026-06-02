@@ -45,6 +45,7 @@ from core.strategy_gates import (
     evaluate_b_v16_entry_threshold,
     evaluate_b_v16_small_live_stage_guard,
     evaluate_no_same_symbol_position_gate,
+    evaluate_positive_quantity_gate,
     evaluate_score_max_gate,
     evaluate_symbol_blacklist_gate,
     evaluate_symbol_scan_cooldown_gate,
@@ -1122,7 +1123,8 @@ class ScannerV16:
             return False
 
         size_qty = self.execution.calc_quantity(sym, price, TRADE_SIZE, LEVERAGE)
-        if size_qty <= 0:
+        quantity_gate = evaluate_positive_quantity_gate(quantity=size_qty)
+        if not quantity_gate.allowed:
             logger.warning(f"  跳过: {sym} 数量太小 (price={price}, minQty不满足)")
             log_event({
                 "time": str(datetime.now(CST)), "event": "OPEN_SKIPPED",

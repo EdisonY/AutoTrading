@@ -19,6 +19,7 @@ from core.strategy_gates import (
     evaluate_c_v14_tail_guard,
     evaluate_consecutive_loss_cooldown_gate,
     evaluate_no_same_symbol_position_gate,
+    evaluate_positive_quantity_gate,
     evaluate_same_side_position_gate,
     evaluate_score_max_gate,
     evaluate_sector_position_gate,
@@ -386,6 +387,12 @@ class StrategyGateParityTest(unittest.TestCase):
         self.assertFalse(active_limit.allowed)
         self.assertEqual(active_limit.reason, "活跃持仓4>=4只管理不新开")
         self.assertTrue(evaluate_active_position_limit_gate(open_positions=3, max_active_positions=4).allowed)
+
+        qty_zero = evaluate_positive_quantity_gate(quantity=0)
+        self.assertFalse(qty_zero.allowed)
+        self.assertEqual(qty_zero.reason, "qty<=0")
+        self.assertEqual(qty_zero.gate, "execution")
+        self.assertTrue(evaluate_positive_quantity_gate(quantity=0.001).allowed)
 
     def test_watchlist_score_adjustment(self):
         penalized = evaluate_watchlist_score_adjustment(

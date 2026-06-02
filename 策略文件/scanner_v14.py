@@ -75,6 +75,7 @@ from core.strategy_gates import (
     evaluate_c_v14_tail_guard,
     evaluate_consecutive_loss_cooldown_gate,
     evaluate_no_same_symbol_position_gate,
+    evaluate_positive_quantity_gate,
     evaluate_same_side_position_gate,
     evaluate_score_max_gate,
     evaluate_sector_position_gate,
@@ -1915,7 +1916,8 @@ class Scanner:
 
         # 统一执行层计算数量并下单
         qty = self.execution.calc_quantity(inst_id, price, risk_usdt, self.leverage)
-        if qty <= 0:
+        quantity_gate = evaluate_positive_quantity_gate(quantity=qty)
+        if not quantity_gate.allowed:
             logger.warning(f"  ⚠️ [{tf}] {inst_id} 计算数量为0，跳过")
             preflight = {}
             if hasattr(self.client, "validate_order_quantity"):

@@ -96,6 +96,7 @@ CORE_FILES = [
 
 RESEARCH_CORE = [
     file_pair("core/__init__.py"),
+    file_pair("core/binance_api_guard.py"),
     file_pair("core/models.py"),
     file_pair("core/position_utils.py"),
     file_pair("core/replay.py"),

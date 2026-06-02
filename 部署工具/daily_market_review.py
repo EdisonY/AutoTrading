@@ -20,6 +20,7 @@ import re
 import sys
 import time
 import urllib.parse
+import urllib.error
 import urllib.request
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
@@ -56,6 +57,7 @@ from core.review_analytics import (  # noqa: E402
     summarize_layer_counter,
 )
 from core.position_utils import infer_position_side, position_unrealized_pnl  # noqa: E402
+from core.binance_api_guard import record_public_response, wait_before_public_request  # noqa: E402
 
 REPORTS_DIR = ROOT / "reports"
 REPORTS_DIR.mkdir(exist_ok=True)
@@ -103,9 +105,15 @@ def strategies_for_root(data_root: Path) -> list[dict[str, Any]]:
 
 
 def fetch_json(url: str, timeout: int = 15) -> Any:
+    wait_before_public_request("daily-market-review", url)
     req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        return json.loads(resp.read())
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return json.loads(resp.read())
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="replace")
+        record_public_response("daily-market-review", url, exc.code, body)
+        raise
 
 
 def day_bounds_cst(date_str: str) -> tuple[datetime, datetime, int, int]:

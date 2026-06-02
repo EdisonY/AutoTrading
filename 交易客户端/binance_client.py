@@ -24,7 +24,12 @@ from core.binance_order_rules import (
     validate_market_price,
     validate_open_quantity,
 )
-from core.binance_api_guard import record_response, wait_before_request
+from core.binance_api_guard import (
+    record_public_response,
+    record_response,
+    wait_before_public_request,
+    wait_before_request,
+)
 
 logger = logging.getLogger("binance_client")
 
@@ -160,6 +165,7 @@ def get_markets() -> dict:
 
     url = f"{BASE_URL}/fapi/v1/exchangeInfo"
     try:
+        wait_before_public_request("A/v11-client", url)
         with urllib.request.urlopen(url, timeout=15) as resp:
             data = json.loads(resp.read())
             markets = {}
@@ -203,6 +209,11 @@ def get_markets() -> dict:
             _markets_cache = markets
             logger.info(f"市场数据加载: {len(markets)} 个交易对")
             return markets
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", errors="replace")
+        record_public_response("A/v11-client", url, e.code, body)
+        logger.error(f"加载市场数据失败: HTTP {e.code}: {body[:300]}")
+        return {}
     except Exception as e:
         logger.error(f"加载市场数据失败: {e}")
         return {}

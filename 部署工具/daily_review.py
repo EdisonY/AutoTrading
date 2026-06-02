@@ -42,6 +42,9 @@ from cloud.analyzer.auxiliary import (
 from strategy_breakout import analyze_vpb
 
 import urllib.request
+import urllib.error
+
+from core.binance_api_guard import record_public_response, wait_before_public_request
 
 CST = timezone(timedelta(hours=8))
 REPORTS_DIR = ROOT / "reports"
@@ -58,8 +61,14 @@ LOCAL_LOGS = ROOT / "server_logs"
 # ─────────────────────────────────────────────
 
 def fetch_json(url: str, timeout: int = 15) -> any:
+    wait_before_public_request("daily-review", url)
     req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-    return json.loads(urllib.request.urlopen(req, timeout=timeout).read())
+    try:
+        return json.loads(urllib.request.urlopen(req, timeout=timeout).read())
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="replace")
+        record_public_response("daily-review", url, exc.code, body)
+        raise
 
 
 def fetch_top100_symbols() -> list:

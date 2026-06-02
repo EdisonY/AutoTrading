@@ -29,7 +29,10 @@ import numpy as np
 import pandas as pd
 from typing import Optional
 import json
+import urllib.error
 import urllib.request
+
+from core.binance_api_guard import record_public_response, wait_before_public_request
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -46,8 +49,14 @@ VPB_TP_MULT = 4.5             # VPB止盈：4.5×ATR（v7: 4.0→4.5，放宽止
 
 
 def fetch_json(url: str, timeout: int = 10) -> dict:
+    wait_before_public_request("strategy-breakout", url)
     req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-    return json.loads(urllib.request.urlopen(req, timeout=timeout).read())
+    try:
+        return json.loads(urllib.request.urlopen(req, timeout=timeout).read())
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="replace")
+        record_public_response("strategy-breakout", url, exc.code, body)
+        raise
 
 
 def fetch_funding_rate(symbol: str) -> float:

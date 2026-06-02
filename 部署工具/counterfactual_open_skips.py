@@ -11,6 +11,7 @@ import sqlite3
 import sys
 import time
 import urllib.parse
+import urllib.error
 import urllib.request
 from collections import defaultdict
 from dataclasses import dataclass
@@ -39,6 +40,7 @@ except Exception:
     render_markdown_html = None
 
 from core.replay import ReplayEvent, classify_replay_decision
+from core.binance_api_guard import record_public_response, wait_before_public_request
 
 CST = timezone(timedelta(hours=8))
 UTC = timezone.utc
@@ -210,9 +212,15 @@ def ceil_next_minute(dt: datetime) -> datetime:
 
 
 def fetch_json(url: str, timeout: int = 15) -> Any:
+    wait_before_public_request("counterfactual-open-skips", url)
     request = urllib.request.Request(url, headers={"User-Agent": "AutoTrading-Counterfactual/1.0"})
-    with urllib.request.urlopen(request, timeout=timeout) as response:
-        return json.loads(response.read().decode("utf-8", errors="replace"))
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            return json.loads(response.read().decode("utf-8", errors="replace"))
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="replace")
+        record_public_response("counterfactual-open-skips", url, exc.code, body)
+        raise
 
 
 def fetch_klines(symbol: str, start: datetime, end: datetime) -> list[list[Any]]:

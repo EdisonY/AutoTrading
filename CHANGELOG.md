@@ -2,6 +2,14 @@
 
 This is the durable reason-and-outcome ledger for every material design, code, configuration, deployment, rollback, optimization, or live operational change.
 
+## 2026-06-02 15:36 CST - Cover remaining public REST with API guard
+- Trigger / reason: User requested P0/P1 autonomous progress until completion. Live context still showed Binance API cooldown as the open P0/P1 blocker, and code audit found remaining Binance public REST callers not yet coordinated through `core/binance_api_guard.py`: A/v11 client `exchangeInfo`, VPB funding lookup, counterfactual Klines, and daily market/review fetchers.
+- Completed: Added `wait_before_public_request()` and `record_public_response()` around those remaining public REST paths. HTTP 418/429/-1003 from these scripts now updates the same shared guard state instead of retrying outside the cooldown ledger.
+- Not completed / remaining: This is another REST-pressure mitigation, not the final user-data-stream or centralized account-state service. It does not automatically clear the active Binance cooldown; fresh account snapshots must wait for the exchange cooldown window.
+- Verification: Local `py_compile` passed for `交易客户端/binance_client.py`, `策略文件/strategy_breakout.py`, `部署工具/counterfactual_open_skips.py`, `部署工具/daily_review.py`, `部署工具/daily_market_review.py`, and `core/binance_api_guard.py`.
+- Live impact / deployment: Pending deploy in this work session. Intended live impact is only broader REST pacing/ban attribution. No threshold, sizing, leverage, stop, cadence, order direction, automatic upgrade, or automatic rollback changes.
+- Files / release / commit: `交易客户端/binance_client.py`, `策略文件/strategy_breakout.py`, `部署工具/counterfactual_open_skips.py`, `部署工具/daily_review.py`, `部署工具/daily_market_review.py`, `CHANGELOG.md`, `PROJECT_STATE.md`, `记忆文档/MEMORY.md`.
+
 ## 2026-06-02 14:32 CST - Extend API guard fallback cooldown
 - Trigger / reason: After public REST guard deployment and account reload, the next cooldown expiry still hit Binance/Testnet `429/-1003` from public B/v16 `/fapi/v1/klines` even though the local guard saw only a few recent public requests. This suggests IP-level residual cooldown or shared-IP noise, so repeated short retries are unsafe.
 - Completed: Reduced the public REST guard default from `600/min` to `120/min`. Added `BINANCE_API_GUARD_RATE_LIMIT_FALLBACK_MS`, default `30min`, for 418/429/-1003 responses that do not include an explicit `banned until` timestamp. Explicit `banned until` responses still use exchange time plus the configured grace.

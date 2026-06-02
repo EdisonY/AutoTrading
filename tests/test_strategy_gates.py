@@ -8,6 +8,7 @@ from core.strategy_gates import (
     evaluate_b_v16_entry_threshold,
     evaluate_c_v14_confirmation_gate,
     evaluate_c_v14_entry_threshold,
+    evaluate_c_v14_stale_entry_price_gate,
     evaluate_c_v14_tail_guard,
     evaluate_no_same_symbol_position_gate,
 )
@@ -120,6 +121,12 @@ class StrategyGateParityTest(unittest.TestCase):
         )
         self.assertFalse(tail.allowed)
         self.assertEqual(tail.gate, "tail_guard")
+
+        stale = evaluate_c_v14_stale_entry_price_gate(recent_prices=[10.0, 10.0, 10.0])
+        self.assertFalse(stale.allowed)
+        self.assertEqual(stale.gate, "market_data_guard")
+        fresh = evaluate_c_v14_stale_entry_price_gate(recent_prices=[10.0, 10.0, 10.1])
+        self.assertTrue(fresh.allowed)
 
     def test_same_symbol_position_gate(self):
         self.assertTrue(

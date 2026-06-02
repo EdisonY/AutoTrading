@@ -249,6 +249,7 @@
 - 2026-06-02：继续 P0-B，又抽 A/v11 replacement-signal gate。`core.strategy_gates` 新增 resonance-adjusted effective score 与 strong-signal replacement eligibility，`scanner.py` 只委托 `_effective_signal_score()` / `_can_try_full_replacement()`；本地等价烟测通过。腾讯 `strategy-a` release `20260602-195744-strategy-a-d0a6561` 已落地，虽然本地 apply 命令外层超时，远端 release、service active、journal clean、20:02 live pull 均确认成功。
 - 2026-06-02：继续 P0-B，三策略 no-same-symbol position gate 已共享化。`evaluate_no_same_symbol_position_gate()` 只抽出“交易所或本地已有同币种持仓则拒绝”的布尔判断，A/B/C 原有 OPEN_SKIPPED 原因、字段和风险口径不变。已顺序部署 `20260602-200838-strategy-a-2524ded`、`20260602-201323-strategy-b-2524ded`、`20260602-201602-strategy-c-2524ded`；20:18 live pull 六服务 active，P0=0/P1=4/P2=2，guard cooldown=0。
 - 2026-06-02：P0-B 增加第一版 shared gate parity smoke：`tests/test_strategy_gates.py` 覆盖 A/v11 threshold/effective/replacement、B/v16 threshold/confirmation、C/v14 threshold/confirmation/tail、A/B/C same-symbol gate。`python -m unittest tests.test_strategy_gates` 已通过。后续抽新 gate 时继续扩这个测试，而不是只靠一次性临时脚本。
+- 2026-06-02：继续 P0-B，C/v14 stale entry-price market-data gate 已抽到 `core.strategy_gates` 并纳入 parity smoke。`scanner_v14.py` 仍保留原黑名单与 OPEN_SKIPPED 记录口径。腾讯 `strategy-c` release `20260602-203336-strategy-c-9a50c01` 部署成功；20:35 live pull 六服务 active，P0=0/P1=4/P2=2，guard cooldown=0。
 
 ---
 ## 2026-05-29 全局运行自检与账户方向口径修复

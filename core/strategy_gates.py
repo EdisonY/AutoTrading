@@ -263,6 +263,27 @@ def evaluate_c_v14_tail_guard(
     return StrategyGateDecision(True, "tail_guard", "tail_guard_pass", adjusted_score=abs_score)
 
 
+def evaluate_c_v14_stale_entry_price_gate(
+    *,
+    recent_prices: Collection[Any],
+    repeated_count: int = 3,
+) -> StrategyGateDecision:
+    """Evaluate the C/v14 guard for repeated identical entry prices."""
+    window_size = int(repeated_count)
+    prices = list(recent_prices or [])
+    if window_size <= 0 or len(prices) < window_size:
+        return StrategyGateDecision(True, "market_data_guard", "entry_price_fresh")
+    window = prices[-window_size:]
+    if len(set(window)) == 1:
+        return StrategyGateDecision(
+            False,
+            "market_data_guard",
+            "入场价连续3次相同，疑似数据冻结",
+            evidence={"recent_prices": window, "repeated_count": window_size},
+        )
+    return StrategyGateDecision(True, "market_data_guard", "entry_price_fresh", evidence={"recent_prices": window})
+
+
 def evaluate_b_v16_confirmation_gate(
     *,
     side: str,

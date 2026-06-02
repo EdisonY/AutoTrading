@@ -68,6 +68,7 @@ from core.risk_engine import RiskEngine, RiskLimits
 from core.strategy_gates import (
     evaluate_c_v14_confirmation_gate,
     evaluate_c_v14_entry_threshold,
+    evaluate_c_v14_stale_entry_price_gate,
     evaluate_c_v14_tail_guard,
     evaluate_no_same_symbol_position_gate,
 )
@@ -1850,13 +1851,14 @@ class Scanner:
 
         # 价格停滞检测
         recent_prices = self.recent_entry_prices.get(inst_id, [])
-        if len(recent_prices) >= 3 and len(set(recent_prices[-3:])) == 1:
-            logger.warning(f"  ⚠️ [{tf}] {inst_id} 入场价连续3次相同，疑似数据冻结")
+        stale_price_gate = evaluate_c_v14_stale_entry_price_gate(recent_prices=recent_prices)
+        if not stale_price_gate.allowed:
+            logger.warning(f"  ⚠️ [{tf}] {inst_id} {stale_price_gate.reason}")
             ATR_ZERO_BLACKLIST.add(inst_id)
             log_event({
                 "time": now_str, "event": "OPEN_SKIPPED", "symbol": inst_id,
                 "side": side, "score": abs_score, "timeframe": tf,
-                "skip_reason": "入场价连续3次相同，疑似数据冻结",
+                "skip_reason": stale_price_gate.reason,
                 "decision_stage": "market_data_guard",
                 "filter_layer": "market_data",
                 **sentinel_fields(inst_id),

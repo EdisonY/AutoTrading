@@ -41,6 +41,41 @@ def evaluate_a_v11_entry_threshold(
     )
 
 
+def effective_a_v11_signal_score(
+    *,
+    score: float,
+    side: str,
+    resonance: bool,
+    resonance_bonus: float,
+) -> float:
+    """Apply the A/v11 resonance bonus to a raw signal score."""
+    adjusted_score = float(score or 0)
+    side_key = str(side or "").lower()
+    if resonance:
+        if side_key == "long" and adjusted_score > 0:
+            return round(adjusted_score + float(resonance_bonus), 1)
+        if side_key == "short" and adjusted_score < 0:
+            return round(adjusted_score - float(resonance_bonus), 1)
+    return adjusted_score
+
+
+def evaluate_a_v11_replacement_signal(
+    *,
+    effective_score: float,
+    strong_signal_threshold: float,
+) -> StrategyGateDecision:
+    """Evaluate whether an A/v11 signal is strong enough to try full-position replacement."""
+    adjusted_score = abs(float(effective_score))
+    threshold = float(strong_signal_threshold)
+    return StrategyGateDecision(
+        allowed=adjusted_score >= threshold,
+        gate="position_replacement",
+        reason="replacement_signal_pass" if adjusted_score >= threshold else "replacement_signal_fail",
+        threshold=threshold,
+        adjusted_score=adjusted_score,
+    )
+
+
 def evaluate_b_v16_entry_threshold(
     *,
     timeframe: str,

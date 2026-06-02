@@ -114,7 +114,11 @@ from core.kline_cache import load_cached_klines, save_cached_klines
 from core.binance_api_guard import current_cooldown_seconds, record_public_response, wait_before_public_request
 from core.sentinel_scanner import fields_from_context, filter_context_by_available, merge_symbols_with_context
 from core.risk_engine import RiskEngine, RiskLimits
-from core.strategy_gates import evaluate_a_v11_entry_threshold
+from core.strategy_gates import (
+    effective_a_v11_signal_score,
+    evaluate_a_v11_entry_threshold,
+    evaluate_a_v11_replacement_signal,
+)
 from core.strategy_engine import StrategyEngine
 
 def console_log_level() -> int:
@@ -1071,17 +1075,19 @@ class Scanner:
         return True
 
     def _effective_signal_score(self, sig: dict, resonance: bool = False) -> float:
-        score = float(sig.get("net_score", sig.get("vpb_score", 0)) or 0)
-        side = sig.get("trade_side", "")
-        if resonance:
-            if side == "long" and score > 0:
-                return round(score + RESONANCE_BONUS, 1)
-            if side == "short" and score < 0:
-                return round(score - RESONANCE_BONUS, 1)
-        return score
+        return effective_a_v11_signal_score(
+            score=float(sig.get("net_score", sig.get("vpb_score", 0)) or 0),
+            side=sig.get("trade_side", ""),
+            resonance=resonance,
+            resonance_bonus=RESONANCE_BONUS,
+        )
 
     def _can_try_full_replacement(self, sig: dict, resonance: bool = False) -> bool:
-        return abs(self._effective_signal_score(sig, resonance=resonance)) >= STRONG_SIGNAL_THRESHOLD
+        decision = evaluate_a_v11_replacement_signal(
+            effective_score=self._effective_signal_score(sig, resonance=resonance),
+            strong_signal_threshold=STRONG_SIGNAL_THRESHOLD,
+        )
+        return decision.allowed
 
     def _passes_entry_threshold(self, sig: dict) -> bool:
         decision = evaluate_a_v11_entry_threshold(

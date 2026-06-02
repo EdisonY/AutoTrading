@@ -246,6 +246,7 @@
 - 2026-06-02：阻塞等待期间继续推进 P1。新增 `rollback_watch_review.py`，把 A/v11/B/v16 四个 rollback-watch 汇总成行动矩阵。当前本地结果：P0=0/P1=4，最差 B/v16 24h 扣费后 `-94.456 USDT`，四项动作均为 `pause_expansion_review_quality`；这表示暂停扩张/复核质量，不是自动回滚。
 - 2026-06-02：16:44 cooldown 到期后又遇到 A/v11 `positionRisk` 的 `418/-1003`，guard 自动延到 `2026-06-02T17:26:54+08:00`。继续不强拉账户；已把 B/v16/C/v14 的 `exchangeInfo` 从 signed REST 改到 public REST guard，减少账户 API 压力，并部署 `20260602-165634-strategy-b-e038cae` / `20260602-165727-strategy-c-e038cae`。
 - 2026-06-02：继续 P0-B replay/live 同路径。`core.strategy_gates` 已新增 C/v14 15m confirmation gate 和 low-score tail guard，`scanner_v14.py` 改为调用 shared pure functions；本地等价烟测通过，腾讯 `strategy-c` release `20260602-195221-strategy-c-36ccdad` 部署成功。19:53 live pull 显示六服务 active、P0=0、guard cooldown=0、账户浮盈 `+89.5569`、6 仓。public rolling 仍为 `60/60`，后续继续观察 public REST，同时推进 A/v11 confirmation/replacement 与剩余 risk/position/execution gate 抽取。
+- 2026-06-02：继续 P0-B，又抽 A/v11 replacement-signal gate。`core.strategy_gates` 新增 resonance-adjusted effective score 与 strong-signal replacement eligibility，`scanner.py` 只委托 `_effective_signal_score()` / `_can_try_full_replacement()`；本地等价烟测通过。腾讯 `strategy-a` release `20260602-195744-strategy-a-d0a6561` 已落地，虽然本地 apply 命令外层超时，远端 release、service active、journal clean、20:02 live pull 均确认成功。
 
 ---
 ## 2026-05-29 全局运行自检与账户方向口径修复

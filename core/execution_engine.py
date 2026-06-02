@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import os
 import time
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Literal
 
+from core.account_state import load_central_account_state
 from core.position_utils import infer_position_side
 
 
@@ -80,9 +84,26 @@ class ExecutionResult:
 
 
 class ExecutionEngine:
-    def __init__(self, client: Any, name: str = ""):
+    def __init__(
+        self,
+        client: Any,
+        name: str = "",
+        *,
+        account_state_root: str | Path | None = None,
+        central_confirmation_max_age_seconds: float | None = None,
+    ):
         self.client = client
         self.name = name
+        self.account_state_root = Path(
+            account_state_root
+            or os.environ.get("CENTRAL_ACCOUNT_STATE_ROOT")
+            or Path(__file__).resolve().parents[1]
+        )
+        self.central_confirmation_max_age_seconds = float(
+            central_confirmation_max_age_seconds
+            if central_confirmation_max_age_seconds is not None
+            else os.environ.get("CENTRAL_ACCOUNT_STATE_CONFIRM_MAX_AGE_SEC", "15")
+        )
 
     def calc_quantity(self, symbol: str, price: float, risk_usdt: float, leverage: int, max_quantity: float | None = None) -> float:
         qty = float(self.client.calc_size(symbol, price, risk_usdt, leverage))
@@ -129,6 +150,7 @@ class ExecutionEngine:
                     raw={"preflight_market_price": price_check},
                 )
         try:
+            submitted_at = datetime.now(timezone.utc)
             if req.side == "long":
                 raw = self.client.open_long(req.symbol, qty, req.leverage, req.take_profit, req.stop_loss)
             else:
@@ -186,7 +208,8 @@ class ExecutionEngine:
 
         exec_qty = self._executed_quantity(raw)
         if req.confirm_position:
-            confirmed_qty = self._confirm_position_qty(req.symbol, req.side)
+            confirm_cache = {"min_observed_at": submitted_at}
+            confirmed_qty = self._confirm_position_qty(req.symbol, req.side, cache=confirm_cache)
             if confirmed_qty > 0:
                 exec_qty = confirmed_qty
         if exec_qty <= 0:
@@ -222,9 +245,11 @@ class ExecutionEngine:
                 raw={"remaining_qty": 0.0},
             )
         try:
+            submitted_at = datetime.now(timezone.utc)
             raw = self._submit_close(req.symbol, req.side, qty, close_target)
         except Exception as exc:
             return ExecutionResult(False, "close", req.symbol, req.side, qty, code="exception", message=str(exc))
+        confirm_cache["min_observed_at"] = submitted_at
         if self._is_success(raw):
             remaining_qty = 0.0
             if req.confirm_position:
@@ -398,6 +423,14 @@ class ExecutionEngine:
             and now - float(cache.get("positions_ts") or 0.0) <= 0.75
         ):
             return list(cache.get("positions") or [])
+        min_observed_at = cache.get("min_observed_at") if cache is not None else None
+        central_positions = self._central_positions_for_confirmation(min_observed_at=min_observed_at)
+        if central_positions is not None:
+            if cache is not None:
+                cache["positions"] = central_positions
+                cache["positions_ts"] = now
+                cache["positions_source"] = "central_account_state"
+            return central_positions
         if hasattr(self.client, "invalidate_account_snapshot"):
             self.client.invalidate_account_snapshot()
         positions = list(self.client.get_positions())
@@ -405,6 +438,21 @@ class ExecutionEngine:
             cache["positions"] = positions
             cache["positions_ts"] = now
         return positions
+
+    def _central_positions_for_confirmation(self, *, min_observed_at: Any = None) -> list[dict[str, Any]] | None:
+        if not self.name:
+            return None
+        required_ts = min_observed_at if isinstance(min_observed_at, datetime) else None
+        state = load_central_account_state(
+            self.account_state_root,
+            self.name,
+            max_age_seconds=self.central_confirmation_max_age_seconds,
+            min_observed_at=required_ts,
+            allow_legacy=True,
+        )
+        if not state:
+            return None
+        return list(state.positions)
 
     @staticmethod
     def _is_success(raw: Any) -> bool:

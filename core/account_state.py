@@ -176,6 +176,7 @@ def load_central_account_state(
     strategy: str,
     *,
     max_age_seconds: float,
+    min_observed_at: datetime | None = None,
     allow_legacy: bool = True,
 ) -> CentralAccountState | None:
     payload = read_account_state_payload(root, allow_legacy=allow_legacy)
@@ -193,6 +194,11 @@ def load_central_account_state(
         ts = parse_ts(row.get("ts"))
         if not ts:
             return None
+        observed_at = ts.astimezone(timezone.utc)
+        if min_observed_at is not None:
+            required = min_observed_at if min_observed_at.tzinfo else min_observed_at.replace(tzinfo=timezone.utc)
+            if observed_at < required.astimezone(timezone.utc):
+                return None
         age = (datetime.now(timezone.utc) - ts.astimezone(timezone.utc)).total_seconds()
         if age < 0 or age > float(max_age_seconds):
             return None

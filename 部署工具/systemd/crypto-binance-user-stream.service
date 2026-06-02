@@ -1,0 +1,15 @@
+[Unit]
+Description=AutoTrading Binance user-data-stream service (construction foundation)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/crypto-auto-trader
+EnvironmentFile=-/etc/crypto-auto-trader/trading.env
+ExecStart=/opt/crypto-auto-trader/.venv/bin/python -u /opt/crypto-auto-trader/binance_user_stream_service.py --strategy A/v11 --listen-key ${BINANCE_A_LISTEN_KEY} --apply-state
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

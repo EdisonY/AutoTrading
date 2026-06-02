@@ -81,6 +81,7 @@ CORE_FILES = [
     file_pair("core/binance_api_executor.py"),
     file_pair("core/binance_api_guard.py"),
     file_pair("core/binance_user_stream.py"),
+    file_pair("core/binance_user_stream_runtime.py"),
     file_pair("core/binance_order_rules.py"),
     file_pair("core/event_store.py"),
     file_pair("core/execution_engine.py"),
@@ -109,6 +110,7 @@ RESEARCH_CORE = [
     file_pair("core/binance_api_executor.py"),
     file_pair("core/binance_api_guard.py"),
     file_pair("core/binance_user_stream.py"),
+    file_pair("core/binance_user_stream_runtime.py"),
     file_pair("core/models.py"),
     file_pair("core/position_utils.py"),
     file_pair("core/replay.py"),
@@ -208,6 +210,15 @@ TENCENT_COMPONENTS: dict[str, dict[str, Any]] = {
         ],
         "services": [],
         "post": ['{python} -c "import binance_api_queue_service; print(\'binance_api_queue_service import ok\')"'],
+    },
+    "user-stream": {
+        "files": CORE_FILES
+        + [
+            file_pair("部署工具/binance_user_stream_service.py", "binance_user_stream_service.py"),
+            file_pair("部署工具/systemd/crypto-binance-user-stream.service", "systemd/crypto-binance-user-stream.service"),
+        ],
+        "services": [],
+        "post": ['{python} -c "import binance_user_stream_service; print(\'binance_user_stream_service import ok\')"'],
     },
     "research": {
         "files": RESEARCH_CORE

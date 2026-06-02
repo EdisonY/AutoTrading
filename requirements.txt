@@ -6,6 +6,7 @@ duckdb>=1.0,<2
 
 # Local deployment and server synchronization tools
 paramiko>=3.4,<5
+websocket-client>=1.8,<2
 
 # Python 3.10 compatibility for config parsing on the current live node
 tomli>=2.0,<3; python_version < "3.11"

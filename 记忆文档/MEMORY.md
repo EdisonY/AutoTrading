@@ -264,6 +264,7 @@
 - 2026-06-02：继续 P0-B。C/v14 ATR=0 market microstructure gate 已抽成 `evaluate_c_v14_market_microstructure_gate()`，scanner 保留黑名单和日志编排；本地 `tests.test_strategy_gates` / source compile / diff check 通过。腾讯 C/v14 release `20260602-221943-strategy-c-1594290` 部署成功；22:23 六服务 active，C/v14 journal 无新 API/import/syntax 错误，P0=0/P1=4/P2=2。
 - 2026-06-02：P0-A 继续复发。22:31 cooldown 过线后，public C/v14 `/fapi/v1/klines` 低计数仍触发 `418/-1003`；guard 证据显示 account snapshot、market-data-cache、B/C/sentinel 同时恢复请求。已在 `core/binance_api_guard.py` 加 post-ban quiet/recovery ramp：ban 到点后静默 5 分钟，再 30 分钟内 signed+public 合并限 `4/min` 且最小间隔 `15000ms`。已部署 A/B/C/account/sentinel，并重启 market-data-cache。22:48 rollout 中还有一次 public 418，cooldown 到 `23:12:59`；需等新 guard 完整生效后再验收。
 - 2026-06-03：Testnet 施工模式继续推进 P0-A。继中心 account-state 和 execution confirmation 中心状态证明路径后，新增 `core/binance_api_queue.py` 独立 API 队列 foundation：SQLite 持久化请求、优先级、cooldown defer、lease、幂等键、结果/错误记录；新增 `binance_api_queue_service.py` 与 `crypto-binance-api-queue.service` 草案，并接入 release `api-queue` 组件。当前 scanner/client 尚未切到队列，服务不启动，P0-A 仍需 user-data-stream、队列执行器接入、fresh-run 30 分钟无 418/429/-1003 验收。
+- 2026-06-03：P0-A user-data-stream 先落纯事件归并层。新增 `core/account_state_stream.py`，可把 Binance Futures `ACCOUNT_UPDATE` 的余额、持仓增减、方向、upnl/notional 归并进中心 account-state payload；测试覆盖开仓/余额更新、零仓移除、非账户事件忽略。listen-key/websocket transport 尚未启动，后续还要把事件源接入 account-state service。
 
 ---
 ## 2026-05-29 全局运行自检与账户方向口径修复

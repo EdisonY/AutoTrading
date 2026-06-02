@@ -95,6 +95,84 @@ def evaluate_a_v11_replacement_signal(
     )
 
 
+def evaluate_a_v11_releasable_position(
+    *,
+    new_score: float,
+    new_symbol: str,
+    new_side: str,
+    old_tf: str,
+    old_symbol: str,
+    old_side: str,
+    old_score: float,
+    pnl_pct: float,
+    age_min: int,
+    same_side_required: bool,
+    preferred_tf: str | None,
+    require_preferred_tf: bool,
+    strong_signal_threshold: float,
+    elite_score: float,
+    min_age_minutes: int,
+    elite_min_age_minutes: int,
+    score_gap: float,
+    soft_protect_pnl_pct: float,
+    soft_protect_score_gap: float,
+    hard_protect_pnl_pct: float,
+) -> StrategyGateDecision:
+    """Evaluate whether an existing A/v11 position can be released for a stronger signal."""
+    abs_new_score = abs(float(new_score))
+    if abs_new_score < float(strong_signal_threshold):
+        return StrategyGateDecision(False, "position_replacement", "replacement_signal_too_weak", adjusted_score=abs_new_score)
+
+    old_symbol_key = str(old_symbol or "")
+    new_symbol_key = str(new_symbol or "")
+    old_side_key = str(old_side or "").lower()
+    new_side_key = str(new_side or "").lower()
+    preferred_tf_key = str(preferred_tf or "")
+    old_tf_key = str(old_tf or "")
+    is_elite = abs_new_score >= float(elite_score)
+    min_age = int(elite_min_age_minutes if is_elite else min_age_minutes)
+
+    evidence = {
+        "min_age_required": min_age,
+        "gap_required": 0,
+        "is_elite": is_elite,
+        "tf_penalty": 0 if preferred_tf_key and old_tf_key == preferred_tf_key else 1,
+        "side_penalty": 0 if old_side_key == new_side_key else 1,
+    }
+
+    if old_symbol_key == new_symbol_key:
+        return StrategyGateDecision(False, "position_replacement", "same_symbol_not_releasable", adjusted_score=abs_new_score, evidence=evidence)
+    if require_preferred_tf and preferred_tf_key and old_tf_key != preferred_tf_key:
+        return StrategyGateDecision(False, "position_replacement", "not_preferred_timeframe", adjusted_score=abs_new_score, evidence=evidence)
+    if same_side_required and old_side_key != new_side_key:
+        return StrategyGateDecision(False, "position_replacement", "same_side_required", adjusted_score=abs_new_score, evidence=evidence)
+    if int(age_min) < min_age:
+        return StrategyGateDecision(False, "position_replacement", "position_too_young", adjusted_score=abs_new_score, evidence=evidence)
+    if float(pnl_pct) >= float(hard_protect_pnl_pct):
+        return StrategyGateDecision(False, "position_replacement", "hard_profit_protected", adjusted_score=abs_new_score, evidence=evidence)
+
+    old_abs_score = abs(float(old_score or 0))
+    gap_required = 0.0 if float(pnl_pct) <= 0 else float(score_gap)
+    if float(pnl_pct) >= float(soft_protect_pnl_pct):
+        gap_required = float(soft_protect_score_gap)
+        evidence["gap_required"] = gap_required
+        if old_abs_score <= 0 and not is_elite:
+            return StrategyGateDecision(False, "position_replacement", "soft_profit_recovery_protected", adjusted_score=abs_new_score, evidence=evidence)
+    evidence["gap_required"] = gap_required
+
+    if old_abs_score > 0 and abs_new_score < old_abs_score + gap_required:
+        return StrategyGateDecision(False, "position_replacement", "score_gap_insufficient", adjusted_score=abs_new_score, evidence=evidence)
+
+    evidence["release_rank"] = (
+        evidence["tf_penalty"],
+        evidence["side_penalty"],
+        float(pnl_pct),
+        old_abs_score,
+        -int(age_min),
+    )
+    return StrategyGateDecision(True, "position_replacement", "releasable_position", adjusted_score=abs_new_score, evidence=evidence)
+
+
 def evaluate_b_v16_entry_threshold(
     *,
     timeframe: str,

@@ -117,6 +117,7 @@ from core.risk_engine import RiskEngine, RiskLimits
 from core.strategy_gates import (
     effective_a_v11_signal_score,
     evaluate_a_v11_entry_threshold,
+    evaluate_a_v11_releasable_position,
     evaluate_a_v11_replacement_signal,
     evaluate_no_same_symbol_position_gate,
 )
@@ -1206,21 +1207,36 @@ class Scanner:
                 pnl_pct, pnl_usd, ok = self._position_pnl_pct(pos)
                 if not ok:
                     continue
-                if pnl_pct >= EVICT_HARD_PROTECT_PNL_PCT:
-                    continue
                 old_score = abs(float(pos.entry_score or 0))
-                gap_required = 0 if pnl_pct <= 0 else EVICT_SCORE_GAP
-                if pnl_pct >= EVICT_SOFT_PROTECT_PNL_PCT:
-                    gap_required = EVICT_SOFT_PROTECT_SCORE_GAP
-                    if old_score <= 0 and abs(new_score) < EVICT_ELITE_SCORE:
-                        continue
-                if old_score > 0 and abs(new_score) < old_score + gap_required:
+                release_decision = evaluate_a_v11_releasable_position(
+                    new_score=new_score,
+                    new_symbol=new_symbol,
+                    new_side=new_side,
+                    old_tf=old_tf,
+                    old_symbol=pos.symbol,
+                    old_side=pos.side,
+                    old_score=old_score,
+                    pnl_pct=pnl_pct,
+                    age_min=age_min,
+                    same_side_required=same_side_required,
+                    preferred_tf=preferred_tf,
+                    require_preferred_tf=require_preferred_tf,
+                    strong_signal_threshold=STRONG_SIGNAL_THRESHOLD,
+                    elite_score=EVICT_ELITE_SCORE,
+                    min_age_minutes=EVICT_MIN_AGE_MINUTES,
+                    elite_min_age_minutes=EVICT_ELITE_MIN_AGE_MINUTES,
+                    score_gap=EVICT_SCORE_GAP,
+                    soft_protect_pnl_pct=EVICT_SOFT_PROTECT_PNL_PCT,
+                    soft_protect_score_gap=EVICT_SOFT_PROTECT_SCORE_GAP,
+                    hard_protect_pnl_pct=EVICT_HARD_PROTECT_PNL_PCT,
+                )
+                if not release_decision.allowed:
                     continue
-                tf_penalty = 0 if preferred_tf and old_tf == preferred_tf else 1
-                # 优先释放同方向弱仓，避免替换后单方向暴露继续增加。
-                side_penalty = 0 if pos.side == new_side else 1
+                evidence = release_decision.evidence or {}
+                gap_required = evidence.get("gap_required", 0)
+                min_age = evidence.get("min_age_required", min_age)
                 # 越亏、越低分、越老的仓越适合释放；恢复仓 entry_score=0 会自然排前。
-                release_rank = (tf_penalty, side_penalty, pnl_pct, old_score, -age_min)
+                release_rank = tuple(evidence.get("release_rank") or (0, 0, pnl_pct, old_score, -age_min))
                 candidates.append((release_rank, old_tf, key, pos, pnl_pct, pnl_usd, age_min, gap_required, min_age))
         if not candidates:
             return None

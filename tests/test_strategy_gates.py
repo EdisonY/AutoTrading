@@ -3,6 +3,7 @@ import unittest
 from core.strategy_gates import (
     effective_a_v11_signal_score,
     evaluate_a_v11_entry_threshold,
+    evaluate_a_v11_releasable_position,
     evaluate_a_v11_replacement_signal,
     evaluate_b_v16_confirmation_gate,
     evaluate_b_v16_entry_threshold,
@@ -47,6 +48,57 @@ class StrategyGateParityTest(unittest.TestCase):
                 strong_signal_threshold=112,
             ).allowed
         )
+
+        releasable = evaluate_a_v11_releasable_position(
+            new_score=125,
+            new_symbol="NEWUSDT",
+            new_side="long",
+            old_tf="15m",
+            old_symbol="OLDUSDT",
+            old_side="long",
+            old_score=90,
+            pnl_pct=-1.0,
+            age_min=30,
+            same_side_required=False,
+            preferred_tf="15m",
+            require_preferred_tf=True,
+            strong_signal_threshold=112,
+            elite_score=120,
+            min_age_minutes=20,
+            elite_min_age_minutes=10,
+            score_gap=25,
+            soft_protect_pnl_pct=2.0,
+            soft_protect_score_gap=25,
+            hard_protect_pnl_pct=2.0,
+        )
+        self.assertTrue(releasable.allowed)
+        self.assertEqual(releasable.evidence["gap_required"], 0)
+        self.assertEqual(tuple(releasable.evidence["release_rank"]), (0, 0, -1.0, 90.0, -30))
+
+        protected = evaluate_a_v11_releasable_position(
+            new_score=130,
+            new_symbol="NEWUSDT",
+            new_side="long",
+            old_tf="15m",
+            old_symbol="OLDUSDT",
+            old_side="long",
+            old_score=90,
+            pnl_pct=2.0,
+            age_min=30,
+            same_side_required=False,
+            preferred_tf="15m",
+            require_preferred_tf=True,
+            strong_signal_threshold=112,
+            elite_score=120,
+            min_age_minutes=20,
+            elite_min_age_minutes=10,
+            score_gap=25,
+            soft_protect_pnl_pct=2.0,
+            soft_protect_score_gap=25,
+            hard_protect_pnl_pct=2.0,
+        )
+        self.assertFalse(protected.allowed)
+        self.assertEqual(protected.reason, "hard_profit_protected")
 
     def test_b_v16_threshold_and_confirmation(self):
         confirm = evaluate_b_v16_confirmation_gate(

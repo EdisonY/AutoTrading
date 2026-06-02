@@ -1,5 +1,11 @@
 # MEMORY.md - 长期记忆
 
+## 2026-06-02 N6 哨兵前向收益与大行情覆盖首版
+- 继续长期计划 N6，不改实盘策略、不加 API 调用。`sentinel_quality_review.py` 现在基于后续同币种 `sentinel_scans` 价格估算 15m/30m/60m/120m 原始收益与按哨兵方向扣双边 taker 费后的前向收益，并按 reason 聚合。
+- 新增大行情覆盖审计：读取 `SENTINEL_SIGNAL` 总线事件，把 abs(change)>=8% 的大行情和后续 30 分钟内策略扫描覆盖做对比，输出覆盖率和未覆盖样例；入口页增加“哨兵前向收益/覆盖”功能卡、forward-return 表和 missed-big-move 表。
+- 本地 3 日镜像首版结果：sentinel decisions `1152`，scanned `20000`，bus signals `3715`；大行情覆盖 `158/1102 = 14.34%`；60m 方向扣费后均值 `-0.4966%`，胜率 `46.22%`。这说明当前哨兵不应因逸事直接加分；后续必须先做 missed mover 分层归因和完整 replay/fill 连接。
+- 仍未完成：`sentinel_forward_returns` SQLite 持久表暂缓；未覆盖大行情还没拆到 watchlist/scanner cadence/strategy/risk/execution；前向收益仍是扫描价格近似，不是 K线或成交仿真。
+
 ## 2026-06-02 A/v11 rollout review 接入 + N2/API 继续推进
 - 用户要求进入无需确认模式继续推进长期计划。本轮按项目规则先拉 live context：`2026-06-02T02:52:24+08:00` 显示六个腾讯核心服务 active，账户浮盈 `+1.6233`，`5` 仓，attention `P0=0/P1=4/P2=2`。
 - 已把只读 `a_v11_rollout_review.py` 接入完整报告链：Aliyun 2小时 refresh、每日 shadow review、release_manager 腾讯 research/阿里 shadow 文件集、Aliyun→Tencent 反向同步、pull_live_context、portal_dashboard 首页/功能卡/详情表。最新本地复盘显示 `P1/manual_review_required`，72h 平仓样本 `123`，扣费后 PnL `-320.7581 USDT`，强平贡献主要来自 PLAYUSDT/UBUSDT 等硬顶事件。此轮没有自动回滚，也没有改 A/v11 trailing 参数。

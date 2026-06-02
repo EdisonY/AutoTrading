@@ -421,11 +421,11 @@
 **运行位置**：阿里云
 
 **实现**：
-- [ ] 新增 `部署工具/sentinel_quality_review.py`
-- [ ] 产出：
+- [x] 新增 `部署工具/sentinel_quality_review.py`
+- [x] 产出：
   - `runtime/sentinel_quality_latest.json`
   - `reports/sentinel_quality_latest.md`
-  - SQLite表：`sentinel_forward_returns`
+  - 首版 forward returns / coverage 写入 JSON/Markdown；SQLite表 `sentinel_forward_returns` 暂缓，待完整 replay/fill 引擎落地后再决定是否持久化。
 
 **关键字段**：
 - sentinel_reason: gainer/loser/volume_spike/velocity_spike
@@ -436,13 +436,15 @@
 
 **实验**：
 - [ ] `sentinel-score-bonus-shadow`：测试+5/+10/+15加分，仅限有正向收益证据的哨兵类型
+- [x] 首版大行情覆盖审计：对比 `SENTINEL_SIGNAL` 总线大行情与后续策略扫描覆盖，入口页展示覆盖率和未覆盖样例。
 
 **约束**：
 - 无正向前向收益+足够样本 → 不上线哨兵加分
 - 哨兵覆盖度审计：统计过去30天涨幅>20%的币种，检查多少在扫描范围内
 
 **验收**：
-- 命令中心显示哪些大行情被错失及原因：未扫描/扫描无信号/策略拒绝/风控拒绝/执行拒绝
+- [x] 命令中心显示大行情覆盖率、未覆盖样例、15m/30m/60m/120m 哨兵前向收益。
+- [ ] 下一步把未覆盖大行情归因拆到：未进 watchlist / scanner cadence 未覆盖 / 扫描无信号 / 策略拒绝 / 风控拒绝 / 执行拒绝，并连接完整 replay outcome。
 
 ---
 

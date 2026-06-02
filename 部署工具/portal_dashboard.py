@@ -48,6 +48,8 @@ REPLAY_GATE_JSON = ROOT / "runtime" / "replay_gate_audit_latest.json"
 REPLAY_GATE_MD = REPORTS_DIR / "replay_gate_audit_latest.md"
 A_V11_ROLLOUT_JSON = ROOT / "runtime" / "a_v11_rollout_review_latest.json"
 A_V11_ROLLOUT_MD = REPORTS_DIR / "a_v11_rollout_review_latest.md"
+SENTINEL_QUALITY_JSON = ROOT / "runtime" / "sentinel_quality_latest.json"
+SENTINEL_QUALITY_MD = REPORTS_DIR / "sentinel_quality_latest.md"
 CST = timezone(timedelta(hours=8))
 
 
@@ -649,6 +651,31 @@ def a_v11_rollout_summary(path: Path | None) -> dict[str, Any]:
         "decision": payload.get("decision") if isinstance(payload.get("decision"), dict) else empty["decision"],
         "windows": payload.get("windows") if isinstance(payload.get("windows"), dict) else {},
         "selected_live_parameter": payload.get("selected_live_parameter") or {},
+    }
+
+
+def sentinel_quality_summary(path: Path | None) -> dict[str, Any]:
+    empty = {
+        "available": False,
+        "path": SENTINEL_QUALITY_MD,
+        "age": "No sentinel quality review",
+        "fresh": False,
+        "summary": {},
+        "coverage": {},
+        "forward_returns": {},
+    }
+    payload = read_json(path) if path else None
+    if not isinstance(payload, dict):
+        return empty
+    generated_at = parse_dt(payload.get("generated_at"))
+    return {
+        "available": True,
+        "path": SENTINEL_QUALITY_MD,
+        "age": age_text(generated_at),
+        "fresh": bool(generated_at and (datetime.now(CST) - generated_at).total_seconds() < 4 * 3600),
+        "summary": payload.get("summary") if isinstance(payload.get("summary"), dict) else {},
+        "coverage": payload.get("coverage") if isinstance(payload.get("coverage"), dict) else {},
+        "forward_returns": payload.get("forward_returns") if isinstance(payload.get("forward_returns"), dict) else {},
     }
 
 
@@ -1380,6 +1407,10 @@ def function_status_cards(data: dict[str, Any]) -> list[dict[str, str]]:
     a_v11_rollout = data.get("a_v11_rollout") or {}
     a_v11_rollout_decision = a_v11_rollout.get("decision") or {}
     a_v11_rollout_72h = (a_v11_rollout.get("windows") or {}).get("72h") or {}
+    sentinel_quality = data.get("sentinel_quality") or {}
+    sentinel_coverage = sentinel_quality.get("coverage") or {}
+    sentinel_forward_60m = ((sentinel_quality.get("forward_returns") or {}).get("by_horizon") or {}).get("60m") or {}
+    sentinel_forward_60m_dir = sentinel_forward_60m.get("directional_after_fee") or {}
     evolution = data.get("strategy_evolution") or {}
     evo_counts = evolution.get("counts") or {}
     attention = data.get("attention") or {}
@@ -1418,6 +1449,23 @@ def function_status_cards(data: dict[str, Any]) -> list[dict[str, str]]:
             "name": "哨兵链路",
             "value": str(sum(int(r.get("decisions") or 0) for r in sig.get("sentinel", []))),
             "body": f"旧报告仍有 {sig.get('http400')} 条 400；本地已修，待远端部署。" if int(sig.get("http400") or 0) else "哨兵扫描、层级归因和结果追踪正常。",
+        },
+        {
+            "level": "ok" if sentinel_quality.get("fresh") else "warn",
+            "name": "哨兵前向收益/覆盖",
+            "value": (
+                f"{float(sentinel_coverage.get('coverage_pct') or 0):.1f}%"
+                if sentinel_quality.get("available")
+                else "未生成"
+            ),
+            "body": (
+                f"大行情覆盖 {int(sentinel_coverage.get('covered_big_move_signals') or 0)}/"
+                f"{int(sentinel_coverage.get('big_move_signals') or 0)}；"
+                f"60m方向扣费后均值 {float(sentinel_forward_60m_dir.get('avg_pct') or 0):+.4f}%，"
+                f"胜率 {float(sentinel_forward_60m_dir.get('win_rate_pct') or 0):.1f}%。"
+                if sentinel_quality.get("available")
+                else "哨兵质量复盘尚未生成 forward return / coverage 审计。"
+            ),
         },
         {
             "level": "ok" if int(research.get("small_live") or 0) else "warn" if int(research.get("approved") or 0) else "ok",
@@ -1982,6 +2030,8 @@ def build_data() -> dict[str, Any]:
     data["attention_html"] = ATTENTION_HTML
     data["strategy_truth"] = strategy_truth_summary(STRATEGY_TRUTH_JSON)
     data["strategy_truth_html"] = STRATEGY_TRUTH_MD
+    data["sentinel_quality"] = sentinel_quality_summary(SENTINEL_QUALITY_JSON)
+    data["sentinel_quality_html"] = SENTINEL_QUALITY_MD
     data["research_store"] = research_store_summary(RESEARCH_STORE_JSON)
     data["research_store_html"] = RESEARCH_STORE_MD
     data["replay_feature"] = replay_feature_summary(REPLAY_FEATURE_JSON)
@@ -2239,6 +2289,33 @@ def render_html(out_dir: Path) -> str:
 """.strip()
         for r in data["signal_summary"].get("sentinel", [])
     ) or '<tr><td colspan="5">暂无哨兵摘要</td></tr>'
+
+    sentinel_quality = data.get("sentinel_quality") or {}
+    sentinel_coverage = sentinel_quality.get("coverage") or {}
+    sentinel_forward_rows = "".join(
+        f"""
+<tr>
+  <td>{h(label)}</td>
+  <td>{int((row.get('directional_after_fee') or {}).get('samples') or 0)}</td>
+  <td>{float((row.get('raw') or {}).get('avg_pct') or 0):+.4f}%</td>
+  <td>{float((row.get('directional_after_fee') or {}).get('avg_pct') or 0):+.4f}%</td>
+  <td>{float((row.get('directional_after_fee') or {}).get('win_rate_pct') or 0):.2f}%</td>
+</tr>
+""".strip()
+        for label, row in ((sentinel_quality.get("forward_returns") or {}).get("by_horizon") or {}).items()
+    ) or '<tr><td colspan="5">暂无哨兵前向收益审计</td></tr>'
+    sentinel_missed_rows = "".join(
+        f"""
+<tr>
+  <td>{h(row.get('symbol'))}</td>
+  <td>{float(row.get('change_pct') or 0):+.2f}%</td>
+  <td>{float(row.get('velocity_pct') or 0):+.2f}%</td>
+  <td>{float(row.get('quote_volume') or 0):.0f}</td>
+  <td>{h(str(row.get('ts') or '')[:16])}</td>
+</tr>
+""".strip()
+        for row in (sentinel_coverage.get("missed_examples") or [])[:10]
+    ) or '<tr><td colspan="5">暂无未覆盖大行情样例</td></tr>'
 
     counterfactual = data.get("counterfactual") or {}
     cf_overall = counterfactual.get("overall") or {}
@@ -2749,6 +2826,15 @@ th {{ background:#f1f5f9; color:#334155; }}
     <table>
       <thead><tr><th>策略</th><th>哨兵决策数</th><th>结果分布</th><th>层级分布</th><th>代表币种</th></tr></thead>
       <tbody>{sentinel_rows}</tbody>
+    </table>
+    <p class="note">N6 审计：大行情覆盖 {int(sentinel_coverage.get('covered_big_move_signals') or 0)}/{int(sentinel_coverage.get('big_move_signals') or 0)}，覆盖率 {float(sentinel_coverage.get('coverage_pct') or 0):.2f}%；更新 {h(sentinel_quality.get('age'))}。</p>
+    <table class="subtable">
+      <thead><tr><th>窗口</th><th>样本</th><th>原始均值</th><th>方向扣费后均值</th><th>方向胜率</th></tr></thead>
+      <tbody>{sentinel_forward_rows}</tbody>
+    </table>
+    <table class="subtable">
+      <thead><tr><th>未覆盖样例</th><th>涨跌幅</th><th>加速度</th><th>成交额</th><th>时间</th></tr></thead>
+      <tbody>{sentinel_missed_rows}</tbody>
     </table>
   </section>
 

@@ -62,6 +62,8 @@ ROLLBACK_WATCH_JSON = ROOT / "runtime" / "rollback_watch_review_latest.json"
 ROLLBACK_WATCH_MD = REPORTS_DIR / "rollback_watch_review_latest.md"
 ROLLBACK_EXECUTION_JSON = ROOT / "runtime" / "rollback_execution_plan_latest.json"
 ROLLBACK_EXECUTION_MD = REPORTS_DIR / "rollback_execution_plan_latest.md"
+ROLLBACK_AUTOMATION_JSON = ROOT / "runtime" / "rollback_automation_guard_latest.json"
+ROLLBACK_AUTOMATION_MD = REPORTS_DIR / "rollback_automation_guard_latest.md"
 A_V11_ROLLOUT_JSON = ROOT / "runtime" / "a_v11_rollout_review_latest.json"
 A_V11_ROLLOUT_MD = REPORTS_DIR / "a_v11_rollout_review_latest.md"
 B_V16_ROLLOUT_JSON = ROOT / "runtime" / "b_v16_rollout_review_latest.json"
@@ -988,6 +990,39 @@ def rollback_execution_summary(path: Path | None) -> dict[str, Any]:
     }
 
 
+def rollback_automation_summary(path: Path | None) -> dict[str, Any]:
+    empty = {
+        "available": False,
+        "path": ROLLBACK_AUTOMATION_MD,
+        "age": "No rollback automation guard",
+        "fresh": False,
+        "status": "missing",
+        "summary": {"conditions": 0, "ready_conditions": 0, "blockers": 0, "candidates": 0},
+        "conditions": [],
+        "candidates": [],
+        "blockers": [],
+        "automatic_rollback_allowed": False,
+        "apply_enabled": False,
+    }
+    payload = read_json(path) if path else None
+    if not isinstance(payload, dict):
+        return empty
+    generated_at = parse_dt(payload.get("generated_at"))
+    return {
+        "available": True,
+        "path": ROLLBACK_AUTOMATION_MD,
+        "age": age_text(generated_at),
+        "fresh": bool(generated_at and (datetime.now(CST) - generated_at).total_seconds() < 4 * 3600),
+        "status": payload.get("status") or "missing",
+        "summary": payload.get("summary") if isinstance(payload.get("summary"), dict) else empty["summary"],
+        "conditions": payload.get("conditions") if isinstance(payload.get("conditions"), list) else [],
+        "candidates": payload.get("candidates") if isinstance(payload.get("candidates"), list) else [],
+        "blockers": payload.get("blockers") if isinstance(payload.get("blockers"), list) else [],
+        "automatic_rollback_allowed": bool(payload.get("automatic_rollback_allowed")),
+        "apply_enabled": bool(payload.get("apply_enabled")),
+    }
+
+
 def sentinel_quality_summary(path: Path | None) -> dict[str, Any]:
     empty = {
         "available": False,
@@ -1762,6 +1797,8 @@ def function_status_cards(data: dict[str, Any]) -> list[dict[str, str]]:
     rollback_watch_summary_data = rollback_watch.get("summary") or {}
     rollback_execution = data.get("rollback_execution") or {}
     rollback_execution_summary_data = rollback_execution.get("summary") or {}
+    rollback_automation = data.get("rollback_automation") or {}
+    rollback_automation_summary_data = rollback_automation.get("summary") or {}
     a_v11_rollout = data.get("a_v11_rollout") or {}
     a_v11_rollout_decision = a_v11_rollout.get("decision") or {}
     a_v11_rollout_72h = (a_v11_rollout.get("windows") or {}).get("72h") or {}
@@ -2135,6 +2172,32 @@ def function_status_cards(data: dict[str, Any]) -> list[dict[str, str]]:
                 f"apply enabled no; updated {rollback_execution.get('age')}."
                 if rollback_execution.get("available")
                 else "Rollback execution checklist missing. Governance may be ready, but dry-run command packet is not built."
+            ),
+        },
+        {
+            "level": (
+                "bad"
+                if rollback_automation.get("automatic_rollback_allowed") or rollback_automation.get("apply_enabled")
+                else "warn"
+                if int(rollback_automation_summary_data.get("blockers") or 0) > 0
+                else "ok"
+                if rollback_automation.get("fresh")
+                else "warn"
+            ),
+            "name": "Rollback automation guard",
+            "value": (
+                str(rollback_automation.get("status") or "missing")
+                if rollback_automation.get("available")
+                else "not built"
+            ),
+            "body": (
+                f"conditions {int(rollback_automation_summary_data.get('ready_conditions') or 0)}/"
+                f"{int(rollback_automation_summary_data.get('conditions') or 0)}; "
+                f"blockers {int(rollback_automation_summary_data.get('blockers') or 0)}; "
+                f"candidates {int(rollback_automation_summary_data.get('candidates') or 0)}; "
+                f"auto allowed no; apply enabled no; updated {rollback_automation.get('age')}."
+                if rollback_automation.get("available")
+                else "Automatic rollback guard missing. Automation policy cannot be audited from the portal."
             ),
         },
         {
@@ -2666,6 +2729,8 @@ def build_data() -> dict[str, Any]:
     data["rollback_watch_html"] = ROLLBACK_WATCH_MD
     data["rollback_execution"] = rollback_execution_summary(ROLLBACK_EXECUTION_JSON)
     data["rollback_execution_html"] = ROLLBACK_EXECUTION_MD
+    data["rollback_automation"] = rollback_automation_summary(ROLLBACK_AUTOMATION_JSON)
+    data["rollback_automation_html"] = ROLLBACK_AUTOMATION_MD
     data["a_v11_rollout"] = a_v11_rollout_summary(A_V11_ROLLOUT_JSON)
     data["a_v11_rollout_html"] = A_V11_ROLLOUT_MD
     data["b_v16_rollout"] = b_v16_rollout_summary(B_V16_ROLLOUT_JSON)
@@ -3325,6 +3390,35 @@ def render_html(out_dir: Path) -> str:
 """.strip()
         for r in (rollback_execution.get("plans") or [])
     ) or '<tr><td colspan="8">暂无 rollback execution plan</td></tr>'
+    rollback_automation = data.get("rollback_automation") or {}
+    rollback_automation_summary_data = rollback_automation.get("summary") or {}
+    rollback_automation_condition_rows = "".join(
+        f"""
+<tr>
+  <td>{h(r.get('name'))}</td>
+  <td>{'yes' if r.get('ready') else 'no'}</td>
+  <td>{h(r.get('status'))}</td>
+  <td>{h(compact_text(r.get('detail') or '-', 140))}</td>
+  <td>{h(compact_text('; '.join(str(item) for item in (r.get('blockers') or [])) or '-', 180))}</td>
+</tr>
+""".strip()
+        for r in (rollback_automation.get("conditions") or [])
+    ) or '<tr><td colspan="5">暂无 rollback automation guard</td></tr>'
+    rollback_automation_candidate_rows = "".join(
+        f"""
+<tr>
+  <td>{h(r.get('priority'))}</td>
+  <td>{h(r.get('strategy'))}</td>
+  <td>{h(r.get('candidate_id'))}</td>
+  <td>{h(r.get('execution_status'))}</td>
+  <td>{h(r.get('automation_status'))}</td>
+  <td>{'no' if not r.get('automatic_rollback_allowed') else 'yes'}</td>
+  <td>{'no' if not r.get('apply_enabled') else 'yes'}</td>
+  <td>{h(compact_text('; '.join(str(item) for item in (r.get('blockers') or [])) or '-', 200))}</td>
+</tr>
+""".strip()
+        for r in (rollback_automation.get("candidates") or [])
+    ) or '<tr><td colspan="8">暂无 automation guard candidate</td></tr>'
 
     a_v11_rollout = data.get("a_v11_rollout") or {}
     a_v11_rollout_decision = a_v11_rollout.get("decision") or {}
@@ -3514,6 +3608,14 @@ def render_html(out_dir: Path) -> str:
             "看 operator-ready 项的 freeze、证据、dry-run release 命令和终止条件。默认只读，apply 关闭。",
             data["rollback_execution_html"],
             "看执行清单",
+            "red",
+        ),
+        route_card(
+            "自动回滚能不能动",
+            "自动化闸门",
+            "看自动回滚是否仍被 policy、replay、dry-run、release-id 和 apply-disabled 条件锁住。",
+            data["rollback_automation_html"],
+            "看自动化闸门",
             "red",
         ),
         route_card(
@@ -3851,6 +3953,19 @@ th {{ background:#f1f5f9; color:#334155; }}
     <table>
       <thead><tr><th>优先级</th><th>策略</th><th>候选</th><th>状态</th><th>组件</th><th>Apply</th><th>Dry-run 命令</th><th>原因</th></tr></thead>
       <tbody>{rollback_execution_rows}</tbody>
+    </table>
+  </section>
+
+  <section class="section panel">
+    <h2>Rollback 自动化闸门</h2>
+    <p class="note">只读检查未来自动回滚前置条件。状态 {h(rollback_automation.get('status', '-'))}；conditions {int(rollback_automation_summary_data.get('ready_conditions') or 0)}/{int(rollback_automation_summary_data.get('conditions') or 0)}；blockers {int(rollback_automation_summary_data.get('blockers') or 0)}；auto allowed no；apply enabled no；更新 {h(rollback_automation.get('age'))}。</p>
+    <table>
+      <thead><tr><th>条件</th><th>Ready</th><th>状态</th><th>说明</th><th>阻塞</th></tr></thead>
+      <tbody>{rollback_automation_condition_rows}</tbody>
+    </table>
+    <table class="subtable">
+      <thead><tr><th>优先级</th><th>策略</th><th>候选</th><th>执行状态</th><th>自动化状态</th><th>Auto</th><th>Apply</th><th>阻塞</th></tr></thead>
+      <tbody>{rollback_automation_candidate_rows}</tbody>
     </table>
   </section>
 

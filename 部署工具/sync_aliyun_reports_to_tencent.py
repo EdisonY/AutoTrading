@@ -50,6 +50,7 @@ REPORT_FILES = [
     "replay_readiness_latest.md",
     "rollback_watch_review_latest.md",
     "rollback_execution_plan_latest.md",
+    "rollback_automation_guard_latest.md",
     "a_v11_rollout_review_latest.md",
     "b_v16_rollout_review_latest.md",
     "portal_latest.html",
@@ -83,6 +84,7 @@ RUNTIME_FILES = [
     "replay_readiness_latest.json",
     "rollback_watch_review_latest.json",
     "rollback_execution_plan_latest.json",
+    "rollback_automation_guard_latest.json",
     "a_v11_rollout_review_latest.json",
     "b_v16_rollout_review_latest.json",
 ]

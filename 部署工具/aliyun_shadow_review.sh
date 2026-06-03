@@ -75,6 +75,7 @@ echo "--- Step 7: Strategy evolution gate ---"
 $PYTHON strategy_evolution_gate.py --memory-dir $REMOTE_DIR/research_memory --experiments-dir $REMOTE_DIR/experiments --reports-dir $REMOTE_DIR/reports --runtime-dir $REMOTE_DIR/runtime || true
 $PYTHON rollback_watch_review.py --evolution-json $REMOTE_DIR/runtime/strategy_evolution_latest.json --runtime-dir $REMOTE_DIR/runtime --reports-dir $REMOTE_DIR/reports || true
 $PYTHON rollback_execution_plan.py --runtime-dir $REMOTE_DIR/runtime --reports-dir $REMOTE_DIR/reports || true
+$PYTHON rollback_automation_guard.py --runtime-dir $REMOTE_DIR/runtime --reports-dir $REMOTE_DIR/reports || true
 
 echo "--- Step 8: Decision attention ledger ---"
 $PYTHON decision_attention.py || true

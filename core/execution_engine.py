@@ -109,6 +109,12 @@ class ExecutionEngine:
             if central_confirmation_max_age_seconds is not None
             else os.environ.get("CENTRAL_ACCOUNT_STATE_CONFIRM_MAX_AGE_SEC", "15")
         )
+        self.central_target_max_age_seconds = float(
+            os.environ.get(
+                "CENTRAL_ACCOUNT_STATE_TARGET_MAX_AGE_SEC",
+                os.environ.get("BINANCE_ACCOUNT_STATE_CACHE_MAX_AGE_SEC", "60"),
+            )
+        )
         if require_central_confirmation is None:
             value = os.environ.get("CENTRAL_ACCOUNT_STATE_CONFIRM_REQUIRE", "1").strip().lower()
             self.require_central_confirmation = value not in {"0", "false", "no", "off"}
@@ -425,7 +431,12 @@ class ExecutionEngine:
         force_refresh: bool = True,
     ) -> dict[str, Any]:
         try:
-            for p in self._get_positions_for_confirmation(cache, force_refresh=force_refresh):
+            positions = (
+                self._get_positions_for_confirmation(cache, force_refresh=force_refresh)
+                if cache and cache.get("min_observed_at")
+                else self._get_positions_for_close_target(cache, force_refresh=force_refresh)
+            )
+            for p in positions:
                 if p.get("symbol") != symbol:
                     continue
                 amt = float(p.get("positionAmt", 0) or 0)
@@ -445,6 +456,36 @@ class ExecutionEngine:
         except Exception:
             return {}
         return {}
+
+    def _get_positions_for_close_target(self, cache: dict[str, Any] | None, force_refresh: bool = False) -> list[dict[str, Any]]:
+        now = time.monotonic()
+        if (
+            cache is not None
+            and not force_refresh
+            and not cache.get("min_observed_at")
+            and "positions" in cache
+            and now - float(cache.get("positions_ts") or 0.0) <= 0.75
+        ):
+            return list(cache.get("positions") or [])
+        central_positions = self._central_positions_for_confirmation(
+            min_observed_at=None,
+            max_age_seconds=self.central_target_max_age_seconds,
+        )
+        if central_positions is not None:
+            if cache is not None:
+                cache["positions"] = central_positions
+                cache["positions_ts"] = now
+                cache["positions_source"] = "central_account_state_target"
+            return central_positions
+        if self.require_central_confirmation:
+            raise ConfirmationStateUnavailable("fresh central account state unavailable for close target")
+        if hasattr(self.client, "invalidate_account_snapshot"):
+            self.client.invalidate_account_snapshot()
+        positions = list(self.client.get_positions())
+        if cache is not None:
+            cache["positions"] = positions
+            cache["positions_ts"] = now
+        return positions
 
     def _submit_close(self, symbol: str, side: str, quantity: float, close_target: dict[str, Any]) -> Any:
         kwargs = {"quantity": quantity}
@@ -499,6 +540,7 @@ class ExecutionEngine:
         if (
             cache is not None
             and not force_refresh
+            and not cache.get("min_observed_at")
             and "positions" in cache
             and now - float(cache.get("positions_ts") or 0.0) <= 0.75
         ):
@@ -521,14 +563,23 @@ class ExecutionEngine:
             cache["positions_ts"] = now
         return positions
 
-    def _central_positions_for_confirmation(self, *, min_observed_at: Any = None) -> list[dict[str, Any]] | None:
+    def _central_positions_for_confirmation(
+        self,
+        *,
+        min_observed_at: Any = None,
+        max_age_seconds: float | None = None,
+    ) -> list[dict[str, Any]] | None:
         if not self.name:
             return None
         required_ts = min_observed_at if isinstance(min_observed_at, datetime) else None
         state = load_central_account_state(
             self.account_state_root,
             self.name,
-            max_age_seconds=self.central_confirmation_max_age_seconds,
+            max_age_seconds=(
+                self.central_confirmation_max_age_seconds
+                if max_age_seconds is None
+                else float(max_age_seconds)
+            ),
             min_observed_at=required_ts,
             allow_legacy=True,
         )

@@ -26,8 +26,13 @@ ROOT = Path(__file__).resolve().parents[1]
 UPLOADS = [
     (ROOT / "core" / "__init__.py", f"{REMOTE_DIR}/core/__init__.py"),
     (ROOT / "core" / "models.py", f"{REMOTE_DIR}/core/models.py"),
+    (ROOT / "core" / "binance_api_queue.py", f"{REMOTE_DIR}/core/binance_api_queue.py"),
+    (ROOT / "core" / "binance_api_guard.py", f"{REMOTE_DIR}/core/binance_api_guard.py"),
+    (ROOT / "core" / "binance_api_queue_client.py", f"{REMOTE_DIR}/core/binance_api_queue_client.py"),
     (ROOT / "core" / "position_utils.py", f"{REMOTE_DIR}/core/position_utils.py"),
     (ROOT / "core" / "replay.py", f"{REMOTE_DIR}/core/replay.py"),
+    (ROOT / "core" / "replay_depth_cache.py", f"{REMOTE_DIR}/core/replay_depth_cache.py"),
+    (ROOT / "core" / "replay_fill.py", f"{REMOTE_DIR}/core/replay_fill.py"),
     (ROOT / "core" / "review_analytics.py", f"{REMOTE_DIR}/core/review_analytics.py"),
     (ROOT / "core" / "experiment.py", f"{REMOTE_DIR}/core/experiment.py"),
     (ROOT / "core" / "research_memory.py", f"{REMOTE_DIR}/core/research_memory.py"),

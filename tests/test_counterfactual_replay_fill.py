@@ -1,5 +1,7 @@
 import importlib.util
+import json
 import sys
+import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -159,6 +161,69 @@ class CounterfactualReplayFillTests(unittest.TestCase):
         self.assertIsNone(result.sim_pnl_usdt)
         self.assertIsNone(result.replay_fill)
 
+    def test_evaluate_uses_local_depth_cache_when_available(self):
+        event_ts = datetime(2026, 6, 1, 0, 0, 30, tzinfo=timezone.utc)
+        entry_ts = event_ts.replace(second=0, microsecond=0) + timedelta(minutes=1)
+        entry_ms = int(entry_ts.timestamp() * 1000)
+        event = self.tool.SkipEvent(
+            event_id=13,
+            ts=event_ts,
+            strategy="A/v11",
+            symbol="DEPTHUSDT",
+            side="long",
+            timeframe="1m",
+            score=88.0,
+            stage="risk",
+            layer="position",
+            reason="test depth",
+            sentinel=False,
+            replay_decision="reject",
+            replay_gate="position",
+            payload={},
+        )
+        bars = {
+            "DEPTHUSDT": {
+                entry_ms: [entry_ms, "100", "101.5", "99.5", "100.5"],
+                entry_ms + 60_000: [entry_ms + 60_000, "100.5", "101.3", "100", "101.0"],
+            }
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            cache_dir = Path(tmp) / "depth_cache"
+            cache_dir.mkdir()
+            (cache_dir / "DEPTHUSDT_latest.json").write_text(
+                json.dumps(
+                    {
+                        "symbol": "DEPTHUSDT",
+                        "ts": entry_ts.isoformat(),
+                        "bids": [["99.9", "10"]],
+                        "asks": [["100", "1"], ["101", "3"]],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            result = self.tool.evaluate(
+                event,
+                horizon=2,
+                bars_by_symbol=bars,
+                now=entry_ts + timedelta(minutes=3),
+                margin_usdt=100,
+                leverage=4,
+                tp_pct=1,
+                sl_pct=1,
+                depth_cache_dirs=[cache_dir],
+                depth_max_age_sec=60,
+            )
+
+        self.assertEqual(result.status, "complete")
+        self.assertEqual(result.replay_fill["entry_fill_source"], "order_book")
+        self.assertEqual(result.replay_fill["order_book_levels_used"], 2)
+        self.assertEqual(result.replay_fill["depth_snapshot_age_seconds"], 0.0)
+        self.assertEqual(result.replay_fill["quantity"], 4.0)
+        self.assertAlmostEqual(result.replay_fill["entry_price"], 100.75)
+        self.assertAlmostEqual(result.replay_fill["depth_slippage_usdt"], 3.0)
+        self.assertAlmostEqual(result.sim_pnl_usdt, 0.5965, places=4)
+
     def test_a_v11_uses_atr_trailing_exit_when_payload_has_atr(self):
         event_ts = datetime(2026, 6, 1, 0, 0, 30, tzinfo=timezone.utc)
         entry_ts = event_ts.replace(second=0, microsecond=0) + timedelta(minutes=1)
@@ -285,12 +350,17 @@ class CounterfactualReplayFillTests(unittest.TestCase):
                     "gross_pnl_usdt": 4.0,
                     "fee_usdt": 0.4,
                     "slippage_usdt": 0.1,
+                    "depth_slippage_usdt": 0.1,
                     "net_pnl_usdt": 3.6,
                     "requested_quantity": 4.0,
                     "quantity": 2.0,
                     "unfilled_quantity": 2.0,
                     "fill_ratio": 0.5,
                     "partial_fill": True,
+                    "entry_fill_source": "order_book",
+                    "order_book_levels_used": 2,
+                    "depth_snapshot_source": "runtime/depth_cache/FILLUSDT_latest.json",
+                    "depth_snapshot_age_seconds": 12.0,
                     "bars_held": 7,
                 },
             ),
@@ -312,12 +382,15 @@ class CounterfactualReplayFillTests(unittest.TestCase):
                     "gross_pnl_usdt": -2.4,
                     "fee_usdt": 0.4,
                     "slippage_usdt": 0.0,
+                    "depth_slippage_usdt": 0.0,
                     "net_pnl_usdt": -2.8,
                     "requested_quantity": 4.0,
                     "quantity": 4.0,
                     "unfilled_quantity": 0.0,
                     "fill_ratio": 1.0,
                     "partial_fill": False,
+                    "entry_fill_source": "synthetic",
+                    "order_book_levels_used": 0,
                     "bars_held": 3,
                 },
             ),
@@ -329,6 +402,10 @@ class CounterfactualReplayFillTests(unittest.TestCase):
         self.assertAlmostEqual(summary["gross_pnl_usdt"], 1.6)
         self.assertAlmostEqual(summary["fee_usdt"], 0.8)
         self.assertAlmostEqual(summary["slippage_usdt"], 0.1)
+        self.assertAlmostEqual(summary["depth_slippage_usdt"], 0.1)
+        self.assertEqual(summary["order_book_fill_count"], 1)
+        self.assertEqual(summary["depth_snapshot_count"], 1)
+        self.assertAlmostEqual(summary["avg_depth_snapshot_age_seconds"], 12.0)
         self.assertAlmostEqual(summary["net_pnl_usdt"], 0.8)
         self.assertAlmostEqual(summary["requested_quantity"], 8.0)
         self.assertAlmostEqual(summary["filled_quantity"], 6.0)
@@ -340,6 +417,7 @@ class CounterfactualReplayFillTests(unittest.TestCase):
         by_model = {row["exit_model"]: row for row in summary["by_exit_model"]}
         self.assertAlmostEqual(by_model["a_v11_atr_trailing"]["net_pnl_usdt"], 3.6)
         self.assertEqual(by_model["a_v11_atr_trailing"]["partial_fill_count"], 1)
+        self.assertEqual(by_model["a_v11_atr_trailing"]["order_book_fill_count"], 1)
         self.assertAlmostEqual(by_model["a_v11_atr_trailing"]["avg_fill_ratio"], 0.5)
         self.assertAlmostEqual(by_model["fixed_pct_barrier"]["net_pnl_usdt"], -2.8)
 

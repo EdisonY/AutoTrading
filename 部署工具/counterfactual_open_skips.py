@@ -40,6 +40,7 @@ except Exception:
     render_markdown_html = None
 
 from core.replay import ReplayEvent, classify_replay_decision
+from core.replay_depth_cache import default_depth_cache_dirs, load_depth_snapshot
 from core.replay_fill import ReplayFillRequest, simulate_replay_fill
 from core.binance_api_guard import record_public_response, wait_before_public_request
 from core.binance_api_queue_client import api_queue_client_enabled, queued_api_request
@@ -342,6 +343,8 @@ def evaluate(
     max_fill_quantity: float | None = None,
     max_fill_notional_usdt: float | None = None,
     allow_partial_fill: bool = True,
+    depth_cache_dirs: list[Path] | None = None,
+    depth_max_age_sec: float = 300.0,
 ) -> Result:
     entry_ts = ceil_next_minute(event.ts)
     if entry_ts + timedelta(minutes=horizon) > now.replace(second=0, microsecond=0):
@@ -364,6 +367,15 @@ def evaluate(
     close_price = num(window[-1][4])
     if close_price is None:
         return Result(event, horizon, entry_ts, entry_price, None, None, None, None, None, "", "invalid_close_price")
+    depth_snapshot = None
+    if depth_cache_dirs:
+        depth_snapshot = load_depth_snapshot(
+            event.symbol,
+            entry_ts,
+            side=event.side,
+            cache_dirs=depth_cache_dirs,
+            max_age_seconds=depth_max_age_sec,
+        )
     direction = 1.0 if event.side == "long" else -1.0
     mfe_pct = 0.0
     mae_pct = 0.0
@@ -404,6 +416,7 @@ def evaluate(
                 max_fill_quantity=max_fill_quantity,
                 max_fill_notional_usdt=max_fill_notional_usdt,
                 allow_partial_fill=allow_partial_fill,
+                entry_order_book=depth_snapshot.order_book if depth_snapshot else None,
             ),
             [
                 {
@@ -419,6 +432,14 @@ def evaluate(
     except ValueError as exc:
         return Result(event, horizon, entry_ts, entry_price, None, None, None, mfe_pct, mae_pct, "", f"fill_error:{exc}")
     fill_payload = fill.to_dict()
+    if depth_snapshot:
+        fill_payload.update(
+            {
+                "depth_snapshot_source": depth_snapshot.source,
+                "depth_snapshot_ts": depth_snapshot.ts.isoformat(),
+                "depth_snapshot_age_seconds": round(depth_snapshot.age_seconds, 3),
+            }
+        )
     if exit_params:
         fill_payload.update(exit_params)
     else:
@@ -522,12 +543,15 @@ def replay_fill_summary(rows: list[Result]) -> dict[str, Any]:
     fills = [row.replay_fill for row in rows if isinstance(row.replay_fill, dict) and row.replay_fill]
     exit_model_counts: Counter[str] = Counter()
     exit_reason_counts: Counter[str] = Counter()
+    fill_source_counts: Counter[str] = Counter()
     by_model: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for fill in fills:
         model = str(fill.get("exit_model") or "unknown")
         reason = str(fill.get("exit_reason") or "unknown")
+        source = str(fill.get("entry_fill_source") or "unknown")
         exit_model_counts[model] += 1
         exit_reason_counts[reason] += 1
+        fill_source_counts[source] += 1
         by_model[model].append(fill)
     by_model_rows = []
     for model, group in sorted(
@@ -544,22 +568,32 @@ def replay_fill_summary(rows: list[Result]) -> dict[str, Any]:
                 "gross_pnl_usdt": sum(fill_float(fill, "gross_pnl_usdt") for fill in group),
                 "fee_usdt": sum(fill_float(fill, "fee_usdt") for fill in group),
                 "slippage_usdt": sum(fill_float(fill, "slippage_usdt") for fill in group),
+                "depth_slippage_usdt": sum(fill_float(fill, "depth_slippage_usdt") for fill in group),
                 "requested_quantity": sum(fill_float(fill, "requested_quantity") for fill in group),
                 "filled_quantity": sum(fill_float(fill, "quantity") for fill in group),
                 "unfilled_quantity": sum(fill_float(fill, "unfilled_quantity") for fill in group),
                 "partial_fill_count": sum(1 for fill in group if fill.get("partial_fill")),
+                "order_book_fill_count": sum(1 for fill in group if fill.get("entry_fill_source") == "order_book"),
+                "avg_order_book_levels_used": mean([fill_float(fill, "order_book_levels_used") for fill in group]) if group else None,
                 "avg_fill_ratio": mean([fill_float(fill, "fill_ratio") for fill in group]) if group else None,
                 "win_rate": (sum(value > 0 for value in net_values) / len(net_values) * 100) if net_values else None,
                 "avg_bars_held": mean([fill_float(fill, "bars_held") for fill in group]) if group else None,
             }
         )
+    depth_ages = [fill_float(fill, "depth_snapshot_age_seconds") for fill in fills if fill.get("depth_snapshot_source")]
     return {
         "samples": len(fills),
         "exit_model_counts": count_rows(exit_model_counts),
         "exit_reason_counts": count_rows(exit_reason_counts),
+        "entry_fill_source_counts": count_rows(fill_source_counts),
         "gross_pnl_usdt": sum(fill_float(fill, "gross_pnl_usdt") for fill in fills) if fills else None,
         "fee_usdt": sum(fill_float(fill, "fee_usdt") for fill in fills) if fills else None,
         "slippage_usdt": sum(fill_float(fill, "slippage_usdt") for fill in fills) if fills else None,
+        "depth_slippage_usdt": sum(fill_float(fill, "depth_slippage_usdt") for fill in fills) if fills else None,
+        "order_book_fill_count": sum(1 for fill in fills if fill.get("entry_fill_source") == "order_book"),
+        "avg_order_book_levels_used": mean([fill_float(fill, "order_book_levels_used") for fill in fills]) if fills else None,
+        "depth_snapshot_count": len(depth_ages),
+        "avg_depth_snapshot_age_seconds": mean(depth_ages) if depth_ages else None,
         "requested_quantity": sum(fill_float(fill, "requested_quantity") for fill in fills) if fills else None,
         "filled_quantity": sum(fill_float(fill, "quantity") for fill in fills) if fills else None,
         "unfilled_quantity": sum(fill_float(fill, "unfilled_quantity") for fill in fills) if fills else None,
@@ -629,6 +663,7 @@ def report_markdown(
             if args.max_fill_quantity is not None or args.max_fill_notional_usdt is not None or args.reject_partial_fill
             else "- 流动性近似未启用：默认按目标仓位完整成交，保持旧反事实口径。"
         ),
+        f"- 深度盘口：只读取本地/镜像 `runtime/depth_cache`；若 {args.depth_max_age_sec:.0f}s 内存在同币种快照，则 entry fill 使用订单簿深度，否则保持 synthetic entry，不调用 Binance API。",
         f"- `MFE/MAE` 为顺向/逆向最大价格波动；`TP/SL first` 统计共享 fill kernel 的 `{args.tp_pct:.1f}% / {args.sl_pct:.1f}%` 固定障碍。A/v11 事件若带正 ATR 与 15m/30m 周期，会叠加 approved ATR trailing 出场参数。",
         f"- 默认用 {args.primary_horizon} 分钟结果判断过滤层是否错杀；尚未走满窗口的事件只入库为 pending，不进入结论。",
         "- 事件归一使用 `core.replay.ReplayEvent` / `ReplayDecision`，过滤层分组优先采用统一 replay gate，后续会把实盘门控迁到同一路径。",
@@ -672,23 +707,27 @@ def report_markdown(
             f"fee {fmt(fill_summary.get('fee_usdt'))} USDT，"
             f"slippage {fmt(fill_summary.get('slippage_usdt'))} USDT，"
             f"net {fmt(fill_summary.get('net_pnl_usdt'), sign=True)} USDT；"
+            f"depth slippage {fmt(fill_summary.get('depth_slippage_usdt'))} USDT；"
             f"平均持仓 {fmt(fill_summary.get('avg_bars_held'))} bars；"
             f"partial {int(fill_summary.get('partial_fill_count') or 0)}，"
-            f"平均fill ratio {fmt(fill_summary.get('avg_fill_ratio'), 3)}。",
+            f"平均fill ratio {fmt(fill_summary.get('avg_fill_ratio'), 3)}；"
+            f"order-book fills {int(fill_summary.get('order_book_fill_count') or 0)}，"
+            f"depth snapshots {int(fill_summary.get('depth_snapshot_count') or 0)}。",
             "",
-            "| 出场模型 | 样本 | 胜率 | Gross PnL | Fee | Slippage | Net PnL | Partial | Avg fill | Avg bars |",
-            "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+            "| 出场模型 | 样本 | 胜率 | Gross PnL | Fee | Slippage | Depth slip | Net PnL | OB fills | Partial | Avg fill | Avg bars |",
+            "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
         ]
     )
     for row in model_rows:
         lines.append(
             f"| {md(row.get('exit_model'))} | {int(row.get('samples') or 0)} | {fmt(row.get('win_rate'))}% | "
             f"{fmt(row.get('gross_pnl_usdt'), sign=True)} | {fmt(row.get('fee_usdt'))} | "
-            f"{fmt(row.get('slippage_usdt'))} | {fmt(row.get('net_pnl_usdt'), sign=True)} | "
+            f"{fmt(row.get('slippage_usdt'))} | {fmt(row.get('depth_slippage_usdt'))} | "
+            f"{fmt(row.get('net_pnl_usdt'), sign=True)} | {int(row.get('order_book_fill_count') or 0)} | "
             f"{int(row.get('partial_fill_count') or 0)} | {fmt(row.get('avg_fill_ratio'), 3)} | {fmt(row.get('avg_bars_held'))} |"
         )
     if not model_rows:
-        lines.append("| - | 0 | - | - | - | - | - | - | - | - |")
+        lines.append("| - | 0 | - | - | - | - | - | - | - | - | - | - |")
     if reason_rows:
         reason_text = "；".join(f"{md(row.get('name'))}={int(row.get('count') or 0)}" for row in reason_rows[:8])
         lines.extend(["", f"- 出场原因分布: {reason_text}。"])
@@ -769,6 +808,12 @@ def write_json_report(path: Path, events: list[SkipEvent], results: list[Result]
             "max_fill_notional_usdt": args.max_fill_notional_usdt,
             "allow_partial_fill": not args.reject_partial_fill,
         },
+        "depth_cache": {
+            "enabled": True,
+            "cache_dirs": [str(Path(path)) for path in args.depth_cache_dir],
+            "max_age_seconds": args.depth_max_age_sec,
+            "note": "local/mirrored runtime/depth_cache only; no Binance API call",
+        },
         "events": len(events),
         "complete_primary_samples": len(primary),
         "overall": aggregate(primary),
@@ -794,9 +839,12 @@ def main() -> int:
     parser.add_argument("--max-fill-quantity", type=float, default=None)
     parser.add_argument("--max-fill-notional-usdt", type=float, default=None)
     parser.add_argument("--reject-partial-fill", action="store_true")
+    parser.add_argument("--depth-cache-dir", type=Path, action="append", default=[])
+    parser.add_argument("--depth-max-age-sec", type=float, default=300.0)
     parser.add_argument("--min-samples", type=int, default=10)
     args = parser.parse_args()
     root = args.root.resolve()
+    args.depth_cache_dir = default_depth_cache_dirs(root, args.depth_cache_dir)
     db = args.db or (root / "runtime" / "event_store.sqlite3")
     reports = root / "reports"
     reports.mkdir(parents=True, exist_ok=True)
@@ -817,6 +865,8 @@ def main() -> int:
             args.max_fill_quantity,
             args.max_fill_notional_usdt,
             not args.reject_partial_fill,
+            args.depth_cache_dir,
+            args.depth_max_age_sec,
         )
         for event in events
         for horizon in HORIZONS

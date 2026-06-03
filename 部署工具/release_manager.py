@@ -280,6 +280,8 @@ TENCENT_COMPONENTS: dict[str, dict[str, Any]] = {
             file_pair("部署工具/research_store_export.py", "research_store_export.py"),
             file_pair("部署工具/research_store_query.py", "research_store_query.py"),
             file_pair("部署工具/research_review_dashboard.py", "research_review_dashboard.py"),
+            file_pair("部署工具/strategy_truth_ledger.py", "strategy_truth_ledger.py"),
+            file_pair("部署工具/sentinel_quality_review.py", "sentinel_quality_review.py"),
             file_pair("部署工具/signal_quality_review.py", "signal_quality_review.py"),
             file_pair("部署工具/strategy_evolution_gate.py", "strategy_evolution_gate.py"),
             file_pair("部署工具/systemd/crypto-data-maintenance.service", "systemd/crypto-data-maintenance.service"),

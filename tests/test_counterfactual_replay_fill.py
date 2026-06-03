@@ -351,6 +351,7 @@ class CounterfactualReplayFillTests(unittest.TestCase):
                     "fee_usdt": 0.4,
                     "slippage_usdt": 0.1,
                     "depth_slippage_usdt": 0.1,
+                    "market_impact_usdt": 0.2,
                     "net_pnl_usdt": 3.6,
                     "requested_quantity": 4.0,
                     "quantity": 2.0,
@@ -361,6 +362,7 @@ class CounterfactualReplayFillTests(unittest.TestCase):
                     "order_book_levels_used": 2,
                     "order_book_available_quantity": 2.0,
                     "order_book_fill_ratio": 0.5,
+                    "order_book_queue_ahead_quantity": 1.0,
                     "depth_snapshot_source": "runtime/depth_cache/FILLUSDT_latest.json",
                     "depth_snapshot_age_seconds": 12.0,
                     "bars_held": 7,
@@ -385,6 +387,7 @@ class CounterfactualReplayFillTests(unittest.TestCase):
                     "fee_usdt": 0.4,
                     "slippage_usdt": 0.0,
                     "depth_slippage_usdt": 0.0,
+                    "market_impact_usdt": 0.0,
                     "net_pnl_usdt": -2.8,
                     "requested_quantity": 4.0,
                     "quantity": 4.0,
@@ -407,9 +410,11 @@ class CounterfactualReplayFillTests(unittest.TestCase):
         self.assertAlmostEqual(summary["fee_usdt"], 0.8)
         self.assertAlmostEqual(summary["slippage_usdt"], 0.1)
         self.assertAlmostEqual(summary["depth_slippage_usdt"], 0.1)
+        self.assertAlmostEqual(summary["market_impact_usdt"], 0.2)
         self.assertEqual(summary["order_book_fill_count"], 1)
         self.assertAlmostEqual(summary["avg_order_book_available_quantity"], 2.0)
         self.assertAlmostEqual(summary["avg_order_book_fill_ratio"], 0.5)
+        self.assertAlmostEqual(summary["avg_order_book_queue_ahead_quantity"], 1.0)
         self.assertEqual(summary["depth_snapshot_count"], 1)
         self.assertAlmostEqual(summary["avg_depth_snapshot_age_seconds"], 12.0)
         self.assertAlmostEqual(summary["net_pnl_usdt"], 0.8)
@@ -426,6 +431,8 @@ class CounterfactualReplayFillTests(unittest.TestCase):
         self.assertEqual(by_model["a_v11_atr_trailing"]["order_book_fill_count"], 1)
         self.assertAlmostEqual(by_model["a_v11_atr_trailing"]["avg_order_book_available_quantity"], 2.0)
         self.assertAlmostEqual(by_model["a_v11_atr_trailing"]["avg_order_book_fill_ratio"], 0.5)
+        self.assertAlmostEqual(by_model["a_v11_atr_trailing"]["market_impact_usdt"], 0.2)
+        self.assertAlmostEqual(by_model["a_v11_atr_trailing"]["avg_order_book_queue_ahead_quantity"], 1.0)
         self.assertAlmostEqual(by_model["a_v11_atr_trailing"]["avg_fill_ratio"], 0.5)
         self.assertAlmostEqual(by_model["fixed_pct_barrier"]["net_pnl_usdt"], -2.8)
 

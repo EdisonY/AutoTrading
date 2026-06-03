@@ -2756,7 +2756,9 @@ def render_html(out_dir: Path) -> str:
         f"avg age {float(cf_fill.get('avg_depth_snapshot_age_seconds') or 0):.1f}s, "
         f"max age {float(cf_depth.get('max_age_seconds') or 0):.0f}s, "
         f"max levels {h(cf_depth.get('max_levels') if cf_depth.get('max_levels') is not None else '-')}, "
-        f"visible liquidity {float(cf_depth.get('liquidity_factor') if cf_depth.get('liquidity_factor') is not None else 1):.2f}。"
+        f"visible liquidity {float(cf_depth.get('liquidity_factor') if cf_depth.get('liquidity_factor') is not None else 1):.2f}, "
+        f"queue ahead {float(cf_depth.get('queue_ahead_quantity') or 0):.4f}, "
+        f"impact {float(cf_depth.get('entry_market_impact_bps') or 0):.2f} bps。"
         if cf_depth.get("enabled")
         else "Depth cache 未接入。"
     )
@@ -2795,16 +2797,18 @@ def render_html(out_dir: Path) -> str:
   <td>{float(r.get('fee_usdt') or 0):.2f}</td>
   <td>{float(r.get('slippage_usdt') or 0):.2f}</td>
   <td>{float(r.get('depth_slippage_usdt') or 0):.2f}</td>
+  <td>{float(r.get('market_impact_usdt') or 0):.2f}</td>
   <td class="num {'pos' if float(r.get('net_pnl_usdt') or 0) >= 0 else 'neg'}">{float(r.get('net_pnl_usdt') or 0):+.2f}</td>
   <td>{int(r.get('order_book_fill_count') or 0)}</td>
   <td>{float(r.get('avg_order_book_fill_ratio') or 0):.3f}</td>
+  <td>{float(r.get('avg_order_book_queue_ahead_quantity') or 0):.4f}</td>
   <td>{int(r.get('partial_fill_count') or 0)}</td>
   <td>{float(r.get('avg_fill_ratio') or 0):.3f}</td>
   <td>{float(r.get('avg_bars_held') or 0):.2f}</td>
 </tr>
 """.strip()
         for r in (cf_fill.get("by_exit_model") or [])[:6]
-    ) or '<tr><td colspan="13">暂无 replay/fill 出场模型汇总</td></tr>'
+    ) or '<tr><td colspan="15">暂无 replay/fill 出场模型汇总</td></tr>'
     cf_exit_reasons = "；".join(
         f"{row.get('name')}={int(row.get('count') or 0)}"
         for row in (cf_fill.get("exit_reason_counts") or [])[:5]
@@ -3290,13 +3294,13 @@ th {{ background:#f1f5f9; color:#334155; }}
 
   <section class="section panel">
     <h2>OPEN_SKIPPED 反事实评估</h2>
-    <p class="note">最近 {h(counterfactual.get('hours', '-'))} 小时；以 {h(counterfactual.get('horizon', 60))} 分钟模拟结果判断否决是否错杀。整体若放行：样本 {h(cf_overall.get('samples', '-'))}，胜率 {float(cf_overall.get('win_rate') or 0):.2f}%，PnL <span class="num {'pos' if float(cf_overall.get('pnl') or 0) >= 0 else 'neg'}">{float(cf_overall.get('pnl') or 0):+.2f}</span> USDT；fill net <span class="num {'pos' if float(cf_fill.get('net_pnl_usdt') or 0) >= 0 else 'neg'}">{float(cf_fill.get('net_pnl_usdt') or 0):+.2f}</span>，fee {float(cf_fill.get('fee_usdt') or 0):.2f}，slip {float(cf_fill.get('slippage_usdt') or 0):.2f}，depth slip {float(cf_fill.get('depth_slippage_usdt') or 0):.2f}，partial {int(cf_fill.get('partial_fill_count') or 0)}，avg fill {float(cf_fill.get('avg_fill_ratio') or 0):.3f}，exit reasons {h(cf_exit_reasons)}；{cf_liquidity_note} {cf_depth_note} 更新 {h(counterfactual.get('age'))}。</p>
+    <p class="note">最近 {h(counterfactual.get('hours', '-'))} 小时；以 {h(counterfactual.get('horizon', 60))} 分钟模拟结果判断否决是否错杀。整体若放行：样本 {h(cf_overall.get('samples', '-'))}，胜率 {float(cf_overall.get('win_rate') or 0):.2f}%，PnL <span class="num {'pos' if float(cf_overall.get('pnl') or 0) >= 0 else 'neg'}">{float(cf_overall.get('pnl') or 0):+.2f}</span> USDT；fill net <span class="num {'pos' if float(cf_fill.get('net_pnl_usdt') or 0) >= 0 else 'neg'}">{float(cf_fill.get('net_pnl_usdt') or 0):+.2f}</span>，fee {float(cf_fill.get('fee_usdt') or 0):.2f}，slip {float(cf_fill.get('slippage_usdt') or 0):.2f}，depth slip {float(cf_fill.get('depth_slippage_usdt') or 0):.2f}，impact {float(cf_fill.get('market_impact_usdt') or 0):.2f}，partial {int(cf_fill.get('partial_fill_count') or 0)}，avg fill {float(cf_fill.get('avg_fill_ratio') or 0):.3f}，exit reasons {h(cf_exit_reasons)}；{cf_liquidity_note} {cf_depth_note} 更新 {h(counterfactual.get('age'))}。</p>
     <table>
       <thead><tr><th>策略</th><th>被拒样本</th><th>若放行胜率</th><th>若放行PnL</th><th>平均MFE</th><th>平均MAE</th></tr></thead>
       <tbody>{counterfactual_rows}</tbody>
     </table>
     <table class="subtable">
-      <thead><tr><th>出场模型</th><th>样本</th><th>胜率</th><th>Gross</th><th>Fee</th><th>Slippage</th><th>Depth slip</th><th>Net</th><th>OB fills</th><th>OB fill</th><th>Partial</th><th>Avg fill</th><th>Avg bars</th></tr></thead>
+      <thead><tr><th>出场模型</th><th>样本</th><th>胜率</th><th>Gross</th><th>Fee</th><th>Slippage</th><th>Depth slip</th><th>Impact</th><th>Net</th><th>OB fills</th><th>OB fill</th><th>Queue ahead</th><th>Partial</th><th>Avg fill</th><th>Avg bars</th></tr></thead>
       <tbody>{counterfactual_fill_rows}</tbody>
     </table>
     <table class="subtable">

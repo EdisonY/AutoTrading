@@ -347,6 +347,8 @@ def evaluate(
     depth_max_age_sec: float = 300.0,
     depth_max_levels: int | None = None,
     depth_liquidity_factor: float = 1.0,
+    depth_queue_ahead_quantity: float = 0.0,
+    entry_market_impact_bps: float = 0.0,
 ) -> Result:
     entry_ts = ceil_next_minute(event.ts)
     if entry_ts + timedelta(minutes=horizon) > now.replace(second=0, microsecond=0):
@@ -421,6 +423,8 @@ def evaluate(
                 entry_order_book=depth_snapshot.order_book if depth_snapshot else None,
                 entry_order_book_max_levels=depth_max_levels,
                 entry_order_book_liquidity_factor=depth_liquidity_factor,
+                entry_order_book_queue_ahead_quantity=depth_queue_ahead_quantity,
+                entry_market_impact_bps=entry_market_impact_bps,
             ),
             [
                 {
@@ -574,6 +578,7 @@ def replay_fill_summary(rows: list[Result]) -> dict[str, Any]:
                 "fee_usdt": sum(fill_float(fill, "fee_usdt") for fill in group),
                 "slippage_usdt": sum(fill_float(fill, "slippage_usdt") for fill in group),
                 "depth_slippage_usdt": sum(fill_float(fill, "depth_slippage_usdt") for fill in group),
+                "market_impact_usdt": sum(fill_float(fill, "market_impact_usdt") for fill in group),
                 "requested_quantity": sum(fill_float(fill, "requested_quantity") for fill in group),
                 "filled_quantity": sum(fill_float(fill, "quantity") for fill in group),
                 "unfilled_quantity": sum(fill_float(fill, "unfilled_quantity") for fill in group),
@@ -582,6 +587,7 @@ def replay_fill_summary(rows: list[Result]) -> dict[str, Any]:
                 "avg_order_book_levels_used": mean([fill_float(fill, "order_book_levels_used") for fill in book_group]) if book_group else None,
                 "avg_order_book_available_quantity": mean([fill_float(fill, "order_book_available_quantity") for fill in book_group]) if book_group else None,
                 "avg_order_book_fill_ratio": mean([fill_float(fill, "order_book_fill_ratio") for fill in book_group]) if book_group else None,
+                "avg_order_book_queue_ahead_quantity": mean([fill_float(fill, "order_book_queue_ahead_quantity") for fill in book_group]) if book_group else None,
                 "avg_fill_ratio": mean([fill_float(fill, "fill_ratio") for fill in group]) if group else None,
                 "win_rate": (sum(value > 0 for value in net_values) / len(net_values) * 100) if net_values else None,
                 "avg_bars_held": mean([fill_float(fill, "bars_held") for fill in group]) if group else None,
@@ -598,10 +604,12 @@ def replay_fill_summary(rows: list[Result]) -> dict[str, Any]:
         "fee_usdt": sum(fill_float(fill, "fee_usdt") for fill in fills) if fills else None,
         "slippage_usdt": sum(fill_float(fill, "slippage_usdt") for fill in fills) if fills else None,
         "depth_slippage_usdt": sum(fill_float(fill, "depth_slippage_usdt") for fill in fills) if fills else None,
+        "market_impact_usdt": sum(fill_float(fill, "market_impact_usdt") for fill in fills) if fills else None,
         "order_book_fill_count": len(book_fills),
         "avg_order_book_levels_used": mean([fill_float(fill, "order_book_levels_used") for fill in book_fills]) if book_fills else None,
         "avg_order_book_available_quantity": mean([fill_float(fill, "order_book_available_quantity") for fill in book_fills]) if book_fills else None,
         "avg_order_book_fill_ratio": mean([fill_float(fill, "order_book_fill_ratio") for fill in book_fills]) if book_fills else None,
+        "avg_order_book_queue_ahead_quantity": mean([fill_float(fill, "order_book_queue_ahead_quantity") for fill in book_fills]) if book_fills else None,
         "depth_snapshot_count": len(depth_ages),
         "avg_depth_snapshot_age_seconds": mean(depth_ages) if depth_ages else None,
         "requested_quantity": sum(fill_float(fill, "requested_quantity") for fill in fills) if fills else None,
@@ -674,7 +682,8 @@ def report_markdown(
             else "- 流动性近似未启用：默认按目标仓位完整成交，保持旧反事实口径。"
         ),
         f"- 深度盘口：只读取本地/镜像 `runtime/depth_cache`；若 {args.depth_max_age_sec:.0f}s 内存在同币种快照，则 entry fill 使用订单簿深度，否则保持 synthetic entry，不调用 Binance API。"
-        f"深度假设 max_levels={args.depth_max_levels or '-'}，visible_liquidity_factor={args.depth_liquidity_factor:.2f}。",
+        f"深度假设 max_levels={args.depth_max_levels or '-'}，visible_liquidity_factor={args.depth_liquidity_factor:.2f}，"
+        f"queue_ahead_qty={fmt(args.depth_queue_ahead_quantity)}，entry_market_impact_bps={fmt(args.entry_market_impact_bps)}。",
         f"- `MFE/MAE` 为顺向/逆向最大价格波动；`TP/SL first` 统计共享 fill kernel 的 `{args.tp_pct:.1f}% / {args.sl_pct:.1f}%` 固定障碍。A/v11 事件若带正 ATR 与 15m/30m 周期，会叠加 approved ATR trailing 出场参数。",
         f"- 默认用 {args.primary_horizon} 分钟结果判断过滤层是否错杀；尚未走满窗口的事件只入库为 pending，不进入结论。",
         "- 事件归一使用 `core.replay.ReplayEvent` / `ReplayDecision`，过滤层分组优先采用统一 replay gate，后续会把实盘门控迁到同一路径。",
@@ -719,15 +728,17 @@ def report_markdown(
             f"slippage {fmt(fill_summary.get('slippage_usdt'))} USDT，"
             f"net {fmt(fill_summary.get('net_pnl_usdt'), sign=True)} USDT；"
             f"depth slippage {fmt(fill_summary.get('depth_slippage_usdt'))} USDT；"
+            f"market impact {fmt(fill_summary.get('market_impact_usdt'))} USDT；"
             f"平均持仓 {fmt(fill_summary.get('avg_bars_held'))} bars；"
             f"partial {int(fill_summary.get('partial_fill_count') or 0)}，"
             f"平均fill ratio {fmt(fill_summary.get('avg_fill_ratio'), 3)}；"
             f"order-book fills {int(fill_summary.get('order_book_fill_count') or 0)}，"
             f"OB fill ratio {fmt(fill_summary.get('avg_order_book_fill_ratio'), 3)}，"
+            f"avg queue ahead {fmt(fill_summary.get('avg_order_book_queue_ahead_quantity'))}，"
             f"depth snapshots {int(fill_summary.get('depth_snapshot_count') or 0)}。",
             "",
-            "| 出场模型 | 样本 | 胜率 | Gross PnL | Fee | Slippage | Depth slip | Net PnL | OB fills | OB fill | Partial | Avg fill | Avg bars |",
-            "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+            "| 出场模型 | 样本 | 胜率 | Gross PnL | Fee | Slippage | Depth slip | Impact | Net PnL | OB fills | OB fill | Queue ahead | Partial | Avg fill | Avg bars |",
+            "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
         ]
     )
     for row in model_rows:
@@ -735,12 +746,13 @@ def report_markdown(
             f"| {md(row.get('exit_model'))} | {int(row.get('samples') or 0)} | {fmt(row.get('win_rate'))}% | "
             f"{fmt(row.get('gross_pnl_usdt'), sign=True)} | {fmt(row.get('fee_usdt'))} | "
             f"{fmt(row.get('slippage_usdt'))} | {fmt(row.get('depth_slippage_usdt'))} | "
-            f"{fmt(row.get('net_pnl_usdt'), sign=True)} | {int(row.get('order_book_fill_count') or 0)} | "
-            f"{fmt(row.get('avg_order_book_fill_ratio'), 3)} | {int(row.get('partial_fill_count') or 0)} | "
+            f"{fmt(row.get('market_impact_usdt'))} | {fmt(row.get('net_pnl_usdt'), sign=True)} | "
+            f"{int(row.get('order_book_fill_count') or 0)} | {fmt(row.get('avg_order_book_fill_ratio'), 3)} | "
+            f"{fmt(row.get('avg_order_book_queue_ahead_quantity'))} | {int(row.get('partial_fill_count') or 0)} | "
             f"{fmt(row.get('avg_fill_ratio'), 3)} | {fmt(row.get('avg_bars_held'))} |"
         )
     if not model_rows:
-        lines.append("| - | 0 | - | - | - | - | - | - | - | - | - | - | - |")
+        lines.append("| - | 0 | - | - | - | - | - | - | - | - | - | - | - | - | - |")
     if reason_rows:
         reason_text = "；".join(f"{md(row.get('name'))}={int(row.get('count') or 0)}" for row in reason_rows[:8])
         lines.extend(["", f"- 出场原因分布: {reason_text}。"])
@@ -827,6 +839,8 @@ def write_json_report(path: Path, events: list[SkipEvent], results: list[Result]
             "max_age_seconds": args.depth_max_age_sec,
             "max_levels": args.depth_max_levels,
             "liquidity_factor": args.depth_liquidity_factor,
+            "queue_ahead_quantity": args.depth_queue_ahead_quantity,
+            "entry_market_impact_bps": args.entry_market_impact_bps,
             "note": "local/mirrored runtime/depth_cache only; no Binance API call",
         },
         "events": len(events),
@@ -858,6 +872,8 @@ def main() -> int:
     parser.add_argument("--depth-max-age-sec", type=float, default=300.0)
     parser.add_argument("--depth-max-levels", type=int, default=None)
     parser.add_argument("--depth-liquidity-factor", type=float, default=1.0)
+    parser.add_argument("--depth-queue-ahead-quantity", type=float, default=0.0)
+    parser.add_argument("--entry-market-impact-bps", type=float, default=0.0)
     parser.add_argument("--min-samples", type=int, default=10)
     args = parser.parse_args()
     root = args.root.resolve()
@@ -886,6 +902,8 @@ def main() -> int:
             args.depth_max_age_sec,
             args.depth_max_levels,
             args.depth_liquidity_factor,
+            args.depth_queue_ahead_quantity,
+            args.entry_market_impact_bps,
         )
         for event in events
         for horizon in HORIZONS

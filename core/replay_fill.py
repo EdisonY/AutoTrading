@@ -46,6 +46,8 @@ class ReplayFillRequest:
     entry_order_book: dict[str, Any] | None = None
     entry_order_book_max_levels: int | None = None
     entry_order_book_liquidity_factor: float = 1.0
+    entry_order_book_queue_ahead_quantity: float = 0.0
+    entry_market_impact_bps: float = 0.0
     conservative_intrabar: bool = True
 
 
@@ -65,12 +67,14 @@ class ReplayFillResult:
     order_book_levels_used: int
     order_book_available_quantity: float
     order_book_fill_ratio: float
+    order_book_queue_ahead_quantity: float
     exit_reason: str
     exit_ts: str
     gross_pnl_usdt: float
     fee_usdt: float
     slippage_usdt: float
     depth_slippage_usdt: float
+    market_impact_usdt: float
     net_pnl_usdt: float
     bars_held: int
 
@@ -161,11 +165,28 @@ def _depth_entry_fill(
     target_quantity: float,
     reference_entry_price: float,
 ) -> tuple[float, float, float, int, str, float, float]:
+    queue_ahead = float(req.entry_order_book_queue_ahead_quantity or 0.0)
+    if queue_ahead < 0:
+        raise ValueError("entry_order_book_queue_ahead_quantity cannot be negative")
     levels = _entry_book_levels(req, side=side)
     if not levels:
         if isinstance(req.entry_order_book, dict):
             raise ValueError("order book has no fillable liquidity")
         return reference_entry_price, target_quantity, 0.0, 0, "synthetic", 0.0, 0.0
+    if queue_ahead:
+        queue_remaining = queue_ahead
+        effective_levels: list[tuple[float, float]] = []
+        for price, available_qty in levels:
+            if queue_remaining >= available_qty:
+                queue_remaining -= available_qty
+                continue
+            effective_qty = available_qty - queue_remaining
+            queue_remaining = 0.0
+            if effective_qty > 0:
+                effective_levels.append((price, effective_qty))
+        levels = effective_levels
+        if not levels:
+            raise ValueError("order book queue ahead consumes all fillable liquidity")
     remaining = float(target_quantity)
     filled = 0.0
     notional = 0.0
@@ -190,6 +211,18 @@ def _depth_entry_fill(
         depth_cost = max(0.0, avg_price - reference_entry_price) * filled
     book_fill_ratio = filled / target_quantity if target_quantity > 0 else 0.0
     return avg_price, filled, depth_cost, levels_used, "order_book", available_quantity, book_fill_ratio
+
+
+def _entry_price_with_market_impact(*, price: float, side: str, impact_bps: float) -> float:
+    impact = float(impact_bps or 0.0)
+    if impact < 0:
+        raise ValueError("entry_market_impact_bps cannot be negative")
+    if impact <= 0:
+        return float(price)
+    rate = impact / 10_000.0
+    if side == "short":
+        return float(price) * (1 - rate)
+    return float(price) * (1 + rate)
 
 
 def _trailing_exit_price(req: ReplayFillRequest, *, entry_price: float, best_price: float) -> float | None:
@@ -274,7 +307,13 @@ def simulate_replay_fill(req: ReplayFillRequest, bars: Iterable[ReplayBar | dict
         target_quantity=target_qty,
         reference_entry_price=float(req.entry_price),
     )
-    entry_px = _exit_price_with_slippage(price=raw_entry_px, side=side, is_entry=True, slippage_bps=req.slippage_bps)
+    impacted_entry_px = _entry_price_with_market_impact(
+        price=raw_entry_px,
+        side=side,
+        impact_bps=req.entry_market_impact_bps,
+    )
+    market_impact = abs(impacted_entry_px - raw_entry_px) * qty
+    entry_px = _exit_price_with_slippage(price=impacted_entry_px, side=side, is_entry=True, slippage_bps=req.slippage_bps)
     partial = qty < requested_qty
     if partial and not req.allow_partial_fill:
         raise ValueError("partial fill required but allow_partial_fill is false")
@@ -318,12 +357,14 @@ def simulate_replay_fill(req: ReplayFillRequest, bars: Iterable[ReplayBar | dict
         order_book_levels_used=levels_used,
         order_book_available_quantity=round(book_available_qty, 10),
         order_book_fill_ratio=round(book_fill_ratio, 8),
+        order_book_queue_ahead_quantity=round(float(req.entry_order_book_queue_ahead_quantity or 0.0), 10),
         exit_reason=exit_reason,
         exit_ts=exit_ts,
         gross_pnl_usdt=round(gross, 8),
         fee_usdt=round(fee, 8),
         slippage_usdt=round(slippage, 8),
         depth_slippage_usdt=round(depth_slippage, 8),
+        market_impact_usdt=round(market_impact, 8),
         net_pnl_usdt=round(gross - fee, 8),
         bars_held=bars_held,
     )

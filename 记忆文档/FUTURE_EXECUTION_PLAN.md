@@ -657,3 +657,7 @@ Phase 9   实盘过渡验证                ← 8完成后
 5. 命令中心正确显示新内容
 6. 腾讯云服务保持active
 7. 内存/存储/API weight在安全线内
+
+## 2026-06-03 progress marker
+- [x] P1-B B/v16 full-live rollout review: read-only 24h/72h/168h windows, cost-adjusted PnL, failure/forced-close pressure, decision packet, portal section, Aliyun refresh, reverse sync, and live-context pull. No automatic rollback or parameter change.
+- [ ] Remaining P1-B/P1-D: wait for enough post-refresh samples, then review strategy/change-type thresholds, paper fill/slippage simulation, and cross-regime robustness before any manual parameter decision.

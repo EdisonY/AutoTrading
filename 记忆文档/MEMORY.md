@@ -1,5 +1,8 @@
 # MEMORY.md - 长期记忆
 
+- 2026-06-03: P1-B B/v16 full-live rollout review added. `b_v16_rollout_review.py` is read-only and mirrors A/v11 review: approved ATR stop bands + score cap 85, 24h/72h/168h windows, cost-adjusted PnL, forced/open-failure pressure, top losers/winners, decision packet, rollback path, and `disabled_report_only`. Portal, Aliyun refresh, reverse sync, and live-context pull now include B/v16 artifacts. No automatic rollback, narrowing, or live parameter change.
+
+
 ## 2026-06-02 长期任务 P 级执行队列
 - 用户明确要求按“长期任务 P 级”而不是入口页 attention P 级推进。已把当前 canonical 长期队列写入 `记忆文档/FUTURE_EXECUTION_PLAN.md`：P0-A Binance API 根治，P0-B replay/live 同路径；P1-A/B A/v11 与 B/v16 rollout 质量决策，P1-C 完整 replay/fill，P1-D 灰度/回滚门禁，P1-E 长历史研究仓；P2 sentinel/recovery/治理/PoC。后续自动推进按这个顺序，旧阶段清单只作历史上下文。
 - 2026-06-03 00:08 CST：用户明确测试服盈亏/持仓/信号只是数据，优先尽快落地长期目标；已进入 construction mode。Tencent A/B/C scanner、sentinel、market-data-cache、account-snapshot、system-alerts、data-maintenance timer/service 全部暂停。新增并部署 `runtime_data_reset.py`，已备份并清空 Testnet 运行数据：`events/sentinel_scans/account_snapshots` 从 `71218/319672/60631` 清到 `0/0/0`，DB `quick_check ok`，大小约 `774MB -> 9MB`；attention/ack/baseline 保留。归档路径 `/opt/crypto-auto-trader/archive/testnet_data_reset/20260603-000807`。后续不要把服务 inactive 当故障；先完成 P0-A/P0-B 再重启新一轮数据。

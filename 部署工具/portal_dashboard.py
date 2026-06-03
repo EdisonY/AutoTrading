@@ -50,6 +50,8 @@ ROLLBACK_WATCH_JSON = ROOT / "runtime" / "rollback_watch_review_latest.json"
 ROLLBACK_WATCH_MD = REPORTS_DIR / "rollback_watch_review_latest.md"
 A_V11_ROLLOUT_JSON = ROOT / "runtime" / "a_v11_rollout_review_latest.json"
 A_V11_ROLLOUT_MD = REPORTS_DIR / "a_v11_rollout_review_latest.md"
+B_V16_ROLLOUT_JSON = ROOT / "runtime" / "b_v16_rollout_review_latest.json"
+B_V16_ROLLOUT_MD = REPORTS_DIR / "b_v16_rollout_review_latest.md"
 SENTINEL_QUALITY_JSON = ROOT / "runtime" / "sentinel_quality_latest.json"
 SENTINEL_QUALITY_MD = REPORTS_DIR / "sentinel_quality_latest.md"
 CST = timezone(timedelta(hours=8))
@@ -652,6 +654,30 @@ def a_v11_rollout_summary(path: Path | None) -> dict[str, Any]:
     return {
         "available": True,
         "path": A_V11_ROLLOUT_MD,
+        "age": age_text(generated_at),
+        "fresh": bool(generated_at and (datetime.now(CST) - generated_at).total_seconds() < 4 * 3600),
+        "decision": payload.get("decision") if isinstance(payload.get("decision"), dict) else empty["decision"],
+        "windows": payload.get("windows") if isinstance(payload.get("windows"), dict) else {},
+        "selected_live_parameter": payload.get("selected_live_parameter") or {},
+    }
+
+
+def b_v16_rollout_summary(path: Path | None) -> dict[str, Any]:
+    empty = {
+        "available": False,
+        "path": B_V16_ROLLOUT_MD,
+        "age": "No B/v16 rollout review",
+        "fresh": False,
+        "decision": {"priority": "P2", "status": "missing", "recommended_actions": []},
+        "windows": {},
+    }
+    payload = read_json(path) if path else None
+    if not isinstance(payload, dict):
+        return empty
+    generated_at = parse_dt(payload.get("generated_at"))
+    return {
+        "available": True,
+        "path": B_V16_ROLLOUT_MD,
         "age": age_text(generated_at),
         "fresh": bool(generated_at and (datetime.now(CST) - generated_at).total_seconds() < 4 * 3600),
         "decision": payload.get("decision") if isinstance(payload.get("decision"), dict) else empty["decision"],
@@ -1440,6 +1466,9 @@ def function_status_cards(data: dict[str, Any]) -> list[dict[str, str]]:
     a_v11_rollout = data.get("a_v11_rollout") or {}
     a_v11_rollout_decision = a_v11_rollout.get("decision") or {}
     a_v11_rollout_72h = (a_v11_rollout.get("windows") or {}).get("72h") or {}
+    b_v16_rollout = data.get("b_v16_rollout") or {}
+    b_v16_rollout_decision = b_v16_rollout.get("decision") or {}
+    b_v16_rollout_72h = (b_v16_rollout.get("windows") or {}).get("72h") or {}
     sentinel_quality = data.get("sentinel_quality") or {}
     sentinel_coverage = sentinel_quality.get("coverage") or {}
     sentinel_watchlist = sentinel_quality.get("watchlist_history") or {}
@@ -1667,6 +1696,28 @@ def function_status_cards(data: dict[str, Any]) -> list[dict[str, str]]:
                 f"updated {a_v11_rollout.get('age')}."
                 if a_v11_rollout.get("available")
                 else "A/v11 trailing rollout review missing from report chain."
+            ),
+        },
+        {
+            "level": (
+                "warn"
+                if b_v16_rollout_decision.get("priority") in {"P0", "P1"}
+                else "ok"
+                if b_v16_rollout.get("fresh")
+                else "warn"
+            ),
+            "name": "B/v16 rollout review",
+            "value": (
+                f"{b_v16_rollout_decision.get('priority')}/{b_v16_rollout_decision.get('status')}"
+                if b_v16_rollout.get("available")
+                else "not built"
+            ),
+            "body": (
+                f"72h closed {int(b_v16_rollout_72h.get('closed_samples') or 0)}; "
+                f"after-cost PnL {float(b_v16_rollout_72h.get('pnl_after_cost_usdt') or 0):+.2f}; "
+                f"updated {b_v16_rollout.get('age')}."
+                if b_v16_rollout.get("available")
+                else "B/v16 full-live rollout review missing from report chain."
             ),
         },
     ]
@@ -1902,6 +1953,9 @@ def build_executive_summary(data: dict[str, Any]) -> dict[str, Any]:
     a_v11_rollout = data.get("a_v11_rollout") or {}
     a_v11_rollout_decision = a_v11_rollout.get("decision") or {}
     a_v11_rollout_72h = (a_v11_rollout.get("windows") or {}).get("72h") or {}
+    b_v16_rollout = data.get("b_v16_rollout") or {}
+    b_v16_rollout_decision = b_v16_rollout.get("decision") or {}
+    b_v16_rollout_72h = (b_v16_rollout.get("windows") or {}).get("72h") or {}
     truth = data.get("strategy_truth") or {}
     truth_stats = truth.get("strategy_stats") or {}
     decision_rows = data.get("decision_summary") or []
@@ -1976,6 +2030,13 @@ def build_executive_summary(data: dict[str, Any]) -> dict[str, Any]:
         f"最高进化提示：{evolution_alert.get('title')}；{evolution_alert.get('body')}",
         rollback_brief,
         (
+            f"B/v16 full-live review: {b_v16_rollout_decision.get('priority')}/{b_v16_rollout_decision.get('status')}; "
+            f"72h after-cost PnL {float(b_v16_rollout_72h.get('pnl_after_cost_usdt') or 0):+.2f} USDT; "
+            f"closed samples {int(b_v16_rollout_72h.get('closed_samples') or 0)}; report-only, no auto rollback or parameter change."
+            if b_v16_rollout.get("available")
+            else "B/v16 full-live review not built; use strategy evolution summary only."
+        ),
+        (
             f"A/v11 trailing复盘：{a_v11_rollout_decision.get('priority')}/{a_v11_rollout_decision.get('status')}，"
             f"72h扣费后PnL {float(a_v11_rollout_72h.get('pnl_after_cost_usdt') or 0):+.2f} USDT，"
             f"平仓样本 {int(a_v11_rollout_72h.get('closed_samples') or 0)}；只提示人工复核，不自动改实盘参数。"
@@ -2013,6 +2074,8 @@ def build_executive_summary(data: dict[str, Any]) -> dict[str, Any]:
         next_actions.append("查看策略进化门禁最高项，确认是否进入灰度或回滚。")
     if a_v11_rollout_decision.get("priority") in {"P0", "P1"}:
         next_actions.append("复核A/v11 trailing rollout窗口；没有人工决策前不改参数。")
+    if b_v16_rollout_decision.get("priority") in {"P0", "P1"}:
+        next_actions.append("Review B/v16 full-live rollout window; do not rollback or narrow parameters without manual approval.")
     if int(expansion.get("pause_count") or 0):
         next_actions.append("先复核已放开候选质量/关闭闭环，暂停进一步扩样。")
     elif int(expansion.get("maturing_count") or 0):
@@ -2106,6 +2169,8 @@ def build_data() -> dict[str, Any]:
     data["rollback_watch_html"] = ROLLBACK_WATCH_MD
     data["a_v11_rollout"] = a_v11_rollout_summary(A_V11_ROLLOUT_JSON)
     data["a_v11_rollout_html"] = A_V11_ROLLOUT_MD
+    data["b_v16_rollout"] = b_v16_rollout_summary(B_V16_ROLLOUT_JSON)
+    data["b_v16_rollout_html"] = B_V16_ROLLOUT_MD
     data["function_status"] = function_status_cards(data)
     data["findings"] = build_findings(data)
     data["executive_summary"] = build_executive_summary(data)
@@ -2553,6 +2618,26 @@ def render_html(out_dir: Path) -> str:
         for name, row in a_v11_rollout_windows.items()
     ) or '<tr><td colspan="9">暂无 A/v11 rollout 复盘</td></tr>'
 
+    b_v16_rollout = data.get("b_v16_rollout") or {}
+    b_v16_rollout_decision = b_v16_rollout.get("decision") or {}
+    b_v16_rollout_windows = b_v16_rollout.get("windows") or {}
+    b_v16_rollout_rows = "".join(
+        f"""
+<tr>
+  <td>{h(name)}</td>
+  <td>{int(row.get('opens') or 0)}</td>
+  <td>{int(row.get('closed_samples') or 0)}</td>
+  <td>{int(row.get('forced_closes') or 0)}</td>
+  <td>{int(row.get('open_failed') or 0)}</td>
+  <td class="num {'pos' if float(row.get('realized_pnl_usdt') or 0) >= 0 else 'neg'}">{float(row.get('realized_pnl_usdt') or 0):+.2f}</td>
+  <td>{float(row.get('estimated_cost_usdt') or 0):.2f}</td>
+  <td class="num {'pos' if float(row.get('pnl_after_cost_usdt') or 0) >= 0 else 'neg'}">{float(row.get('pnl_after_cost_usdt') or 0):+.2f}</td>
+  <td>{float(row.get('forced_close_rate') or 0):.1%}</td>
+</tr>
+""".strip()
+        for name, row in b_v16_rollout_windows.items()
+    ) or '<tr><td colspan="9">No B/v16 rollout review</td></tr>'
+
     evolution = data.get("strategy_evolution") or {}
     evolution_counts = evolution.get("counts") or {}
     gate_hardening = evolution.get("promotion_gate_hardening") or {}
@@ -2825,6 +2910,15 @@ th {{ background:#f1f5f9; color:#334155; }}
     <table>
       <thead><tr><th>窗口</th><th>开仓</th><th>平仓</th><th>强平</th><th>开仓失败</th><th>已实现PnL</th><th>估算成本</th><th>扣费后PnL</th><th>强平率</th></tr></thead>
       <tbody>{a_v11_rollout_rows}</tbody>
+    </table>
+  </section>
+
+  <section class="section panel">
+    <h2>B/v16 full-live rollout review</h2>
+    <p class="note">Read-only review for approved ATR stop bands + score cap 85 after 24h/72h/168h live windows; current result {h(b_v16_rollout_decision.get('priority', '-'))}/{h(b_v16_rollout_decision.get('status', '-'))}, updated {h(b_v16_rollout.get('age'))}. No automatic rollback and no live parameter change.</p>
+    <table>
+      <thead><tr><th>Window</th><th>Opens</th><th>Closed</th><th>Forced</th><th>Open failed</th><th>Realized PnL</th><th>Cost</th><th>After cost</th><th>Forced rate</th></tr></thead>
+      <tbody>{b_v16_rollout_rows}</tbody>
     </table>
   </section>
 

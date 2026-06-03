@@ -44,6 +44,7 @@ REPORT_FILES = [
     "replay_gate_audit_latest.md",
     "rollback_watch_review_latest.md",
     "a_v11_rollout_review_latest.md",
+    "b_v16_rollout_review_latest.md",
     "portal_latest.html",
     "strategy_evolution_latest.json",
     "strategy_evolution_latest.md",
@@ -69,6 +70,7 @@ RUNTIME_FILES = [
     "replay_gate_audit_latest.json",
     "rollback_watch_review_latest.json",
     "a_v11_rollout_review_latest.json",
+    "b_v16_rollout_review_latest.json",
 ]
 
 RESEARCH_FILES = [

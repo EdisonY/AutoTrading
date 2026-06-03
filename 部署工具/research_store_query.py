@@ -26,6 +26,8 @@ ROOT = SCRIPT_DIR.parent if SCRIPT_DIR.name == "部署工具" else SCRIPT_DIR
 CST = timezone(timedelta(hours=8))
 
 TABLES = ("events", "sentinel_scans", "account_snapshots", "klines", "features")
+DEFAULT_KLINE_TARGET_DAYS = 30
+DEFAULT_KLINE_KEY_INTERVALS = ("15m", "30m", "1h")
 
 
 def now_cst() -> datetime:
@@ -75,8 +77,52 @@ def query_dicts(con: Any, sql: str, params: list[Any] | None = None) -> list[dic
     return [dict(zip(cols, row)) for row in cur.fetchall()]
 
 
-def build_summary(con: Any, available: dict[str, bool], days: int) -> dict[str, Any]:
+def build_kline_acceptance(
+    rows: list[dict[str, Any]],
+    target_days: int,
+    key_intervals: list[str],
+) -> dict[str, Any]:
+    by_interval = {str(row.get("interval") or ""): row for row in rows if row.get("interval")}
+    missing = [interval for interval in key_intervals if interval not in by_interval]
+    gaps = [
+        interval
+        for interval in key_intervals
+        if interval in by_interval and int(by_interval[interval].get("coverage_days") or 0) < target_days
+    ]
+    required_met = [interval for interval in key_intervals if interval in by_interval and interval not in gaps]
+    met_intervals = [str(row.get("interval")) for row in rows if bool(row.get("target_met"))]
+    coverage_values = [int(row.get("coverage_days") or 0) for row in rows]
+    if not rows:
+        status = "no_klines"
+    elif missing or gaps:
+        status = "coverage_gap"
+    else:
+        status = "ok"
+    return {
+        "status": status,
+        "target_met": status == "ok",
+        "target_days": target_days,
+        "key_intervals": key_intervals,
+        "required_interval_count": len(key_intervals),
+        "met_required_interval_count": len(required_met),
+        "met_intervals": met_intervals,
+        "required_met_intervals": required_met,
+        "missing_intervals": missing,
+        "gap_intervals": gaps,
+        "min_coverage_days": min(coverage_values) if coverage_values else 0,
+        "max_coverage_days": max(coverage_values) if coverage_values else 0,
+    }
+
+
+def build_summary(
+    con: Any,
+    available: dict[str, bool],
+    days: int,
+    kline_target_days: int = DEFAULT_KLINE_TARGET_DAYS,
+    kline_key_intervals: list[str] | None = None,
+) -> dict[str, Any]:
     cutoff = (now_cst() - timedelta(days=days)).strftime("%Y-%m-%d")
+    key_intervals = kline_key_intervals or list(DEFAULT_KLINE_KEY_INTERVALS)
     summary: dict[str, Any] = {
         "days": days,
         "cutoff": cutoff,
@@ -86,6 +132,7 @@ def build_summary(con: Any, available: dict[str, bool], days: int) -> dict[str, 
         "sentinel": [],
         "latest_accounts": [],
         "kline_coverage": [],
+        "kline_acceptance": build_kline_acceptance([], kline_target_days, key_intervals),
         "feature_coverage": [],
     }
     if available.get("events"):
@@ -162,18 +209,36 @@ def build_summary(con: Any, available: dict[str, bool], days: int) -> dict[str, 
         summary["kline_coverage"] = query_dicts(
             con,
             """
+            with normalized as (
+              select
+                interval,
+                symbol,
+                cast(open_time as varchar) as open_time,
+                cast("date" as varchar) as bar_date
+              from klines
+              where coalesce(nullif(cast(open_time as varchar), ''), nullif(cast("date" as varchar), '')) >= ?
+            )
             select
               interval,
               count(*) as bars,
               count(distinct symbol) as symbols,
+              count(distinct bar_date) as coverage_days,
+              date_diff('day', try_cast(min(bar_date) as date), try_cast(max(bar_date) as date)) + 1 as span_days,
               min(open_time) as first_bar,
-              max(open_time) as latest_bar
-            from klines
-            where open_time >= ?
+              max(open_time) as latest_bar,
+              ? as target_days,
+              count(distinct bar_date) >= ? as target_met
+            from normalized
+            where coalesce(interval, '') <> '' and coalesce(bar_date, '') <> ''
             group by 1
-            order by bars desc
+            order by coverage_days desc, bars desc
             """,
-            [cutoff],
+            [cutoff, kline_target_days, kline_target_days],
+        )
+        summary["kline_acceptance"] = build_kline_acceptance(
+            summary["kline_coverage"],
+            kline_target_days,
+            key_intervals,
         )
     if available.get("features"):
         summary["feature_coverage"] = query_dicts(
@@ -226,9 +291,19 @@ def render_md(payload: dict[str, Any]) -> str:
         for r in payload.get("latest_accounts", [])
     ]
     kline_rows = [
-        [r.get("interval"), r.get("bars"), r.get("symbols"), r.get("first_bar"), r.get("latest_bar")]
+        [
+            r.get("interval"),
+            r.get("bars"),
+            r.get("symbols"),
+            r.get("coverage_days"),
+            r.get("target_days"),
+            "yes" if r.get("target_met") else "no",
+            r.get("first_bar"),
+            r.get("latest_bar"),
+        ]
         for r in payload.get("kline_coverage", [])
     ]
+    kline_acceptance = payload.get("kline_acceptance") or {}
     feature_rows = [
         [r.get("interval"), r.get("rows"), r.get("symbols"), r.get("avg_abs_return_1_pct"), r.get("avg_range_pct"), r.get("latest_bar")]
         for r in payload.get("feature_coverage", [])
@@ -240,6 +315,14 @@ def render_md(payload: dict[str, Any]) -> str:
             f"- Store: `{payload.get('store_dir')}`",
             f"- Window: last `{payload.get('days')}` days from `{payload.get('cutoff')}`",
             f"- Tables: `{', '.join(payload.get('available_tables') or []) or 'none'}`",
+            (
+                f"- Kline acceptance: `{kline_acceptance.get('status', 'unknown')}`; "
+                f"target `{kline_acceptance.get('target_days', '-')}` days; "
+                f"required `{kline_acceptance.get('met_required_interval_count', 0)}/"
+                f"{kline_acceptance.get('required_interval_count', 0)}`; "
+                f"missing `{', '.join(kline_acceptance.get('missing_intervals') or []) or '-'}`; "
+                f"gap `{', '.join(kline_acceptance.get('gap_intervals') or []) or '-'}`"
+            ),
             "## Strategy Funnel",
             md_table(["strategy", "events", "signals", "opens", "closes", "skipped", "failed", "latest"], funnel_rows),
             "## OPEN_SKIPPED Gates",
@@ -249,7 +332,7 @@ def render_md(payload: dict[str, Any]) -> str:
             "## Latest Accounts",
             md_table(["account", "upnl", "positions", "available", "ts"], account_rows),
             "## Kline Coverage",
-            md_table(["interval", "bars", "symbols", "first", "latest"], kline_rows),
+            md_table(["interval", "bars", "symbols", "coverage_days", "target_days", "met", "first", "latest"], kline_rows),
             "## Feature Coverage",
             md_table(["interval", "rows", "symbols", "avg_abs_ret_1", "avg_range", "latest"], feature_rows),
         ]
@@ -263,6 +346,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--reports-dir", default=str(ROOT / "reports"))
     parser.add_argument("--days", type=int, default=14)
     parser.add_argument("--format", choices=["parquet", "jsonl"], default="parquet")
+    parser.add_argument("--kline-target-days", type=int, default=DEFAULT_KLINE_TARGET_DAYS)
+    parser.add_argument(
+        "--kline-key-intervals",
+        default=",".join(DEFAULT_KLINE_KEY_INTERVALS),
+        help="Comma-separated intervals required for long-window kline acceptance",
+    )
     return parser.parse_args(argv)
 
 
@@ -277,7 +366,8 @@ def main(argv: list[str] | None = None) -> int:
     reports_dir = Path(args.reports_dir)
     with duckdb.connect(database=":memory:") as con:
         available = {table: register_view(con, store, table, args.format) for table in TABLES}
-        payload = build_summary(con, available, args.days)
+        key_intervals = [item.strip() for item in str(args.kline_key_intervals or "").split(",") if item.strip()]
+        payload = build_summary(con, available, args.days, args.kline_target_days, key_intervals)
     payload.update(
         {
             "generated_at": now_cst().isoformat(timespec="seconds"),

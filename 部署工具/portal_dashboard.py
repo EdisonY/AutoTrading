@@ -571,6 +571,7 @@ def research_store_summary(path: Path | None) -> dict[str, Any]:
         "sentinel": [],
         "latest_accounts": [],
         "kline_coverage": [],
+        "kline_acceptance": {"status": "missing", "target_met": False, "target_days": 30},
         "feature_coverage": [],
         "totals": {"events": 0, "signals": 0, "opens": 0, "skipped": 0, "failed": 0},
         "top_skip": {},
@@ -601,6 +602,7 @@ def research_store_summary(path: Path | None) -> dict[str, Any]:
         "sentinel": payload.get("sentinel") if isinstance(payload.get("sentinel"), list) else [],
         "latest_accounts": payload.get("latest_accounts") if isinstance(payload.get("latest_accounts"), list) else [],
         "kline_coverage": payload.get("kline_coverage") if isinstance(payload.get("kline_coverage"), list) else [],
+        "kline_acceptance": payload.get("kline_acceptance") if isinstance(payload.get("kline_acceptance"), dict) else empty["kline_acceptance"],
         "feature_coverage": payload.get("feature_coverage") if isinstance(payload.get("feature_coverage"), list) else [],
         "totals": totals,
         "top_skip": skip_layers[0] if skip_layers else {},
@@ -1514,6 +1516,7 @@ def function_status_cards(data: dict[str, Any]) -> list[dict[str, str]]:
     )
     counterfactual = data.get("counterfactual") or {}
     research_store = data.get("research_store") or {}
+    kline_acceptance = research_store.get("kline_acceptance") or {}
     replay_feature = data.get("replay_feature") or {}
     replay_summary = replay_feature.get("summary") or {}
     replay_gate = data.get("replay_gate") or {}
@@ -1653,7 +1656,7 @@ def function_status_cards(data: dict[str, Any]) -> list[dict[str, str]]:
             ),
         },
         {
-            "level": "ok" if research_store.get("fresh") else "warn",
+            "level": "ok" if research_store.get("fresh") and kline_acceptance.get("target_met") else "warn",
             "name": "研究仓/DuckDB",
             "value": (
                 f"{int((research_store.get('totals') or {}).get('events') or 0)} 事件"
@@ -1664,7 +1667,10 @@ def function_status_cards(data: dict[str, Any]) -> list[dict[str, str]]:
                 f"{research_store.get('days', 0)}日样本：开仓 {int((research_store.get('totals') or {}).get('opens') or 0)}，"
                 f"跳过 {int((research_store.get('totals') or {}).get('skipped') or 0)}，失败 {int((research_store.get('totals') or {}).get('failed') or 0)}；"
                 f"主否决 {((research_store.get('top_skip') or {}).get('strategy') or '-')}/{((research_store.get('top_skip') or {}).get('gate') or '-')}；"
-                f"K线周期 {len(research_store.get('kline_coverage') or [])}，特征周期 {len(research_store.get('feature_coverage') or [])}。"
+                f"K线验收 {kline_acceptance.get('status', '-')}"
+                f"({int(kline_acceptance.get('met_required_interval_count') or 0)}/"
+                f"{int(kline_acceptance.get('required_interval_count') or 0)} 满 {int(kline_acceptance.get('target_days') or 0)}日)，"
+                f"特征周期 {len(research_store.get('feature_coverage') or [])}。"
                 if research_store.get("available")
                 else "Parquet/DuckDB 样本漏斗尚未生成，进化判断只能看 SQLite/报表口径。"
             ),
@@ -2695,6 +2701,7 @@ def render_html(out_dir: Path) -> str:
     ) or "暂无"
 
     research_store = data.get("research_store") or {}
+    kline_acceptance = research_store.get("kline_acceptance") or {}
     research_funnel_rows = "".join(
         f"""
 <tr>
@@ -2725,11 +2732,14 @@ def render_html(out_dir: Path) -> str:
   <td>{h(r.get('interval'))}</td>
   <td>{int(r.get('bars') or 0)}</td>
   <td>{int(r.get('symbols') or 0)}</td>
+  <td>{int(r.get('coverage_days') or 0)} / {int(r.get('target_days') or kline_acceptance.get('target_days') or 0)}</td>
+  <td>{'达标' if r.get('target_met') else '缺口'}</td>
+  <td>{h(r.get('first_bar') or '-')}</td>
   <td>{h(r.get('latest_bar') or '-')}</td>
 </tr>
 """.strip()
         for r in (research_store.get("kline_coverage") or [])[:6]
-    ) or '<tr><td colspan="4">暂无 K线研究分区</td></tr>'
+    ) or '<tr><td colspan="7">暂无 K线研究分区</td></tr>'
     research_feature_rows = "".join(
         f"""
 <tr>
@@ -3157,7 +3167,7 @@ th {{ background:#f1f5f9; color:#334155; }}
 
   <section class="section panel">
     <h2>研究仓样本漏斗</h2>
-    <p class="note">DuckDB/Parquet 口径；最近 {h(research_store.get('days', '-'))} 日，更新 {h(research_store.get('age'))}。先看样本是否足够，再决定是否继续放宽或收紧策略。</p>
+    <p class="note">DuckDB/Parquet 口径；最近 {h(research_store.get('days', '-'))} 日，更新 {h(research_store.get('age'))}。K线长窗验收 {h(kline_acceptance.get('status', '-'))}：关键周期 {int(kline_acceptance.get('met_required_interval_count') or 0)}/{int(kline_acceptance.get('required_interval_count') or 0)} 满 {int(kline_acceptance.get('target_days') or 0)} 日；缺失 {h(', '.join(kline_acceptance.get('missing_intervals') or []) or '-')}，不足 {h(', '.join(kline_acceptance.get('gap_intervals') or []) or '-')}。</p>
     <table>
       <thead><tr><th>策略</th><th>事件</th><th>信号</th><th>开仓</th><th>跳过</th><th>失败</th><th>最新时间</th></tr></thead>
       <tbody>{research_funnel_rows}</tbody>
@@ -3167,7 +3177,7 @@ th {{ background:#f1f5f9; color:#334155; }}
       <tbody>{research_skip_rows}</tbody>
     </table>
     <table class="subtable">
-      <thead><tr><th>周期</th><th>K线bars</th><th>币种数</th><th>最新K线</th></tr></thead>
+      <thead><tr><th>周期</th><th>K线bars</th><th>币种数</th><th>覆盖天数</th><th>验收</th><th>首条K线</th><th>最新K线</th></tr></thead>
       <tbody>{research_kline_rows}</tbody>
     </table>
     <table class="subtable">

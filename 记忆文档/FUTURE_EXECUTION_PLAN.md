@@ -676,6 +676,7 @@ Phase 9   实盘过渡验证                ← 8完成后
 7. 内存/存储/API weight在安全线内
 
 ## 2026-06-03 progress marker
+- [x] Construction-mode alert correctness: expected inactive scanner/cache/sentinel/account-snapshot/data-maintenance units now become warning-level `施工暂停` while long-term skeleton status is `blocked_by_staged_validation` or explicit construction marker is enabled. This prevents false P0 attention during offline/staged-validation work without starting services.
 - [x] First-version long-term skeleton gate: `long_term_skeleton_review.py` now checks every canonical P0/P1/P2 module plus final zero-run for input, main processing, output, portal visibility, sync/deploy wiring, and tests/smoke. Portal, Aliyun refresh/shadow, release/deploy, reverse sync, live-context pull, and unit tests are wired. Latest local result: `143/143` bones ready, `missing_skeleton=0`, `blocked_by_staged_validation=12`.
 - [x] P2-D attention API durable schema repair: browser ack/resolve path now migrates legacy SQLite ack tables and writes the current durable schema fields while updating `attention_items`; JSON fallback also records acknowledgement time/reason. Staged service verification still pending.
 - [x] P0-B exact replay/live parity audit: added strict serialized `strategy_gate_case(s)` audit, portal section/card/bullets, Aliyun refresh/shadow execution, reverse sync, live-context pull, and unit tests. Current local reset DB has no open-flow rows, so it reports missing exact cases rather than claiming parity.

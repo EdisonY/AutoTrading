@@ -35,6 +35,8 @@ ATTENTION_LATEST = ROOT / "research_memory" / "attention" / "open_items.json"
 ALERT_JSON = ROOT / "runtime" / "alerts_latest.json"
 ALERT_LOG = ROOT / "logs" / "alerts.jsonl"
 ALERT_MD = ROOT / "reports" / "alerts_latest.md"
+CONSTRUCTION_MODE_MARKER = ROOT / "runtime" / "construction_mode.json"
+LONG_TERM_SKELETON_LATEST = ROOT / "runtime" / "long_term_skeleton_latest.json"
 CST = timezone(timedelta(hours=8))
 ATTENTION_STALE_SECONDS = 150 * 60
 API_RATE_LIMIT_WINDOW_MINUTES = 30
@@ -56,6 +58,9 @@ TIMERS = [
     "crypto-data-maintenance.timer",
 ]
 ACCOUNT_RESUME_TIMER = "crypto-account-snapshot-resume.timer"
+
+CONSTRUCTION_PAUSED_SERVICES = set(SERVICES)
+CONSTRUCTION_PAUSED_TIMERS = set(TIMERS)
 
 WATCH_SHARDS = [
     ROOT / "logs" / "decisions",
@@ -139,6 +144,37 @@ def compact_log_line(text: str, limit: int = 260) -> str:
 
 def service_states() -> dict[str, str]:
     return unit_states(SERVICES)
+
+
+def read_construction_mode() -> dict[str, Any]:
+    payload: dict[str, Any] = {}
+    if CONSTRUCTION_MODE_MARKER.exists():
+        try:
+            raw = json.loads(CONSTRUCTION_MODE_MARKER.read_text(encoding="utf-8", errors="replace"))
+            if isinstance(raw, dict):
+                payload.update(raw)
+        except Exception as exc:
+            payload["marker_error"] = str(exc)
+    skeleton = {}
+    if LONG_TERM_SKELETON_LATEST.exists():
+        try:
+            raw = json.loads(LONG_TERM_SKELETON_LATEST.read_text(encoding="utf-8", errors="replace"))
+            if isinstance(raw, dict):
+                skeleton = raw
+        except Exception as exc:
+            payload["skeleton_error"] = str(exc)
+    if skeleton:
+        payload["long_term_skeleton_status"] = skeleton.get("status") or ""
+        payload["long_term_skeleton_next_action"] = skeleton.get("next_action") or ""
+        summary = skeleton.get("summary") if isinstance(skeleton.get("summary"), dict) else {}
+        payload["long_term_missing_skeleton"] = int(summary.get("missing_skeleton") or 0)
+        payload["long_term_blocked_by_staged_validation"] = int(summary.get("blocked_by_staged_validation") or 0)
+    enabled = bool(payload.get("enabled"))
+    if not enabled and payload.get("long_term_skeleton_status") == "blocked_by_staged_validation":
+        enabled = True
+        payload.setdefault("reason", "long_term_staged_validation_pending")
+    payload["enabled"] = enabled
+    return payload
 
 
 def systemctl_value(unit: str, prop: str) -> str:
@@ -375,6 +411,7 @@ def collect_alerts() -> dict[str, Any]:
     now = datetime.now(CST)
     alerts: list[dict[str, str]] = []
     states = service_states()
+    construction_mode = read_construction_mode()
     account_error_payload = read_account_error()
     account_retry = account_retry_at(account_error_payload)
     account_resume_timer_state = unit_states([ACCOUNT_RESUME_TIMER]).get(ACCOUNT_RESUME_TIMER, "")
@@ -386,7 +423,13 @@ def collect_alerts() -> dict[str, Any]:
     )
     for service, state in states.items():
         if state != "active":
-            if service == "crypto-account-snapshot.service" and account_in_cooldown:
+            if construction_mode.get("enabled") and service in CONSTRUCTION_PAUSED_SERVICES:
+                alerts.append({
+                    "level": "warn",
+                    "title": f"施工暂停：{service}",
+                    "body": f"systemd 状态为 {state}；长期任务 staged validation 未完成，服务按计划保持暂停。",
+                })
+            elif service == "crypto-account-snapshot.service" and account_in_cooldown:
                 resume_text = account_retry.isoformat() if account_retry else "resume timer active"
                 alerts.append({
                     "level": "warn",
@@ -399,7 +442,14 @@ def collect_alerts() -> dict[str, Any]:
     timers = unit_states(TIMERS)
     for timer, state in timers.items():
         if state != "active":
-            alerts.append({"level": "bad", "title": f"定时任务未运行：{timer}", "body": f"systemd 状态为 {state}"})
+            if construction_mode.get("enabled") and timer in CONSTRUCTION_PAUSED_TIMERS:
+                alerts.append({
+                    "level": "warn",
+                    "title": f"施工暂停：{timer}",
+                    "body": f"systemd 状态为 {state}；长期任务 staged validation 未完成，timer 按计划保持暂停。",
+                })
+            else:
+                alerts.append({"level": "bad", "title": f"定时任务未运行：{timer}", "body": f"systemd 状态为 {state}"})
 
     maintenance_result = systemctl_value("crypto-data-maintenance.service", "Result")
     if maintenance_result and maintenance_result not in {"success", ""}:
@@ -609,6 +659,7 @@ def collect_alerts() -> dict[str, Any]:
         "memory": memory_payload,
         "api_rate_limits": api_rate_limits,
         "api_guard": api_guard,
+        "construction_mode": construction_mode,
     }
 
 

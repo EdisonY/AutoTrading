@@ -179,6 +179,21 @@ def write_receipt(payload: dict[str, Any], apply: bool) -> Path:
     return path
 
 
+def write_construction_marker(payload: dict[str, Any], apply: bool) -> Path:
+    path = ROOT / "runtime" / "construction_mode.json"
+    if apply:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        marker = {
+            "enabled": True,
+            "reason": "testnet_runtime_reset_and_long_term_staged_validation",
+            "updated_at": payload.get("generated_at"),
+            "reset_archive_root": payload.get("archive_root"),
+            "resume_gate": "all_long_term_skeleton_and_staged_validation_items_pass",
+        }
+        path.write_text(json.dumps(marker, ensure_ascii=False, indent=2), encoding="utf-8")
+    return path
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Archive and reset testnet runtime data")
     parser.add_argument("--db", default=str(ROOT / "runtime" / "event_store.sqlite3"))
@@ -201,7 +216,9 @@ def main(argv: list[str] | None = None) -> int:
         "runtime_files": archive_and_clear_files(selected_runtime, archive_root, args.apply, remove=True),
     }
     receipt = write_receipt(payload, args.apply)
+    construction_marker = write_construction_marker(payload, args.apply)
     payload["receipt"] = str(receipt)
+    payload["construction_marker"] = str(construction_marker)
     print(json.dumps(payload, ensure_ascii=False, indent=2))
     return 0
 

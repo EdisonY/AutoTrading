@@ -144,6 +144,7 @@ TENCENT_COMPONENTS: dict[str, dict[str, Any]] = {
         # here so a portal deploy cannot restart an intentionally inactive unit.
         "services": ["crypto-system-alerts.service"],
         "post": [
+            "{python} system_alerts.py --once || true",
             "{python} decision_attention.py || true",
             "{python} long_term_skeleton_review.py --runtime-dir {root}/runtime --reports-dir {root}/reports || true",
             "{python} portal_dashboard.py --out-dir {root}/reports",

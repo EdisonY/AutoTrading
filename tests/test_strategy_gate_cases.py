@@ -1,9 +1,18 @@
 import json
+import sys
 import unittest
 from datetime import datetime, timedelta
+from pathlib import Path
 
+from core.execution_engine import ExecutionResult
 from core.strategy_gate_cases import evaluate_strategy_gate_case, evaluate_strategy_gate_cases, strategy_gate_case
 from core.strategy_gates import evaluate_positive_quantity_gate, evaluate_symbol_blacklist_gate, evaluate_symbol_cooldown_gate
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(PROJECT_ROOT / "策略文件"))
+sys.path.insert(0, str(PROJECT_ROOT / "交易客户端"))
+import scanner as scanner_module
+from scanner import Scanner, SimPosition
 
 
 class _ScalarLike:
@@ -17,7 +26,156 @@ class _ScalarLike:
         return float(self._value)
 
 
+class _CloseExecution:
+    def __init__(self, result):
+        self.result = result
+        self.requests = []
+
+    def close_position(self, req):
+        self.requests.append(req)
+        return self.result
+
+
 class StrategyGateCasesTest(unittest.TestCase):
+    def _scanner_without_runtime(self):
+        scanner = Scanner.__new__(Scanner)
+        scanner.positions = {"15m": {}, "30m": {}}
+        scanner.cooldowns = {"15m": {}, "30m": {}}
+        return scanner
+
+    def _position(self, symbol, side, score, entry_time, timeframe="15m"):
+        return SimPosition(
+            symbol=symbol,
+            side=side,
+            entry_price=10.0,
+            size=1.0,
+            leverage=4,
+            stop_loss=9.0,
+            take_profit=12.0,
+            atr_at_entry=1.0,
+            entry_time=entry_time,
+            entry_score=score,
+            entry_reason="test",
+            timeframe=timeframe,
+            exchange_qty=1.0,
+        )
+
+    def test_a_v11_releasable_candidate_cases_include_rejections_and_success(self):
+        scanner = self._scanner_without_runtime()
+        now = datetime(2026, 6, 3, 10, 30)
+        old_time = (now - timedelta(minutes=40)).strftime("%Y-%m-%d %H:%M:%S")
+        young_time = (now - timedelta(minutes=3)).strftime("%Y-%m-%d %H:%M:%S")
+        scanner.positions["15m"][("NEWUSDT", "long")] = self._position("NEWUSDT", "long", 20, old_time)
+        scanner.positions["15m"][("WEAKUSDT", "long")] = self._position("WEAKUSDT", "long", 70, old_time)
+        scanner.positions["30m"][("OTHERUSDT", "short")] = self._position("OTHERUSDT", "short", 60, young_time, "30m")
+        scanner._position_pnl_pct = lambda pos: (-1.25, -0.5, True)
+
+        found, cases = scanner._find_releasable_position(
+            125,
+            "NEWUSDT",
+            "long",
+            now,
+            preferred_tf="15m",
+            require_preferred_tf=True,
+            collect_cases=True,
+        )
+
+        self.assertIsNotNone(found)
+        self.assertEqual(found[0], "15m")
+        self.assertEqual(found[2].symbol, "WEAKUSDT")
+        self.assertEqual([case["gate"] for case in cases], ["a_v11_releasable_position"] * 3)
+        self.assertEqual([case["expected_reason"] for case in cases], [
+            "same_symbol_not_releasable",
+            "releasable_position",
+            "not_preferred_timeframe",
+        ])
+        self.assertEqual([row["passed"] for row in evaluate_strategy_gate_cases(cases)], [True, True, True])
+
+    def test_a_v11_replacement_release_details_include_close_execution_case(self):
+        scanner = self._scanner_without_runtime()
+        now = datetime(2026, 6, 3, 10, 30)
+        old_time = (now - timedelta(minutes=40)).strftime("%Y-%m-%d %H:%M:%S")
+        scanner.positions["15m"][("WEAKUSDT", "long")] = self._position("WEAKUSDT", "long", 70, old_time)
+        scanner.closed_trades = []
+        scanner._position_pnl_pct = lambda pos: (-1.25, -0.5, True)
+        scanner._exchange_side_count = lambda side: 0
+        scanner.execution = _CloseExecution(
+            ExecutionResult(True, "close", "WEAKUSDT", "long", quantity=1.0, order_id="close-1", status="FILLED")
+        )
+        events = []
+        trades = []
+        original_fetch = scanner_module.fetch_current_price
+        original_log_event = scanner_module.log_event
+        original_log_trade = scanner_module.log_trade
+        original_logger_disabled = scanner_module.logger.disabled
+        scanner_module.fetch_current_price = lambda symbol: 9.5
+        scanner_module.log_event = events.append
+        scanner_module.log_trade = trades.append
+        scanner_module.logger.disabled = True
+        try:
+            success, cases = scanner._release_position_for_strong_signal(
+                {"symbol": "NEWUSDT", "trade_side": "long", "timeframe": "15m"},
+                "2026-06-03 10:30:00",
+                now,
+                effective_score=125,
+                return_details=True,
+            )
+        finally:
+            scanner_module.fetch_current_price = original_fetch
+            scanner_module.log_event = original_log_event
+            scanner_module.log_trade = original_log_trade
+            scanner_module.logger.disabled = original_logger_disabled
+
+        self.assertTrue(success)
+        self.assertEqual([case["gate"] for case in cases], [
+            "a_v11_releasable_position",
+            "a_v11_replacement_release_result",
+            "execution_result",
+        ])
+        self.assertEqual([row["passed"] for row in evaluate_strategy_gate_cases(cases)], [True, True, True])
+        self.assertEqual(events[0]["event"], "EVICT_CLOSE")
+        self.assertEqual(events[0]["strategy_gate_cases"], cases)
+        self.assertNotIn(("WEAKUSDT", "long"), scanner.positions["15m"])
+        self.assertEqual(len(trades), 1)
+
+    def test_a_v11_replacement_release_failure_details_include_close_execution_case(self):
+        scanner = self._scanner_without_runtime()
+        now = datetime(2026, 6, 3, 10, 30)
+        old_time = (now - timedelta(minutes=40)).strftime("%Y-%m-%d %H:%M:%S")
+        scanner.positions["15m"][("WEAKUSDT", "long")] = self._position("WEAKUSDT", "long", 70, old_time)
+        scanner._position_pnl_pct = lambda pos: (-1.25, -0.5, True)
+        scanner._exchange_side_count = lambda side: 0
+        scanner.execution = _CloseExecution(
+            ExecutionResult(False, "close", "WEAKUSDT", "long", quantity=1.0, code="-4131", message="percent price")
+        )
+        events = []
+        original_log_event = scanner_module.log_event
+        original_logger_disabled = scanner_module.logger.disabled
+        scanner_module.log_event = events.append
+        scanner_module.logger.disabled = True
+        try:
+            success, cases = scanner._release_position_for_strong_signal(
+                {"symbol": "NEWUSDT", "trade_side": "long", "timeframe": "15m"},
+                "2026-06-03 10:30:00",
+                now,
+                effective_score=125,
+                return_details=True,
+            )
+        finally:
+            scanner_module.log_event = original_log_event
+            scanner_module.logger.disabled = original_logger_disabled
+
+        self.assertFalse(success)
+        self.assertEqual([case["gate"] for case in cases], [
+            "a_v11_releasable_position",
+            "a_v11_replacement_release_result",
+            "execution_result",
+        ])
+        self.assertEqual([row["passed"] for row in evaluate_strategy_gate_cases(cases)], [True, True, True])
+        self.assertEqual(events[0]["event"], "EVICT_FAILED")
+        self.assertEqual(events[0]["strategy_gate_cases"], cases)
+        self.assertIn(("WEAKUSDT", "long"), scanner.positions["15m"])
+
     def test_evaluates_serialized_gate_case(self):
         decision = evaluate_strategy_gate_case(
             {

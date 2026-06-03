@@ -1266,6 +1266,59 @@ class Scanner:
         ]
         return replacement_gate, pool_gate, cases
 
+    def _releasable_position_case(
+        self,
+        *,
+        new_score: float,
+        new_symbol: str,
+        new_side: str,
+        old_tf: str,
+        pos: SimPosition,
+        pnl_pct: float,
+        age_min: int,
+        same_side_required: bool,
+        preferred_tf: Optional[str],
+        require_preferred_tf: bool,
+    ):
+        old_score = abs(float(pos.entry_score or 0))
+        inputs = {
+            "new_score": new_score,
+            "new_symbol": new_symbol,
+            "new_side": new_side,
+            "old_tf": old_tf,
+            "old_symbol": pos.symbol,
+            "old_side": pos.side,
+            "old_score": old_score,
+            "pnl_pct": pnl_pct,
+            "age_min": age_min,
+            "same_side_required": same_side_required,
+            "preferred_tf": preferred_tf,
+            "require_preferred_tf": require_preferred_tf,
+            "strong_signal_threshold": STRONG_SIGNAL_THRESHOLD,
+            "elite_score": EVICT_ELITE_SCORE,
+            "min_age_minutes": EVICT_MIN_AGE_MINUTES,
+            "elite_min_age_minutes": EVICT_ELITE_MIN_AGE_MINUTES,
+            "score_gap": EVICT_SCORE_GAP,
+            "soft_protect_pnl_pct": EVICT_SOFT_PROTECT_PNL_PCT,
+            "soft_protect_score_gap": EVICT_SOFT_PROTECT_SCORE_GAP,
+            "hard_protect_pnl_pct": EVICT_HARD_PROTECT_PNL_PCT,
+        }
+        decision = evaluate_a_v11_releasable_position(**inputs)
+        return decision, strategy_gate_case(
+            name="a_v11_releasable_position",
+            gate="a_v11_releasable_position",
+            inputs=inputs,
+            decision=decision,
+            meta={
+                "strategy": "A/v11",
+                "timeframe": old_tf,
+                "chain": "position_replacement",
+                "chain_step": "releasable_candidate",
+                "old_symbol": pos.symbol,
+                "old_side": pos.side,
+            },
+        )
+
     def _passes_entry_threshold(self, sig: dict) -> bool:
         decision = evaluate_a_v11_entry_threshold(
             timeframe=sig["timeframe"],
@@ -1362,51 +1415,59 @@ class Scanner:
         same_side_required: bool = False,
         preferred_tf: Optional[str] = None,
         require_preferred_tf: bool = False,
+        collect_cases: bool = False,
     ):
         if abs(new_score) < STRONG_SIGNAL_THRESHOLD:
-            return None
+            return (None, []) if collect_cases else None
         candidates = []
+        evaluated_cases = []
         is_elite = abs(new_score) >= EVICT_ELITE_SCORE
         min_age = EVICT_ELITE_MIN_AGE_MINUTES if is_elite else EVICT_MIN_AGE_MINUTES
         for old_tf, tf_positions in self.positions.items():
             for key, pos in tf_positions.items():
-                if pos.symbol == new_symbol:
-                    continue
-                if require_preferred_tf and preferred_tf and old_tf != preferred_tf:
-                    continue
-                if same_side_required and pos.side != new_side:
-                    continue
                 age_min = self._position_age_minutes(pos, now_dt)
-                if age_min < min_age:
+                early_case_needed = (
+                    pos.symbol == new_symbol
+                    or (require_preferred_tf and preferred_tf and old_tf != preferred_tf)
+                    or (same_side_required and pos.side != new_side)
+                    or age_min < min_age
+                )
+                if early_case_needed:
+                    if collect_cases:
+                        _, release_case = self._releasable_position_case(
+                            new_score=new_score,
+                            new_symbol=new_symbol,
+                            new_side=new_side,
+                            old_tf=old_tf,
+                            pos=pos,
+                            pnl_pct=0.0,
+                            age_min=age_min,
+                            same_side_required=same_side_required,
+                            preferred_tf=preferred_tf,
+                            require_preferred_tf=require_preferred_tf,
+                        )
+                        evaluated_cases.append(release_case)
                     continue
                 pnl_pct, pnl_usd, ok = self._position_pnl_pct(pos)
                 if not ok:
                     continue
-                old_score = abs(float(pos.entry_score or 0))
-                release_decision = evaluate_a_v11_releasable_position(
+                release_decision, release_case = self._releasable_position_case(
                     new_score=new_score,
                     new_symbol=new_symbol,
                     new_side=new_side,
                     old_tf=old_tf,
-                    old_symbol=pos.symbol,
-                    old_side=pos.side,
-                    old_score=old_score,
+                    pos=pos,
                     pnl_pct=pnl_pct,
                     age_min=age_min,
                     same_side_required=same_side_required,
                     preferred_tf=preferred_tf,
                     require_preferred_tf=require_preferred_tf,
-                    strong_signal_threshold=STRONG_SIGNAL_THRESHOLD,
-                    elite_score=EVICT_ELITE_SCORE,
-                    min_age_minutes=EVICT_MIN_AGE_MINUTES,
-                    elite_min_age_minutes=EVICT_ELITE_MIN_AGE_MINUTES,
-                    score_gap=EVICT_SCORE_GAP,
-                    soft_protect_pnl_pct=EVICT_SOFT_PROTECT_PNL_PCT,
-                    soft_protect_score_gap=EVICT_SOFT_PROTECT_SCORE_GAP,
-                    hard_protect_pnl_pct=EVICT_HARD_PROTECT_PNL_PCT,
                 )
+                if collect_cases:
+                    evaluated_cases.append(release_case)
                 if not release_decision.allowed:
                     continue
+                old_score = float(release_case.get("inputs", {}).get("old_score") or 0.0)
                 evidence = release_decision.evidence or {}
                 gap_required = evidence.get("gap_required", 0)
                 min_age = evidence.get("min_age_required", min_age)
@@ -1414,8 +1475,9 @@ class Scanner:
                 release_rank = tuple(evidence.get("release_rank") or (0, 0, pnl_pct, old_score, -age_min))
                 candidates.append((release_rank, old_tf, key, pos, pnl_pct, pnl_usd, age_min, gap_required, min_age))
         if not candidates:
-            return None
-        return sorted(candidates, key=lambda x: x[0])[0][1:]
+            return (None, evaluated_cases) if collect_cases else None
+        found = sorted(candidates, key=lambda x: x[0])[0][1:]
+        return (found, evaluated_cases) if collect_cases else found
 
     def _release_position_for_strong_signal(
         self,
@@ -1426,11 +1488,12 @@ class Scanner:
         effective_score: Optional[float] = None,
         preferred_tf: Optional[str] = None,
         require_preferred_tf: bool = False,
-    ) -> bool:
+        return_details: bool = False,
+    ):
         new_score = abs(float(effective_score if effective_score is not None else self._effective_signal_score(sig)))
         new_side = sig.get("trade_side", "")
         same_side_required = self._exchange_side_count(new_side) >= MAX_POS_PER_SIDE
-        found = self._find_releasable_position(
+        found, candidate_cases = self._find_releasable_position(
             new_score,
             sig.get("symbol", ""),
             new_side,
@@ -1438,9 +1501,10 @@ class Scanner:
             same_side_required=same_side_required,
             preferred_tf=preferred_tf,
             require_preferred_tf=require_preferred_tf,
+            collect_cases=True,
         )
         if not found:
-            return False
+            return (False, candidate_cases) if return_details else False
         old_tf, key, pos, pnl_pct, pnl_usd, age_min, gap_required, min_age = found
         close_exec = self.execution.close_position(CloseRequest(
             symbol=pos.symbol,
@@ -1449,6 +1513,24 @@ class Scanner:
             cancel_open_orders=True,
         ))
         if not close_exec.success:
+            release_gate = evaluate_a_v11_replacement_release_result_gate(
+                release_success=False,
+                reason=close_exec.reason,
+            )
+            release_case = strategy_gate_case(
+                name="a_v11_replacement_release_result",
+                gate="a_v11_replacement_release_result",
+                inputs={"release_success": False, "reason": close_exec.reason},
+                decision=release_gate,
+                meta={"strategy": "A/v11", "timeframe": old_tf, "chain_step": "release_result"},
+            )
+            close_case = _execution_result_case(
+                "a_v11_evict_close_execution_result",
+                close_exec,
+                timeframe=old_tf,
+                phase="replacement_release",
+            )
+            replacement_cases = [*candidate_cases, release_case, close_case]
             log_event({
                 "time": now_str, "event": "EVICT_FAILED", "symbol": pos.symbol,
                 "side": pos.side, "timeframe": old_tf, "reason": close_exec.reason,
@@ -1459,16 +1541,29 @@ class Scanner:
                 "exchange_close_success": False,
                 "decision_stage": "execution",
                 "filter_layer": "execution",
-                "strategy_gate_case": _execution_result_case(
-                    "a_v11_evict_close_execution_result",
-                    close_exec,
-                    timeframe=old_tf,
-                    phase="replacement_release",
-                ),
+                "strategy_gate_cases": replacement_cases,
             })
             logger.warning(f"  释放弱仓失败: {pos.symbol} {pos.side} {close_exec.reason}")
-            return False
+            return (False, replacement_cases) if return_details else False
 
+        release_gate = evaluate_a_v11_replacement_release_result_gate(
+            release_success=True,
+            reason="replacement_release_succeeded",
+        )
+        release_case = strategy_gate_case(
+            name="a_v11_replacement_release_result",
+            gate="a_v11_replacement_release_result",
+            inputs={"release_success": True, "reason": "replacement_release_succeeded"},
+            decision=release_gate,
+            meta={"strategy": "A/v11", "timeframe": old_tf, "chain_step": "release_result"},
+        )
+        close_case = _execution_result_case(
+            "a_v11_evict_close_execution_result",
+            close_exec,
+            timeframe=old_tf,
+            phase="replacement_release",
+        )
+        replacement_cases = [*candidate_cases, release_case, close_case]
         trade = {
             "symbol": pos.symbol, "side": pos.side,
             "entry_price": pos.entry_price, "exit_price": fetch_current_price(pos.symbol),
@@ -1499,6 +1594,7 @@ class Scanner:
             "min_age_required": min_age,
             "soft_protect_pnl_pct": EVICT_SOFT_PROTECT_PNL_PCT,
             "hard_protect_pnl_pct": EVICT_HARD_PROTECT_PNL_PCT,
+            "strategy_gate_cases": replacement_cases,
         })
         self.positions[old_tf].pop(key, None)
         self.cooldowns[old_tf][pos.symbol] = now_dt + timedelta(minutes=EVICT_COOLDOWN_MINUTES)
@@ -1506,7 +1602,7 @@ class Scanner:
             f"  ♻️ 释放弱仓: {pos.symbol} {pos.side} pnl={pnl_pct:+.2f}% "
             f"score={pos.entry_score:+.0f} -> {sig.get('symbol')} score={new_score:+.0f}"
         )
-        return True
+        return (True, replacement_cases) if return_details else True
 
     def _sync_exchange_state(self):
         """启动时同步交易所账户状态：设置持仓模式，同步已有持仓到内存"""
@@ -2416,7 +2512,7 @@ class Scanner:
                     timeframe_full=True,
                     tf=tf,
                 )
-                release_success = self._release_position_for_strong_signal(
+                release_success, release_cases = self._release_position_for_strong_signal(
                     sig,
                     now_str,
                     now_dt,
@@ -2424,6 +2520,7 @@ class Scanner:
                     effective_score=net_score,
                     preferred_tf=tf,
                     require_preferred_tf=True,
+                    return_details=True,
                 )
                 if release_success:
                     released_for_replacement = True
@@ -2433,21 +2530,28 @@ class Scanner:
                         "timeframe": tf, "reason": "周期池满，强信号释放弱仓后重试开仓",
                         "decision_stage": "position_replacement",
                         "filter_layer": "risk",
-                        "strategy_gate_cases": replacement_cases,
+                        "strategy_gate_cases": [*replacement_cases, *release_cases],
                         **sentinel_fields(inst_id),
                     })
                 else:
-                    release_gate = evaluate_a_v11_replacement_release_result_gate(
-                        release_success=False,
-                        reason="周期池满且无可释放弱仓",
+                    release_result_seen = any(
+                        str(case.get("gate") or "") == "a_v11_replacement_release_result"
+                        for case in release_cases
+                        if isinstance(case, dict)
                     )
-                    release_case = strategy_gate_case(
-                        name="a_v11_replacement_release_result",
-                        gate="a_v11_replacement_release_result",
-                        inputs={"release_success": False, "reason": "周期池满且无可释放弱仓"},
-                        decision=release_gate,
-                        meta={"strategy": "A/v11", "timeframe": tf, "chain_step": "release_result"},
-                    )
+                    release_case = None
+                    if not release_result_seen:
+                        release_gate = evaluate_a_v11_replacement_release_result_gate(
+                            release_success=False,
+                            reason="周期池满且无可释放弱仓",
+                        )
+                        release_case = strategy_gate_case(
+                            name="a_v11_replacement_release_result",
+                            gate="a_v11_replacement_release_result",
+                            inputs={"release_success": False, "reason": "周期池满且无可释放弱仓"},
+                            decision=release_gate,
+                            meta={"strategy": "A/v11", "timeframe": tf, "chain_step": "release_result"},
+                        )
                     log_event({
                         "time": now_str, "event": "OPEN_SKIPPED", "symbol": inst_id,
                         "side": side, "score": net_score, "timeframe": tf,
@@ -2460,20 +2564,36 @@ class Scanner:
                         "replacement_elite_score": EVICT_ELITE_SCORE,
                         "tf_positions": self._pos_count(tf),
                         "max_positions_per_tf": self.max_positions,
-                        "strategy_gate_cases": [*replacement_cases, release_case],
+                        "strategy_gate_cases": [
+                            *replacement_cases,
+                            *release_cases,
+                            *([release_case] if release_case else []),
+                        ],
                         **sentinel_fields(inst_id),
                     })
                     return
 
             if not released_for_replacement and not self._can_open_new_position(risk_usdt, now_str, tf, inst_id, side, net_score):
                 total_positions = max(self._total_local_positions(), self._total_exchange_positions())
-                if total_positions >= MAX_TOTAL_POSITIONS and self._release_position_for_strong_signal(sig, now_str, now_dt, effective_score=net_score):
+                release_success, release_cases = (
+                    self._release_position_for_strong_signal(
+                        sig,
+                        now_str,
+                        now_dt,
+                        effective_score=net_score,
+                        return_details=True,
+                    )
+                    if total_positions >= MAX_TOTAL_POSITIONS
+                    else (False, [])
+                )
+                if release_success:
                     log_event({
                         "time": now_str, "event": "OPEN_RETRY_AFTER_EVICT",
                         "symbol": inst_id, "side": side, "score": net_score,
                         "timeframe": tf, "reason": "强信号释放弱仓后重试开仓",
                         "decision_stage": "position_replacement",
                         "filter_layer": "risk",
+                        "strategy_gate_cases": release_cases,
                         **sentinel_fields(inst_id),
                     })
                 else:

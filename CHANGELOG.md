@@ -2,6 +2,14 @@
 
 This is the durable reason-and-outcome ledger for every material design, code, configuration, deployment, rollback, optimization, or live operational change.
 
+## 2026-06-03 11:35 CST - Add first deterministic replay fill engine
+- Trigger / reason: Continue offline-first P1-C replay/fill engine work. The system needs a reusable way to answer "if an OPEN_SKIPPED were allowed, how would it exit under the same basic stop/take-profit assumptions" without each report script recreating fill math.
+- Completed: Added `core.replay_fill` with `ReplayFillRequest`, `ReplayBar`, `ReplayFillResult`, and `simulate_replay_fill()`. It supports long/short entry, quantity, stop-loss, take-profit, fee bps, slippage bps, conservative intrabar handling when stop and take-profit are both touched, and end-of-window exits. Added tests for long take-profit after fees, short stop-loss, conservative same-bar stop priority, slippage, and invalid inputs. Added the module to release bundles.
+- Not completed / remaining: This is the first deterministic fill kernel, not the complete historical replay engine. It still needs integration with counterfactual OPEN_SKIPPED datasets, strategy-specific trailing/recovery exits, Kline feature windows, and portal/report surfaces.
+- Verification: Local `python -m unittest tests.test_replay_fill tests.test_strategy_gate_cases tests.test_strategy_gates` passed (`20` tests). `py_compile` passed for `core/replay_fill.py`, `core/strategy_gate_cases.py`, and `release_manager.py`.
+- Live impact / deployment: None. Offline code only; no server test or restart.
+- Files / release / commit: `core/replay_fill.py`, `tests/test_replay_fill.py`, `部署工具/release_manager.py`, `CHANGELOG.md`, `PROJECT_STATE.md`, `记忆文档/MEMORY.md`, `记忆文档/FUTURE_EXECUTION_PLAN.md`.
+
 ## 2026-06-03 11:25 CST - Add serializable strategy gate parity cases
 - Trigger / reason: Continue offline-first P0-B replay/live same-path work. The remaining parity gap needs a way for replay/tests to evaluate the same pure gate functions from serialized inputs instead of duplicating scanner-local logic.
 - Completed: Added `core.strategy_gate_cases`, a small serializable case runner for shared strategy gates. It maps case names such as `a_v11_entry_threshold`, `b_v16_entry_threshold`, `c_v14_entry_threshold`, `execution_result`, `positive_quantity`, `score_max`, `tradability`, and `no_same_symbol_position` to the real `core.strategy_gates` functions, evaluates JSON-like input payloads, and reports pass/fail against expected allowed/reason fields. Added unit tests covering A/B/C threshold cases, execution preflight classification, mismatch reporting, and unknown gate errors. Added the new core module to Tencent/Aliyun release bundles.

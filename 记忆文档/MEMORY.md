@@ -48,6 +48,7 @@
 - P0-A final fresh-run 还新增 A/B/C scanner universe env 限制，默认不变。最终测试可先设小值：A `SCANNER_A_TOP_SYMBOLS`/`SCANNER_A_SPIKE_SYMBOLS`/`SCANNER_A_SENTINEL_LIMIT`，B `SCANNER_B_TOP_SYMBOLS`/`SCANNER_B_SENTINEL_LIMIT`，C `SCANNER_C_TOP_SYMBOLS`/`SCANNER_C_SENTINEL_LIMIT`，避免一启动就恢复 Top100 Kline 压力。
 - 冷却期间继续 P0-B：新增 shared `evaluate_execution_result_gate()`，A/v11、B/v16、C/v14 的 execution preflight-vs-failure 分支已接入同一纯 gate；不改事件 payload、阈值、仓位、杠杆、止损、下单或冷却分钟。已通过 no-restart disk deploy 上传到腾讯：`20260603-101942-strategy-a-7885a45`、`20260603-102046-strategy-b-7885a45`、`20260603-102149-strategy-c-7885a45`。
 - P0-B 离线 parity 骨架已加：`core.strategy_gate_cases` 可用 JSON-like case 调真实 `core.strategy_gates` 函数并比对 expected allowed/reason。当前覆盖 A/B/C threshold、execution result、quantity、score/tradability/position 等基础 gate；后续历史 replay 可以把能还原上下文的 OPEN_SKIPPED/OPEN_FAILED 转成这些 case。
+- P1-C 离线起步：`core.replay_fill` 已提供 deterministic fill kernel，可用入场价、qty、SL/TP、fee/slippage 和 K线窗口模拟 long/short 出场；同一根 K 同时触发止损/止盈时默认保守按止损。还未接 counterfactual 报告、策略 trailing/recovery exit 或 portal。
 
 ## 2026-06-02 N6 watchlist 历史持久化
 - 为继续拆解 `never_scanned_in_mirror`，哨兵现在会把每轮 `market_mover_watchlist.json` 追加写入 `runtime/market_mover_watchlist_history.jsonl` 和每日分片。现有 latest JSON 仍保留，watchlist 构造逻辑、scanner cadence、策略阈值都不变。

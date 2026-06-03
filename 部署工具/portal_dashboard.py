@@ -1961,6 +1961,8 @@ def function_status_cards(data: dict[str, Any]) -> list[dict[str, str]]:
             ),
             "body": (
                 f"items {int(rollback_watch_summary_data.get('items') or 0)}; "
+                f"operator-ready {int(rollback_watch_summary_data.get('operator_ready') or 0)}; "
+                f"gaps {int(rollback_watch_summary_data.get('governance_gaps') or 0)}; "
                 f"worst {rollback_watch_summary_data.get('worst_candidate') or '-'} "
                 f"{float(rollback_watch_summary_data.get('worst_pnl_after_cost_24h') or 0):+.2f}; "
                 f"close failed {int(rollback_watch_summary_data.get('close_failed_24h') or 0)} "
@@ -3211,6 +3213,14 @@ def render_html(out_dir: Path) -> str:
             data["replay_readiness_html"],
             "看Replay验收",
             "blue",
+        ),
+        route_card(
+            "回滚能不能决策",
+            "治理验收",
+            "看 P0/P1 rollback-watch 是否已有完整决策包、回滚路径、成熟度、replay readiness 和关闭失败归因。",
+            data["rollback_watch_html"],
+            "看回滚治理",
+            "red",
         ),
         route_card(
             "是否有更优方案",

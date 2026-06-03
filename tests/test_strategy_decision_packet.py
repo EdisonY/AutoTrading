@@ -479,6 +479,136 @@ class StrategyDecisionPacketTests(unittest.TestCase):
         self.assertIn("## Decision Packets", rendered)
         self.assertIn("tighten exit", rendered)
 
+    def test_rollback_governance_waits_for_replay_readiness(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            evolution_path = root / "strategy_evolution_latest.json"
+            replay_path = root / "replay_readiness_latest.json"
+            decision = {
+                "candidate_id": "EXP-QUALITY",
+                "strategy": "A/v11",
+                "priority": "P1",
+                "status": "rollback_watch",
+                "decision_packet": {
+                    "change": "tighten exit",
+                    "expected_advantage": "less giveback",
+                    "risk": {"items": ["72h loss"]},
+                    "rollback_path": ["pause expansion", "revert config if approved"],
+                    "operator_action": "investigate_live_degradation",
+                    "automation": "disabled_report_only",
+                    "evidence_maturity": {"label": "reviewable"},
+                },
+                "post_approval_live": {
+                    "windows": {
+                        "24h": {
+                            "quality": {
+                                "closed_samples": 45,
+                                "realized_pnl_after_cost": -40,
+                                "forced_close_rate": 0.0,
+                                "open_failed_rate": 0.0,
+                            },
+                            "regime": {"label": "range"},
+                        },
+                        "72h": {
+                            "quality": {
+                                "closed_samples": 60,
+                                "realized_pnl_after_cost": -150,
+                            }
+                        },
+                    },
+                },
+            }
+            evolution_path.write_text(json.dumps({"decisions": [decision]}), encoding="utf-8")
+            replay_path.write_text(
+                json.dumps({"status": "data_gap", "next_action": "run_staged_kline_depth_ingest_then_replay_review", "summary": {"blockers": 2}}),
+                encoding="utf-8",
+            )
+
+            payload = self.rollback.build_payload(evolution_path, replay_path)
+            readiness = payload["items"][0]["operator_readiness"]
+
+            self.assertEqual(readiness["status"], "waiting_for_replay_readiness")
+            self.assertFalse(readiness["ready"])
+            self.assertIn("replay_readiness:data_gap", readiness["gaps"])
+            self.assertEqual(payload["summary"]["operator_ready"], 0)
+            self.assertEqual(payload["summary"]["governance_gaps"], 1)
+            rendered = self.rollback.render_md(payload)
+            self.assertIn("Operator-ready decisions", rendered)
+            self.assertIn("waiting_for_replay_readiness", rendered)
+
+    def test_rollback_governance_ready_when_packet_and_replay_are_ready(self):
+        decision = {
+            "candidate_id": "EXP-READY",
+            "strategy": "B/v16",
+            "priority": "P1",
+            "status": "rollback_watch",
+            "decision_packet": {
+                "change": "narrow ATR stop bands",
+                "expected_advantage": "reduce hard-stop pressure",
+                "risk": {"items": ["72h after-cost PnL weak"]},
+                "rollback_path": ["pause expansion", "revert config if approved"],
+                "operator_action": "investigate_live_degradation",
+                "automation": "disabled_report_only",
+                "evidence_maturity": {"label": "reviewable"},
+            },
+            "post_approval_live": {
+                "windows": {
+                    "24h": {
+                        "quality": {
+                            "closed_samples": 45,
+                            "realized_pnl_after_cost": -40,
+                            "forced_close_rate": 0.0,
+                            "open_failed_rate": 0.0,
+                        },
+                        "regime": {"label": "range"},
+                    },
+                    "72h": {
+                        "quality": {
+                            "closed_samples": 60,
+                            "realized_pnl_after_cost": -150,
+                        }
+                    },
+                },
+            },
+        }
+        item = self.rollback.extract_item(decision)
+        replay = {
+            "available": True,
+            "status": "ready_for_operator_review",
+            "ready": True,
+            "next_action": "review_continue_narrow_rollback",
+            "blockers": 0,
+        }
+        readiness = self.rollback.operator_readiness(item, replay)
+
+        self.assertEqual(readiness["status"], "operator_ready")
+        self.assertTrue(readiness["ready"])
+        self.assertEqual(readiness["automation"], "disabled_report_only")
+        self.assertEqual(readiness["gaps"], [])
+
+    def test_rollback_governance_flags_packet_gap(self):
+        item = {
+            "priority": "P1",
+            "status": "rollback_watch",
+            "action": "prepare_rollback_review",
+            "decision_packet": {
+                "change": "narrow",
+                "expected_advantage": "less loss",
+                "risk": {"items": ["risk"]},
+                "automation": "disabled_report_only",
+                "evidence_maturity": {"label": "reviewable"},
+            },
+            "window_24h": {},
+        }
+        readiness = self.rollback.operator_readiness(
+            item,
+            {"status": "ready_for_operator_review", "ready": True},
+        )
+
+        self.assertEqual(readiness["status"], "packet_gap")
+        self.assertIn("missing_rollback_path", readiness["gaps"])
+        self.assertIn("rollback_path_not_actionable", readiness["gaps"])
+
     def test_close_failed_attribution_flows_to_rollback_review(self):
         with tempfile.TemporaryDirectory() as tmp:
             db_path = Path(tmp) / "events.sqlite3"

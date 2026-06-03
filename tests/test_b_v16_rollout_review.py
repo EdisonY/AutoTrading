@@ -126,6 +126,120 @@ class BV16RolloutReviewTests(unittest.TestCase):
         con.close()
         return rows
 
+    def replay_guard_db_rows(self) -> list[sqlite3.Row]:
+        con = sqlite3.connect(":memory:")
+        con.row_factory = sqlite3.Row
+        con.execute(
+            """
+            create table events (
+                id integer primary key,
+                ts text,
+                strategy text,
+                symbol text,
+                event_type text,
+                category text,
+                side text,
+                reason text,
+                payload_json text
+            )
+            """
+        )
+        con.executemany(
+            """
+            insert into events (ts, strategy, symbol, event_type, category, side, reason, payload_json)
+            values (?, 'B/v16', ?, ?, '', ?, ?, ?)
+            """,
+            [
+                (
+                    "2026-06-03T10:00:00+08:00",
+                    "HARDUSDT",
+                    "OPEN",
+                    "long",
+                    "",
+                    json.dumps(
+                        {
+                            "symbol": "HARDUSDT",
+                            "side": "long",
+                            "price": 100,
+                            "sl": 90,
+                            "tp": 120,
+                            "atr": 2,
+                            "timeframe": "1h",
+                            "exchange_qty": 4,
+                            "leverage": 4,
+                            "trade_size_usdt": 100,
+                        }
+                    ),
+                ),
+                (
+                    "2026-06-03T11:00:00+08:00",
+                    "HARDUSDT",
+                    "CLOSE",
+                    "long",
+                    "硬底10%",
+                    json.dumps(
+                        {
+                            "symbol": "HARDUSDT",
+                            "side": "long",
+                            "entry_time": "2026-06-03T10:00:00+08:00",
+                            "entry_price": 100,
+                            "exit_price": 97,
+                            "pnl_usd": -12,
+                            "reason": "硬底10%",
+                            "timeframe": "1h",
+                            "exchange_qty": 4,
+                            "leverage": 4,
+                        }
+                    ),
+                ),
+                (
+                    "2026-06-03T10:00:00+08:00",
+                    "PROTUSDT",
+                    "OPEN",
+                    "short",
+                    "",
+                    json.dumps(
+                        {
+                            "symbol": "PROTUSDT",
+                            "side": "short",
+                            "price": 100,
+                            "sl": 115,
+                            "tp": 70,
+                            "atr": 20,
+                            "timeframe": "1h",
+                            "exchange_qty": 4,
+                            "leverage": 4,
+                            "trade_size_usdt": 100,
+                        }
+                    ),
+                ),
+                (
+                    "2026-06-03T12:00:00+08:00",
+                    "PROTUSDT",
+                    "CLOSE",
+                    "short",
+                    "盈利回撤保护25%",
+                    json.dumps(
+                        {
+                            "symbol": "PROTUSDT",
+                            "side": "short",
+                            "entry_time": "2026-06-03T10:00:00+08:00",
+                            "entry_price": 100,
+                            "exit_price": 93,
+                            "pnl_usd": 28,
+                            "reason": "盈利回撤保护25%",
+                            "timeframe": "1h",
+                            "exchange_qty": 4,
+                            "leverage": 4,
+                        }
+                    ),
+                ),
+            ],
+        )
+        rows = list(con.execute("select * from events order by id"))
+        con.close()
+        return rows
+
     def db_rows(self) -> list[sqlite3.Row]:
         con = sqlite3.connect(":memory:")
         con.row_factory = sqlite3.Row
@@ -318,6 +432,7 @@ class BV16RolloutReviewTests(unittest.TestCase):
         self.assertEqual(comparison["status_counts"], {"complete": 1})
         self.assertEqual(comparison["top_deltas"][0]["replay_exit_reason"], "trailing_stop")
         self.assertIn("hard-bottom", comparison["note"])
+        self.assertIn("profit-retrace", comparison["note"])
 
     def test_replay_fill_comparison_uses_research_store_and_depth(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -347,6 +462,43 @@ class BV16RolloutReviewTests(unittest.TestCase):
         self.assertEqual(top["order_book_levels_used"], 2)
         self.assertIn("research_store", top["kline_source"])
         self.assertIn("depth_snapshots", top["depth_snapshot_source"])
+
+    def test_replay_fill_comparison_models_b_v16_hard_bottom_and_profit_retrace(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            old_root = self.tool.ROOT
+            try:
+                self.tool.ROOT = Path(tmp)
+                cache_dir = Path(tmp) / "runtime" / "kline_cache"
+                cache_dir.mkdir(parents=True)
+                hard_rows = [
+                    [int(self.tool.parse_dt("2026-06-03T10:00:00+08:00").timestamp() * 1000), "100", "101", "96", "97"],
+                    [int(self.tool.parse_dt("2026-06-03T11:00:00+08:00").timestamp() * 1000), "97", "99", "90", "91"],
+                ]
+                protect_rows = [
+                    [int(self.tool.parse_dt("2026-06-03T10:00:00+08:00").timestamp() * 1000), "100", "100", "90", "91"],
+                    [int(self.tool.parse_dt("2026-06-03T11:00:00+08:00").timestamp() * 1000), "91", "93", "90", "93"],
+                ]
+                (cache_dir / "HARDUSDT_1h_100.json").write_text(json.dumps({"rows": hard_rows}), encoding="utf-8")
+                (cache_dir / "PROTUSDT_1h_100.json").write_text(json.dumps({"rows": protect_rows}), encoding="utf-8")
+
+                comparison = self.tool.build_replay_fill_comparison(
+                    self.replay_guard_db_rows(),
+                    self.tool.parse_dt("2026-06-03T09:00:00+08:00"),
+                    self.tool.parse_dt("2026-06-03T13:00:00+08:00"),
+                )
+            finally:
+                self.tool.ROOT = old_root
+
+        reasons = {item["reason"]: item["count"] for item in comparison["replay_exit_reasons"]}
+        by_symbol = {item["symbol"]: item for item in comparison["top_deltas"]}
+        self.assertEqual(comparison["status"], "ready")
+        self.assertEqual(comparison["completed"], 2)
+        self.assertEqual(reasons["hard_bottom"], 1)
+        self.assertEqual(reasons["profit_retrace"], 1)
+        self.assertEqual(by_symbol["HARDUSDT"]["replay_exit_reason"], "hard_bottom")
+        self.assertEqual(by_symbol["PROTUSDT"]["replay_exit_reason"], "profit_retrace")
+        self.assertEqual(by_symbol["HARDUSDT"]["hard_loss_leverage_pct"], 10.0)
+        self.assertEqual(by_symbol["PROTUSDT"]["profit_protect_retrace"], 0.25)
 
     def test_decision_packet_includes_replay_fill_comparison(self):
         windows = {

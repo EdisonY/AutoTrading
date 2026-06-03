@@ -174,6 +174,52 @@ class ReplayFillTest(unittest.TestCase):
         self.assertAlmostEqual(result.exit_price, 97.6)
         self.assertAlmostEqual(result.net_pnl_usdt, 4.8)
 
+    def test_long_hard_bottom_uses_leveraged_close_loss(self):
+        result = simulate_replay_fill(
+            ReplayFillRequest(
+                symbol="ABCUSDT",
+                side="long",
+                entry_price=100,
+                quantity=4,
+                stop_loss=90,
+                leverage=4,
+                hard_loss_leverage_pct=10,
+                fee_bps=0,
+            ),
+            [
+                {"ts": "t1", "open": 100, "high": 101, "low": 96, "close": 97},
+                {"ts": "t2", "open": 97, "high": 99, "low": 90, "close": 91},
+            ],
+        )
+
+        self.assertEqual(result.exit_reason, "hard_bottom")
+        self.assertEqual(result.exit_ts, "t1")
+        self.assertEqual(result.exit_price, 97)
+        self.assertAlmostEqual(result.gross_pnl_usdt, -12.0)
+
+    def test_short_profit_retrace_uses_best_to_close_profit(self):
+        result = simulate_replay_fill(
+            ReplayFillRequest(
+                symbol="ABCUSDT",
+                side="short",
+                entry_price=100,
+                quantity=4,
+                leverage=4,
+                profit_protect_min_usdt=30,
+                profit_protect_retrace=0.25,
+                fee_bps=0,
+            ),
+            [
+                {"ts": "t1", "open": 100, "high": 100, "low": 90, "close": 91},
+                {"ts": "t2", "open": 91, "high": 93, "low": 90, "close": 93},
+            ],
+        )
+
+        self.assertEqual(result.exit_reason, "profit_retrace")
+        self.assertEqual(result.exit_ts, "t2")
+        self.assertEqual(result.exit_price, 93)
+        self.assertAlmostEqual(result.gross_pnl_usdt, 28.0)
+
     def test_atr_trailing_requires_positive_atr(self):
         with self.assertRaises(ValueError):
             simulate_replay_fill(
@@ -483,6 +529,26 @@ class ReplayFillTest(unittest.TestCase):
                     1,
                     entry_market_impact_bps=-1,
                 ),
+                [{"ts": "t1", "open": 10, "high": 11, "low": 9, "close": 10}],
+            )
+        with self.assertRaises(ValueError):
+            simulate_replay_fill(
+                ReplayFillRequest("ABCUSDT", "long", 10, 1, leverage=0),
+                [{"ts": "t1", "open": 10, "high": 11, "low": 9, "close": 10}],
+            )
+        with self.assertRaises(ValueError):
+            simulate_replay_fill(
+                ReplayFillRequest("ABCUSDT", "long", 10, 1, hard_loss_leverage_pct=-1),
+                [{"ts": "t1", "open": 10, "high": 11, "low": 9, "close": 10}],
+            )
+        with self.assertRaises(ValueError):
+            simulate_replay_fill(
+                ReplayFillRequest("ABCUSDT", "long", 10, 1, profit_protect_min_usdt=-1),
+                [{"ts": "t1", "open": 10, "high": 11, "low": 9, "close": 10}],
+            )
+        with self.assertRaises(ValueError):
+            simulate_replay_fill(
+                ReplayFillRequest("ABCUSDT", "long", 10, 1, profit_protect_retrace=1),
                 [{"ts": "t1", "open": 10, "high": 11, "low": 9, "close": 10}],
             )
 

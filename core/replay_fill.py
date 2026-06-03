@@ -38,6 +38,10 @@ class ReplayFillRequest:
     atr: float | None = None
     trailing_stop_atr: float | None = None
     trailing_activation_atr: float = 0.0
+    leverage: float = 1.0
+    hard_loss_leverage_pct: float | None = None
+    profit_protect_min_usdt: float | None = None
+    profit_protect_retrace: float | None = None
     fee_bps: float = 5.0
     slippage_bps: float = 0.0
     max_fill_quantity: float | None = None
@@ -259,6 +263,51 @@ def _trailing_exit_price(req: ReplayFillRequest, *, entry_price: float, best_pri
     return min(candidates) if side == "short" else max(candidates)
 
 
+def _leveraged_loss_pct(*, side: str, entry_price: float, close_price: float, leverage: float) -> float:
+    if side == "short":
+        return max(0.0, (float(close_price) - float(entry_price)) / float(entry_price) * 100.0 * float(leverage))
+    return max(0.0, (float(entry_price) - float(close_price)) / float(entry_price) * 100.0 * float(leverage))
+
+
+def _gross_at_price(*, side: str, entry_price: float, price: float, quantity: float) -> float:
+    if side == "short":
+        return (float(entry_price) - float(price)) * float(quantity)
+    return (float(price) - float(entry_price)) * float(quantity)
+
+
+def _protective_bar_close_exit(
+    req: ReplayFillRequest,
+    bar: ReplayBar,
+    *,
+    entry_price: float,
+    best_price: float,
+    quantity: float,
+) -> tuple[str, float] | None:
+    side = req.side.lower()
+    close_price = float(bar.close)
+
+    hard_loss_pct = float(req.hard_loss_leverage_pct or 0.0) if req.hard_loss_leverage_pct is not None else 0.0
+    if hard_loss_pct > 0:
+        loss_pct = _leveraged_loss_pct(
+            side=side,
+            entry_price=entry_price,
+            close_price=close_price,
+            leverage=float(req.leverage or 1.0),
+        )
+        if loss_pct >= hard_loss_pct:
+            return "hard_bottom", close_price
+
+    min_profit = float(req.profit_protect_min_usdt or 0.0) if req.profit_protect_min_usdt is not None else 0.0
+    retrace = float(req.profit_protect_retrace or 0.0) if req.profit_protect_retrace is not None else 0.0
+    if min_profit > 0 and retrace > 0:
+        best_profit = max(0.0, _gross_at_price(side=side, entry_price=entry_price, price=best_price, quantity=quantity))
+        current_profit = _gross_at_price(side=side, entry_price=entry_price, price=close_price, quantity=quantity)
+        if best_profit >= min_profit and current_profit <= best_profit * (1.0 - retrace):
+            return "profit_retrace", close_price
+
+    return None
+
+
 def _bar_exit(req: ReplayFillRequest, bar: ReplayBar, trailing_price: float | None = None) -> tuple[str, float] | None:
     side = req.side.lower()
     if side == "short":
@@ -298,6 +347,16 @@ def simulate_replay_fill(req: ReplayFillRequest, bars: Iterable[ReplayBar | dict
         raise ValueError("side must be long or short")
     if req.trailing_stop_atr is not None and float(req.trailing_stop_atr or 0.0) > 0 and float(req.atr or 0.0) <= 0:
         raise ValueError("atr must be positive when trailing_stop_atr is enabled")
+    if float(req.leverage or 0.0) <= 0:
+        raise ValueError("leverage must be positive")
+    if req.hard_loss_leverage_pct is not None and float(req.hard_loss_leverage_pct or 0.0) < 0:
+        raise ValueError("hard_loss_leverage_pct cannot be negative")
+    if req.profit_protect_min_usdt is not None and float(req.profit_protect_min_usdt or 0.0) < 0:
+        raise ValueError("profit_protect_min_usdt cannot be negative")
+    if req.profit_protect_retrace is not None:
+        retrace = float(req.profit_protect_retrace or 0.0)
+        if retrace < 0 or retrace >= 1:
+            raise ValueError("profit_protect_retrace must be between 0 and 1")
 
     reference_entry_px = _exit_price_with_slippage(price=req.entry_price, side=side, is_entry=True, slippage_bps=req.slippage_bps)
     target_qty, _, _, _ = _effective_quantity(req, entry_price=reference_entry_px)
@@ -329,6 +388,12 @@ def simulate_replay_fill(req: ReplayFillRequest, bars: Iterable[ReplayBar | dict
             best_price = min(best_price, float(bar.low))
         else:
             best_price = max(best_price, float(bar.high))
+        hit = _protective_bar_close_exit(req, bar, entry_price=entry_px, best_price=best_price, quantity=qty)
+        if hit:
+            exit_reason, exit_price = hit
+            exit_ts = bar.ts
+            bars_held = idx
+            break
         trailing_price = _trailing_exit_price(req, entry_price=entry_px, best_price=best_price)
         hit = _bar_exit(req, bar, trailing_price)
         if hit:

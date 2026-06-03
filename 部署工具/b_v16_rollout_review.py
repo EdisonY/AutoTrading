@@ -42,6 +42,9 @@ ROLLBACK_REVIEW_LOSS_USDT = 80.0
 COST_SENSITIVITY_PCTS = (0.10, 0.15, 0.25, 0.35)
 B_V16_TRAILING_ACTIVATE_ATR = 1.0
 B_V16_TRAILING_PULLBACK_ATR = 1.0
+B_V16_HARD_LOSS_LEVERAGE_PCT = 10.0
+B_V16_PROFIT_PROTECT_MIN_USDT = 30.0
+B_V16_PROFIT_PROTECT_RETRACE = 0.25
 KLINE_CACHE_LIMITS = (100, 200, 500, 1000)
 DEPTH_CACHE_MAX_AGE_SEC = 300.0
 TIMEFRAME_RE = re.compile(r"^(\d+)([mh])$")
@@ -370,6 +373,7 @@ def replay_trade_pair(pair: dict[str, Any]) -> dict[str, Any]:
         return {"status": "missing_bars", "symbol": symbol, "side": side, "timeframe": timeframe, "kline_source": source}
     stop_loss = payload_num(open_payload, "sl", "stop_loss")
     take_profit = payload_num(open_payload, "tp", "take_profit")
+    leverage = payload_num(open_payload, "leverage") or payload_num(close_payload, "leverage") or 4.0
     quantity = quantity_from_payload(open_payload, close_payload, entry_price)
     if quantity <= 0:
         return {"status": "missing_quantity", "symbol": symbol, "side": side, "timeframe": timeframe, "kline_source": source}
@@ -392,6 +396,10 @@ def replay_trade_pair(pair: dict[str, Any]) -> dict[str, Any]:
                 atr=atr,
                 trailing_activation_atr=B_V16_TRAILING_ACTIVATE_ATR,
                 trailing_stop_atr=B_V16_TRAILING_PULLBACK_ATR,
+                leverage=leverage,
+                hard_loss_leverage_pct=B_V16_HARD_LOSS_LEVERAGE_PCT,
+                profit_protect_min_usdt=B_V16_PROFIT_PROTECT_MIN_USDT,
+                profit_protect_retrace=B_V16_PROFIT_PROTECT_RETRACE,
                 fee_bps=FEE_SLIPPAGE_PCT * 50.0,
                 slippage_bps=0.0,
                 entry_order_book=depth_snapshot.order_book if depth_snapshot else None,
@@ -429,6 +437,9 @@ def replay_trade_pair(pair: dict[str, Any]) -> dict[str, Any]:
         "depth_snapshot_age_seconds": round(depth_snapshot.age_seconds, 3) if depth_snapshot else None,
         "trailing_activation_atr": B_V16_TRAILING_ACTIVATE_ATR,
         "trailing_stop_atr": B_V16_TRAILING_PULLBACK_ATR,
+        "hard_loss_leverage_pct": B_V16_HARD_LOSS_LEVERAGE_PCT,
+        "profit_protect_min_usdt": B_V16_PROFIT_PROTECT_MIN_USDT,
+        "profit_protect_retrace": B_V16_PROFIT_PROTECT_RETRACE,
     }
 
 
@@ -471,7 +482,7 @@ def build_replay_fill_comparison(rows: list[sqlite3.Row], start: datetime, end: 
         "note": (
             "Uses local research_store/klines when available, then local kline cache; optional local "
             "runtime/depth_cache or research_store/depth_snapshots for entry fill; models B/v16 SL/TP "
-            "+ ATR trailing only, while hard-bottom and profit-retrace guards remain live-rule gaps; no Binance API call is made."
+            "+ ATR trailing + hard-bottom + profit-retrace guards; no Binance API call is made."
         ),
     }
 

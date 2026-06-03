@@ -339,6 +339,9 @@ def evaluate(
     leverage: float,
     tp_pct: float,
     sl_pct: float,
+    max_fill_quantity: float | None = None,
+    max_fill_notional_usdt: float | None = None,
+    allow_partial_fill: bool = True,
 ) -> Result:
     entry_ts = ceil_next_minute(event.ts)
     if entry_ts + timedelta(minutes=horizon) > now.replace(second=0, microsecond=0):
@@ -386,29 +389,35 @@ def evaluate(
             "trailing_stop_atr": exit_params["trailing_stop_atr"],
             "trailing_activation_atr": exit_params["trailing_activation_atr"],
         }
-    fill = simulate_replay_fill(
-        ReplayFillRequest(
-            symbol=event.symbol,
-            side=event.side,
-            entry_price=entry_price,
-            quantity=quantity,
-            stop_loss=stop_loss,
-            take_profit=take_profit,
-            **trailing_kwargs,
-            fee_bps=5.0,
-            slippage_bps=0.0,
-        ),
-        [
-            {
-                "ts": datetime.fromtimestamp(int(bar[0]) / 1000, tz=UTC).isoformat(),
-                "open": float(bar[1]),
-                "high": float(bar[2]),
-                "low": float(bar[3]),
-                "close": float(bar[4]),
-            }
-            for bar in window
-        ],
-    )
+    try:
+        fill = simulate_replay_fill(
+            ReplayFillRequest(
+                symbol=event.symbol,
+                side=event.side,
+                entry_price=entry_price,
+                quantity=quantity,
+                stop_loss=stop_loss,
+                take_profit=take_profit,
+                **trailing_kwargs,
+                fee_bps=5.0,
+                slippage_bps=0.0,
+                max_fill_quantity=max_fill_quantity,
+                max_fill_notional_usdt=max_fill_notional_usdt,
+                allow_partial_fill=allow_partial_fill,
+            ),
+            [
+                {
+                    "ts": datetime.fromtimestamp(int(bar[0]) / 1000, tz=UTC).isoformat(),
+                    "open": float(bar[1]),
+                    "high": float(bar[2]),
+                    "low": float(bar[3]),
+                    "close": float(bar[4]),
+                }
+                for bar in window
+            ],
+        )
+    except ValueError as exc:
+        return Result(event, horizon, entry_ts, entry_price, None, None, None, mfe_pct, mae_pct, "", f"fill_error:{exc}")
     fill_payload = fill.to_dict()
     if exit_params:
         fill_payload.update(exit_params)
@@ -535,6 +544,11 @@ def replay_fill_summary(rows: list[Result]) -> dict[str, Any]:
                 "gross_pnl_usdt": sum(fill_float(fill, "gross_pnl_usdt") for fill in group),
                 "fee_usdt": sum(fill_float(fill, "fee_usdt") for fill in group),
                 "slippage_usdt": sum(fill_float(fill, "slippage_usdt") for fill in group),
+                "requested_quantity": sum(fill_float(fill, "requested_quantity") for fill in group),
+                "filled_quantity": sum(fill_float(fill, "quantity") for fill in group),
+                "unfilled_quantity": sum(fill_float(fill, "unfilled_quantity") for fill in group),
+                "partial_fill_count": sum(1 for fill in group if fill.get("partial_fill")),
+                "avg_fill_ratio": mean([fill_float(fill, "fill_ratio") for fill in group]) if group else None,
                 "win_rate": (sum(value > 0 for value in net_values) / len(net_values) * 100) if net_values else None,
                 "avg_bars_held": mean([fill_float(fill, "bars_held") for fill in group]) if group else None,
             }
@@ -546,6 +560,11 @@ def replay_fill_summary(rows: list[Result]) -> dict[str, Any]:
         "gross_pnl_usdt": sum(fill_float(fill, "gross_pnl_usdt") for fill in fills) if fills else None,
         "fee_usdt": sum(fill_float(fill, "fee_usdt") for fill in fills) if fills else None,
         "slippage_usdt": sum(fill_float(fill, "slippage_usdt") for fill in fills) if fills else None,
+        "requested_quantity": sum(fill_float(fill, "requested_quantity") for fill in fills) if fills else None,
+        "filled_quantity": sum(fill_float(fill, "quantity") for fill in fills) if fills else None,
+        "unfilled_quantity": sum(fill_float(fill, "unfilled_quantity") for fill in fills) if fills else None,
+        "partial_fill_count": sum(1 for fill in fills if fill.get("partial_fill")),
+        "avg_fill_ratio": mean([fill_float(fill, "fill_ratio") for fill in fills]) if fills else None,
         "net_pnl_usdt": sum(fill_float(fill, "net_pnl_usdt") for fill in fills) if fills else None,
         "avg_bars_held": mean([fill_float(fill, "bars_held") for fill in fills]) if fills else None,
         "by_exit_model": by_model_rows,
@@ -603,6 +622,13 @@ def report_markdown(
         "",
         f"- 对已有明确 `symbol/side` 的 `OPEN_SKIPPED`，使用否决后的下一根 1m K 线开盘作为模拟入场价。",
         f"- 模拟仓位统一为保证金 {args.margin_usdt:.0f} USDT、{args.leverage:.0f}x 杠杆；PnL 由 `core.replay_fill` 计算，含默认 5bps 往返手续费模型。",
+        (
+            f"- 流动性近似：max_fill_quantity={fmt(args.max_fill_quantity)}，"
+            f"max_fill_notional={fmt(args.max_fill_notional_usdt)} USDT，"
+            f"partial_fill={'allowed' if not args.reject_partial_fill else 'rejected'}。"
+            if args.max_fill_quantity is not None or args.max_fill_notional_usdt is not None or args.reject_partial_fill
+            else "- 流动性近似未启用：默认按目标仓位完整成交，保持旧反事实口径。"
+        ),
         f"- `MFE/MAE` 为顺向/逆向最大价格波动；`TP/SL first` 统计共享 fill kernel 的 `{args.tp_pct:.1f}% / {args.sl_pct:.1f}%` 固定障碍。A/v11 事件若带正 ATR 与 15m/30m 周期，会叠加 approved ATR trailing 出场参数。",
         f"- 默认用 {args.primary_horizon} 分钟结果判断过滤层是否错杀；尚未走满窗口的事件只入库为 pending，不进入结论。",
         "- 事件归一使用 `core.replay.ReplayEvent` / `ReplayDecision`，过滤层分组优先采用统一 replay gate，后续会把实盘门控迁到同一路径。",
@@ -646,20 +672,23 @@ def report_markdown(
             f"fee {fmt(fill_summary.get('fee_usdt'))} USDT，"
             f"slippage {fmt(fill_summary.get('slippage_usdt'))} USDT，"
             f"net {fmt(fill_summary.get('net_pnl_usdt'), sign=True)} USDT；"
-            f"平均持仓 {fmt(fill_summary.get('avg_bars_held'))} bars。",
+            f"平均持仓 {fmt(fill_summary.get('avg_bars_held'))} bars；"
+            f"partial {int(fill_summary.get('partial_fill_count') or 0)}，"
+            f"平均fill ratio {fmt(fill_summary.get('avg_fill_ratio'), 3)}。",
             "",
-            "| 出场模型 | 样本 | 胜率 | Gross PnL | Fee | Slippage | Net PnL | Avg bars |",
-            "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+            "| 出场模型 | 样本 | 胜率 | Gross PnL | Fee | Slippage | Net PnL | Partial | Avg fill | Avg bars |",
+            "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
         ]
     )
     for row in model_rows:
         lines.append(
             f"| {md(row.get('exit_model'))} | {int(row.get('samples') or 0)} | {fmt(row.get('win_rate'))}% | "
             f"{fmt(row.get('gross_pnl_usdt'), sign=True)} | {fmt(row.get('fee_usdt'))} | "
-            f"{fmt(row.get('slippage_usdt'))} | {fmt(row.get('net_pnl_usdt'), sign=True)} | {fmt(row.get('avg_bars_held'))} |"
+            f"{fmt(row.get('slippage_usdt'))} | {fmt(row.get('net_pnl_usdt'), sign=True)} | "
+            f"{int(row.get('partial_fill_count') or 0)} | {fmt(row.get('avg_fill_ratio'), 3)} | {fmt(row.get('avg_bars_held'))} |"
         )
     if not model_rows:
-        lines.append("| - | 0 | - | - | - | - | - | - |")
+        lines.append("| - | 0 | - | - | - | - | - | - | - | - |")
     if reason_rows:
         reason_text = "；".join(f"{md(row.get('name'))}={int(row.get('count') or 0)}" for row in reason_rows[:8])
         lines.extend(["", f"- 出场原因分布: {reason_text}。"])
@@ -735,6 +764,11 @@ def write_json_report(path: Path, events: list[SkipEvent], results: list[Result]
         "primary_horizon_minutes": args.primary_horizon,
         "replay_schema": "core.replay/v1",
         "fill_schema": "core.replay_fill/v1",
+        "fill_liquidity": {
+            "max_fill_quantity": args.max_fill_quantity,
+            "max_fill_notional_usdt": args.max_fill_notional_usdt,
+            "allow_partial_fill": not args.reject_partial_fill,
+        },
         "events": len(events),
         "complete_primary_samples": len(primary),
         "overall": aggregate(primary),
@@ -757,6 +791,9 @@ def main() -> int:
     parser.add_argument("--leverage", type=float, default=4.0)
     parser.add_argument("--tp-pct", type=float, default=1.0)
     parser.add_argument("--sl-pct", type=float, default=1.0)
+    parser.add_argument("--max-fill-quantity", type=float, default=None)
+    parser.add_argument("--max-fill-notional-usdt", type=float, default=None)
+    parser.add_argument("--reject-partial-fill", action="store_true")
     parser.add_argument("--min-samples", type=int, default=10)
     args = parser.parse_args()
     root = args.root.resolve()
@@ -768,7 +805,19 @@ def main() -> int:
     events = load_skip_events(db, since, generated_at)
     bars_by_symbol, errors = grouped_bars(events, generated_at, max(HORIZONS))
     results = [
-        evaluate(event, horizon, bars_by_symbol, generated_at, args.margin_usdt, args.leverage, args.tp_pct, args.sl_pct)
+        evaluate(
+            event,
+            horizon,
+            bars_by_symbol,
+            generated_at,
+            args.margin_usdt,
+            args.leverage,
+            args.tp_pct,
+            args.sl_pct,
+            args.max_fill_quantity,
+            args.max_fill_notional_usdt,
+            not args.reject_partial_fill,
+        )
         for event in events
         for horizon in HORIZONS
     ]

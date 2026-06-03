@@ -188,11 +188,75 @@ class ReplayFillTest(unittest.TestCase):
                 [{"ts": "t1", "open": 100, "high": 102, "low": 99, "close": 101}],
             )
 
+    def test_partial_fill_quantity_cap_scales_pnl(self):
+        result = simulate_replay_fill(
+            ReplayFillRequest(
+                symbol="ABCUSDT",
+                side="long",
+                entry_price=10,
+                quantity=10,
+                take_profit=11,
+                fee_bps=0,
+                max_fill_quantity=4,
+            ),
+            [{"ts": "t1", "open": 10, "high": 11.2, "low": 9.9, "close": 11}],
+        )
+
+        self.assertEqual(result.exit_reason, "take_profit")
+        self.assertEqual(result.quantity, 4)
+        self.assertEqual(result.requested_quantity, 10)
+        self.assertEqual(result.unfilled_quantity, 6)
+        self.assertEqual(result.fill_ratio, 0.4)
+        self.assertTrue(result.partial_fill)
+        self.assertEqual(result.fill_status, "partial")
+        self.assertEqual(result.gross_pnl_usdt, 4.0)
+
+    def test_partial_fill_notional_cap_scales_pnl(self):
+        result = simulate_replay_fill(
+            ReplayFillRequest(
+                symbol="ABCUSDT",
+                side="short",
+                entry_price=20,
+                quantity=5,
+                take_profit=18,
+                fee_bps=0,
+                max_fill_notional_usdt=40,
+            ),
+            [{"ts": "t1", "open": 20, "high": 20.2, "low": 17.8, "close": 18}],
+        )
+
+        self.assertEqual(result.exit_reason, "take_profit")
+        self.assertEqual(result.quantity, 2)
+        self.assertEqual(result.requested_quantity, 5)
+        self.assertEqual(result.unfilled_quantity, 3)
+        self.assertEqual(result.fill_ratio, 0.4)
+        self.assertTrue(result.partial_fill)
+        self.assertEqual(result.gross_pnl_usdt, 4.0)
+
+    def test_partial_fill_can_be_rejected_for_strict_replay(self):
+        with self.assertRaises(ValueError):
+            simulate_replay_fill(
+                ReplayFillRequest(
+                    symbol="ABCUSDT",
+                    side="long",
+                    entry_price=10,
+                    quantity=10,
+                    max_fill_quantity=4,
+                    allow_partial_fill=False,
+                ),
+                [{"ts": "t1", "open": 10, "high": 11, "low": 9, "close": 10}],
+            )
+
     def test_rejects_invalid_input(self):
         with self.assertRaises(ValueError):
             simulate_replay_fill(ReplayFillRequest("ABCUSDT", "long", 10, 0), [])
         with self.assertRaises(ValueError):
             simulate_replay_fill(ReplayFillRequest("ABCUSDT", "flat", 10, 1), [{"open": 1, "high": 1, "low": 1, "close": 1}])
+        with self.assertRaises(ValueError):
+            simulate_replay_fill(
+                ReplayFillRequest("ABCUSDT", "long", 10, 1, max_fill_quantity=-1),
+                [{"ts": "t1", "open": 10, "high": 11, "low": 9, "close": 10}],
+            )
 
 
 if __name__ == "__main__":

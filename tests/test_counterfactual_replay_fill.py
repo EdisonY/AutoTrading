@@ -67,6 +67,98 @@ class CounterfactualReplayFillTests(unittest.TestCase):
         self.assertAlmostEqual(result.sim_pnl_usdt, 3.598, places=3)
         self.assertEqual(result.replay_fill["exit_reason"], "take_profit")
 
+    def test_evaluate_can_apply_partial_fill_cap(self):
+        event_ts = datetime(2026, 6, 1, 0, 0, 30, tzinfo=timezone.utc)
+        entry_ts = event_ts.replace(second=0, microsecond=0) + timedelta(minutes=1)
+        entry_ms = int(entry_ts.timestamp() * 1000)
+        event = self.tool.SkipEvent(
+            event_id=11,
+            ts=event_ts,
+            strategy="A/v11",
+            symbol="PARTUSDT",
+            side="long",
+            timeframe="1m",
+            score=88.0,
+            stage="risk",
+            layer="position",
+            reason="test partial",
+            sentinel=False,
+            replay_decision="reject",
+            replay_gate="position",
+            payload={},
+        )
+        bars = {
+            "PARTUSDT": {
+                entry_ms: [entry_ms, "100", "101.5", "99.5", "100.5"],
+                entry_ms + 60_000: [entry_ms + 60_000, "100.5", "101", "100", "100.8"],
+            }
+        }
+
+        result = self.tool.evaluate(
+            event,
+            horizon=2,
+            bars_by_symbol=bars,
+            now=entry_ts + timedelta(minutes=3),
+            margin_usdt=100,
+            leverage=4,
+            tp_pct=1,
+            sl_pct=1,
+            max_fill_quantity=2,
+        )
+
+        self.assertEqual(result.status, "complete")
+        self.assertEqual(result.barrier_outcome, "take_profit")
+        self.assertAlmostEqual(result.sim_pnl_usdt, 1.799)
+        self.assertEqual(result.replay_fill["quantity"], 2)
+        self.assertEqual(result.replay_fill["requested_quantity"], 4)
+        self.assertEqual(result.replay_fill["unfilled_quantity"], 2)
+        self.assertEqual(result.replay_fill["fill_ratio"], 0.5)
+        self.assertTrue(result.replay_fill["partial_fill"])
+
+    def test_evaluate_reports_fill_error_when_partial_rejected(self):
+        event_ts = datetime(2026, 6, 1, 0, 0, 30, tzinfo=timezone.utc)
+        entry_ts = event_ts.replace(second=0, microsecond=0) + timedelta(minutes=1)
+        entry_ms = int(entry_ts.timestamp() * 1000)
+        event = self.tool.SkipEvent(
+            event_id=12,
+            ts=event_ts,
+            strategy="A/v11",
+            symbol="STRICTUSDT",
+            side="long",
+            timeframe="1m",
+            score=88.0,
+            stage="risk",
+            layer="position",
+            reason="test strict partial",
+            sentinel=False,
+            replay_decision="reject",
+            replay_gate="position",
+            payload={},
+        )
+        bars = {
+            "STRICTUSDT": {
+                entry_ms: [entry_ms, "100", "101.5", "99.5", "100.5"],
+                entry_ms + 60_000: [entry_ms + 60_000, "100.5", "101", "100", "100.8"],
+            }
+        }
+
+        result = self.tool.evaluate(
+            event,
+            horizon=2,
+            bars_by_symbol=bars,
+            now=entry_ts + timedelta(minutes=3),
+            margin_usdt=100,
+            leverage=4,
+            tp_pct=1,
+            sl_pct=1,
+            max_fill_quantity=2,
+            allow_partial_fill=False,
+        )
+
+        self.assertTrue(result.status.startswith("fill_error:partial fill required"))
+        self.assertIsNone(result.sim_pnl_usdt)
+        self.assertIsNone(result.replay_fill)
+
     def test_a_v11_uses_atr_trailing_exit_when_payload_has_atr(self):
         event_ts = datetime(2026, 6, 1, 0, 0, 30, tzinfo=timezone.utc)
         entry_ts = event_ts.replace(second=0, microsecond=0) + timedelta(minutes=1)
@@ -194,6 +286,11 @@ class CounterfactualReplayFillTests(unittest.TestCase):
                     "fee_usdt": 0.4,
                     "slippage_usdt": 0.1,
                     "net_pnl_usdt": 3.6,
+                    "requested_quantity": 4.0,
+                    "quantity": 2.0,
+                    "unfilled_quantity": 2.0,
+                    "fill_ratio": 0.5,
+                    "partial_fill": True,
                     "bars_held": 7,
                 },
             ),
@@ -216,6 +313,11 @@ class CounterfactualReplayFillTests(unittest.TestCase):
                     "fee_usdt": 0.4,
                     "slippage_usdt": 0.0,
                     "net_pnl_usdt": -2.8,
+                    "requested_quantity": 4.0,
+                    "quantity": 4.0,
+                    "unfilled_quantity": 0.0,
+                    "fill_ratio": 1.0,
+                    "partial_fill": False,
                     "bars_held": 3,
                 },
             ),
@@ -228,10 +330,17 @@ class CounterfactualReplayFillTests(unittest.TestCase):
         self.assertAlmostEqual(summary["fee_usdt"], 0.8)
         self.assertAlmostEqual(summary["slippage_usdt"], 0.1)
         self.assertAlmostEqual(summary["net_pnl_usdt"], 0.8)
+        self.assertAlmostEqual(summary["requested_quantity"], 8.0)
+        self.assertAlmostEqual(summary["filled_quantity"], 6.0)
+        self.assertAlmostEqual(summary["unfilled_quantity"], 2.0)
+        self.assertEqual(summary["partial_fill_count"], 1)
+        self.assertAlmostEqual(summary["avg_fill_ratio"], 0.75)
         self.assertEqual(summary["exit_model_counts"][0], {"name": "a_v11_atr_trailing", "count": 1})
         self.assertIn({"name": "stop_loss", "count": 1}, summary["exit_reason_counts"])
         by_model = {row["exit_model"]: row for row in summary["by_exit_model"]}
         self.assertAlmostEqual(by_model["a_v11_atr_trailing"]["net_pnl_usdt"], 3.6)
+        self.assertEqual(by_model["a_v11_atr_trailing"]["partial_fill_count"], 1)
+        self.assertAlmostEqual(by_model["a_v11_atr_trailing"]["avg_fill_ratio"], 0.5)
         self.assertAlmostEqual(by_model["fixed_pct_barrier"]["net_pnl_usdt"], -2.8)
 
 

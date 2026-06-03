@@ -40,6 +40,9 @@ class ReplayFillRequest:
     trailing_activation_atr: float = 0.0
     fee_bps: float = 5.0
     slippage_bps: float = 0.0
+    max_fill_quantity: float | None = None
+    max_fill_notional_usdt: float | None = None
+    allow_partial_fill: bool = True
     conservative_intrabar: bool = True
 
 
@@ -50,6 +53,11 @@ class ReplayFillResult:
     entry_price: float
     exit_price: float
     quantity: float
+    requested_quantity: float
+    unfilled_quantity: float
+    fill_ratio: float
+    partial_fill: bool
+    fill_status: str
     exit_reason: str
     exit_ts: str
     gross_pnl_usdt: float
@@ -76,6 +84,30 @@ def _gross_pnl(*, side: str, entry_price: float, exit_price: float, quantity: fl
     if str(side or "").lower() == "short":
         return (float(entry_price) - float(exit_price)) * float(quantity)
     return (float(exit_price) - float(entry_price)) * float(quantity)
+
+
+def _effective_quantity(req: ReplayFillRequest, *, entry_price: float) -> tuple[float, float, bool, str]:
+    requested = float(req.quantity or 0.0)
+    caps = [requested]
+    if req.max_fill_quantity is not None:
+        cap_qty = float(req.max_fill_quantity or 0.0)
+        if cap_qty < 0:
+            raise ValueError("max_fill_quantity cannot be negative")
+        caps.append(cap_qty)
+    if req.max_fill_notional_usdt is not None:
+        cap_notional = float(req.max_fill_notional_usdt or 0.0)
+        if cap_notional < 0:
+            raise ValueError("max_fill_notional_usdt cannot be negative")
+        caps.append(cap_notional / float(entry_price))
+    effective = min(caps)
+    if effective <= 0:
+        raise ValueError("fillable quantity must be positive")
+    partial = effective < requested
+    if partial and not req.allow_partial_fill:
+        raise ValueError("partial fill required but allow_partial_fill is false")
+    fill_ratio = effective / requested if requested > 0 else 0.0
+    status = "partial" if partial else "filled"
+    return effective, fill_ratio, partial, status
 
 
 def _trailing_exit_price(req: ReplayFillRequest, *, entry_price: float, best_price: float) -> float | None:
@@ -143,8 +175,8 @@ def simulate_replay_fill(req: ReplayFillRequest, bars: Iterable[ReplayBar | dict
     parsed_bars = [bar if isinstance(bar, ReplayBar) else ReplayBar.from_mapping(bar) for bar in bars]
     if not parsed_bars:
         raise ValueError("bars required")
-    qty = float(req.quantity or 0.0)
-    if qty <= 0:
+    requested_qty = float(req.quantity or 0.0)
+    if requested_qty <= 0:
         raise ValueError("quantity must be positive")
     side = str(req.side or "").lower()
     if side not in {"long", "short"}:
@@ -153,6 +185,7 @@ def simulate_replay_fill(req: ReplayFillRequest, bars: Iterable[ReplayBar | dict
         raise ValueError("atr must be positive when trailing_stop_atr is enabled")
 
     entry_px = _exit_price_with_slippage(price=req.entry_price, side=side, is_entry=True, slippage_bps=req.slippage_bps)
+    qty, fill_ratio, partial, fill_status = _effective_quantity(req, entry_price=entry_px)
     exit_reason = "end_of_window"
     exit_price = parsed_bars[-1].close
     exit_ts = parsed_bars[-1].ts
@@ -182,6 +215,11 @@ def simulate_replay_fill(req: ReplayFillRequest, bars: Iterable[ReplayBar | dict
         entry_price=round(entry_px, 10),
         exit_price=round(exit_px, 10),
         quantity=qty,
+        requested_quantity=round(requested_qty, 10),
+        unfilled_quantity=round(max(0.0, requested_qty - qty), 10),
+        fill_ratio=round(fill_ratio, 8),
+        partial_fill=partial,
+        fill_status=fill_status,
         exit_reason=exit_reason,
         exit_ts=exit_ts,
         gross_pnl_usdt=round(gross, 8),

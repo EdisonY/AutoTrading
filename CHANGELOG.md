@@ -2,6 +2,14 @@
 
 This is the durable reason-and-outcome ledger for every material design, code, configuration, deployment, rollback, optimization, or live operational change.
 
+## 2026-06-03 11:25 CST - Add serializable strategy gate parity cases
+- Trigger / reason: Continue offline-first P0-B replay/live same-path work. The remaining parity gap needs a way for replay/tests to evaluate the same pure gate functions from serialized inputs instead of duplicating scanner-local logic.
+- Completed: Added `core.strategy_gate_cases`, a small serializable case runner for shared strategy gates. It maps case names such as `a_v11_entry_threshold`, `b_v16_entry_threshold`, `c_v14_entry_threshold`, `execution_result`, `positive_quantity`, `score_max`, `tradability`, and `no_same_symbol_position` to the real `core.strategy_gates` functions, evaluates JSON-like input payloads, and reports pass/fail against expected allowed/reason fields. Added unit tests covering A/B/C threshold cases, execution preflight classification, mismatch reporting, and unknown gate errors. Added the new core module to Tencent/Aliyun release bundles.
+- Not completed / remaining: This is the parity harness, not yet full historical event replay. Next P0-B work should feed historical OPEN_SKIPPED/OPEN_FAILED samples into these cases where enough context exists, and continue extracting deeper A/v11 replacement orchestration and confirmation/risk/execution gates.
+- Verification: Local `python -m unittest tests.test_strategy_gate_cases tests.test_strategy_gates` passed (`15` tests). `py_compile` passed for `core/strategy_gate_cases.py`, `core/strategy_gates.py`, and `release_manager.py`.
+- Live impact / deployment: None. Offline code only; no server test or restart.
+- Files / release / commit: `core/strategy_gate_cases.py`, `tests/test_strategy_gate_cases.py`, `部署工具/release_manager.py`, `CHANGELOG.md`, `PROJECT_STATE.md`, `记忆文档/MEMORY.md`, `记忆文档/FUTURE_EXECUTION_PLAN.md`.
+
 ## 2026-06-03 11:15 CST - Add offline scanner universe limits for final fresh-run
 - Trigger / reason: Continue offline-first P0-A work. The next server fresh-run should not require A/B/C to immediately scan their full Top100/Top50 universes; small-universe verification is needed to validate the queue/user-stream/account-state chain before full public Kline pressure returns.
 - Completed: Added environment-controlled scanner universe limits with unchanged defaults. A/v11 now supports `SCANNER_A_TOP_SYMBOLS`, `SCANNER_A_SPIKE_SYMBOLS`, and `SCANNER_A_SENTINEL_LIMIT`; B/v16 supports `SCANNER_B_TOP_SYMBOLS` and `SCANNER_B_SENTINEL_LIMIT`; C/v14 supports `SCANNER_C_TOP_SYMBOLS` and `SCANNER_C_SENTINEL_LIMIT`. Defaults remain A top/spike `100` + sentinel `40`, B top `50` + sentinel `30`, C top `100` + sentinel `40`, so normal behavior is unchanged unless the final staged fresh-run sets env overrides.

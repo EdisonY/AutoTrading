@@ -52,6 +52,8 @@ REPLAY_GATE_JSON = ROOT / "runtime" / "replay_gate_audit_latest.json"
 REPLAY_GATE_MD = REPORTS_DIR / "replay_gate_audit_latest.md"
 REPLAY_PARITY_JSON = ROOT / "runtime" / "replay_live_parity_latest.json"
 REPLAY_PARITY_MD = REPORTS_DIR / "replay_live_parity_latest.md"
+REPLAY_READINESS_JSON = ROOT / "runtime" / "replay_readiness_latest.json"
+REPLAY_READINESS_MD = REPORTS_DIR / "replay_readiness_latest.md"
 ROLLBACK_WATCH_JSON = ROOT / "runtime" / "rollback_watch_review_latest.json"
 ROLLBACK_WATCH_MD = REPORTS_DIR / "rollback_watch_review_latest.md"
 A_V11_ROLLOUT_JSON = ROOT / "runtime" / "a_v11_rollout_review_latest.json"
@@ -790,6 +792,37 @@ def replay_parity_summary(path: Path | None) -> dict[str, Any]:
         "strategies": payload.get("strategies") if isinstance(payload.get("strategies"), list) else [],
         "mismatch_examples": payload.get("mismatch_examples") if isinstance(payload.get("mismatch_examples"), list) else [],
         "error_examples": payload.get("error_examples") if isinstance(payload.get("error_examples"), list) else [],
+    }
+
+
+def replay_readiness_summary(path: Path | None) -> dict[str, Any]:
+    empty = {
+        "available": False,
+        "path": REPLAY_READINESS_MD,
+        "age": "No replay readiness review",
+        "fresh": False,
+        "status": "missing",
+        "priority": "P1",
+        "next_action": "regenerate_missing_reports",
+        "summary": {"ready_components": 0, "total_components": 0, "blockers": 0},
+        "components": [],
+        "blockers": [],
+    }
+    payload = read_json(path) if path else None
+    if not isinstance(payload, dict):
+        return empty
+    generated_at = parse_dt(payload.get("generated_at"))
+    return {
+        "available": True,
+        "path": REPLAY_READINESS_MD,
+        "age": age_text(generated_at),
+        "fresh": bool(generated_at and (datetime.now(CST) - generated_at).total_seconds() < 4 * 3600),
+        "status": payload.get("status") or "missing",
+        "priority": payload.get("priority") or "P1",
+        "next_action": payload.get("next_action") or "",
+        "summary": payload.get("summary") if isinstance(payload.get("summary"), dict) else empty["summary"],
+        "components": payload.get("components") if isinstance(payload.get("components"), list) else [],
+        "blockers": payload.get("blockers") if isinstance(payload.get("blockers"), list) else [],
     }
 
 
@@ -1630,6 +1663,8 @@ def function_status_cards(data: dict[str, Any]) -> list[dict[str, str]]:
     replay_gate_summary_data = replay_gate.get("summary") or {}
     replay_parity = data.get("replay_parity") or {}
     replay_parity_summary_data = replay_parity.get("summary") or {}
+    replay_readiness = data.get("replay_readiness") or {}
+    replay_readiness_summary_data = replay_readiness.get("summary") or {}
     rollback_watch = data.get("rollback_watch") or {}
     rollback_watch_summary_data = rollback_watch.get("summary") or {}
     a_v11_rollout = data.get("a_v11_rollout") or {}
@@ -1816,6 +1851,29 @@ def function_status_cards(data: dict[str, Any]) -> list[dict[str, str]]:
                 f"cache files {int(depth_backfill_cache.get('files_written') or 0)}; 更新 {depth_backfill.get('age')}。默认只生成计划，不直接请求 Binance。"
                 if depth_backfill.get("available")
                 else "深度采样计划尚未生成；盘口 replay 只能使用已有 runtime/depth_cache 或 research_store/depth_snapshots。"
+            ),
+        },
+        {
+            "level": (
+                "ok"
+                if replay_readiness.get("fresh") and replay_readiness.get("status") == "ready_for_operator_review"
+                else "warn"
+                if replay_readiness.get("available")
+                else "bad"
+            ),
+            "name": "Replay验收",
+            "value": (
+                str(replay_readiness.get("status") or "missing")
+                if replay_readiness.get("available")
+                else "未生成"
+            ),
+            "body": (
+                f"ready {int(replay_readiness_summary_data.get('ready_components') or 0)}/"
+                f"{int(replay_readiness_summary_data.get('total_components') or 0)}; "
+                f"blockers {int(replay_readiness_summary_data.get('blockers') or 0)}; "
+                f"next {replay_readiness.get('next_action') or '-'}; 更新 {replay_readiness.get('age')}。"
+                if replay_readiness.get("available")
+                else "补数后 replay/fill 是否足够进入治理判断的统一验收报告尚未生成。"
             ),
         },
         {
@@ -2431,6 +2489,8 @@ def build_data() -> dict[str, Any]:
     data["replay_gate_html"] = REPLAY_GATE_MD
     data["replay_parity"] = replay_parity_summary(REPLAY_PARITY_JSON)
     data["replay_parity_html"] = REPLAY_PARITY_MD
+    data["replay_readiness"] = replay_readiness_summary(REPLAY_READINESS_JSON)
+    data["replay_readiness_html"] = REPLAY_READINESS_MD
     data["rollback_watch"] = rollback_watch_summary(ROLLBACK_WATCH_JSON)
     data["rollback_watch_html"] = ROLLBACK_WATCH_MD
     data["a_v11_rollout"] = a_v11_rollout_summary(A_V11_ROLLOUT_JSON)
@@ -2969,6 +3029,30 @@ def render_html(out_dir: Path) -> str:
 """.strip()
         for r in (replay_parity.get("strategies") or [])
     ) or '<tr><td colspan="10">暂无 replay/live 同输入审计</td></tr>'
+    replay_readiness = data.get("replay_readiness") or {}
+    replay_readiness_summary_data = replay_readiness.get("summary") or {}
+    replay_readiness_rows = "".join(
+        f"""
+<tr>
+  <td>{h(r.get('name'))}</td>
+  <td>{h(r.get('status'))}</td>
+  <td>{'yes' if r.get('ready') else 'no'}</td>
+  <td>{h(r.get('category'))}</td>
+  <td>{h(r.get('detail'))}</td>
+</tr>
+""".strip()
+        for r in (replay_readiness.get("components") or [])
+    ) or '<tr><td colspan="5">暂无 replay readiness 验收</td></tr>'
+    replay_readiness_blocker_rows = "".join(
+        f"""
+<tr>
+  <td>{h(r.get('name'))}</td>
+  <td>{h(r.get('status'))}</td>
+  <td>{h(r.get('detail'))}</td>
+</tr>
+""".strip()
+        for r in (replay_readiness.get("blockers") or [])
+    ) or '<tr><td colspan="3">当前无验收阻塞项</td></tr>'
 
     a_v11_rollout = data.get("a_v11_rollout") or {}
     a_v11_rollout_decision = a_v11_rollout.get("decision") or {}
@@ -3119,6 +3203,14 @@ def render_html(out_dir: Path) -> str:
             data["depth_backfill_html"],
             "看深度计划",
             "slate",
+        ),
+        route_card(
+            "Replay 能不能验收",
+            "补数后判断",
+            "汇总 K线、深度、A/B rollout replay、恢复仓 replay，看是否足够进入继续、收窄或回滚治理判断。",
+            data["replay_readiness_html"],
+            "看Replay验收",
+            "blue",
         ),
         route_card(
             "是否有更优方案",
@@ -3411,6 +3503,19 @@ th {{ background:#f1f5f9; color:#334155; }}
     <table>
       <thead><tr><th>策略</th><th>开仓流</th><th>Exact rows</th><th>缺 case</th><th>Cases</th><th>Pass</th><th>Mismatch</th><th>Errors</th><th>Pass rate</th><th>主要 exact gate</th></tr></thead>
       <tbody>{replay_parity_rows}</tbody>
+    </table>
+  </section>
+
+  <section class="section panel">
+    <h2>Replay/Fill 验收</h2>
+    <p class="note">只读汇总 K线长窗、深度覆盖、A/B rollout replay 和恢复仓 replay。状态 {h(replay_readiness.get('status', '-'))}；ready {int(replay_readiness_summary_data.get('ready_components') or 0)}/{int(replay_readiness_summary_data.get('total_components') or 0)}；blockers {int(replay_readiness_summary_data.get('blockers') or 0)}；next {h(replay_readiness.get('next_action') or '-')}；更新 {h(replay_readiness.get('age'))}。</p>
+    <table>
+      <thead><tr><th>组件</th><th>状态</th><th>Ready</th><th>类别</th><th>说明</th></tr></thead>
+      <tbody>{replay_readiness_rows}</tbody>
+    </table>
+    <table class="subtable">
+      <thead><tr><th>阻塞组件</th><th>状态</th><th>说明</th></tr></thead>
+      <tbody>{replay_readiness_blocker_rows}</tbody>
     </table>
   </section>
 

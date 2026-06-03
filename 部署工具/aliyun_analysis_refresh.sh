@@ -37,6 +37,7 @@ $PYTHON replay_gate_audit.py --db $REMOTE_DIR/server_logs_tencent/runtime/event_
 $PYTHON replay_live_parity_audit.py --db $REMOTE_DIR/server_logs_tencent/runtime/event_store.sqlite3 --runtime-dir $REMOTE_DIR/runtime --reports-dir $REMOTE_DIR/reports --days $REFRESH_DAYS || echo "[WARN] replay/live parity audit failed"
 $PYTHON a_v11_rollout_review.py --db $REMOTE_DIR/server_logs_tencent/runtime/event_store.sqlite3 --runtime-dir $REMOTE_DIR/runtime --reports-dir $REMOTE_DIR/reports || echo "[WARN] A/v11 rollout review failed"
 $PYTHON b_v16_rollout_review.py --db $REMOTE_DIR/server_logs_tencent/runtime/event_store.sqlite3 --runtime-dir $REMOTE_DIR/runtime --reports-dir $REMOTE_DIR/reports || echo "[WARN] B/v16 rollout review failed"
+$PYTHON replay_readiness_review.py --runtime-dir $REMOTE_DIR/runtime --reports-dir $REMOTE_DIR/reports || echo "[WARN] replay readiness review failed"
 
 echo "--- Step 2: Counterfactual evaluation ---"
 $PYTHON counterfactual_open_skips.py --root $REMOTE_DIR --db $REMOTE_DIR/server_logs_tencent/runtime/event_store.sqlite3 || echo "[WARN] counterfactual failed"

@@ -375,8 +375,6 @@ DEFAULT_SPECS: list[dict[str, Any]] = [
 
 def is_deployed_flat_root(root: Path) -> bool:
     """Tencent/Aliyun releases flatten tool and strategy files into root."""
-    if (root / "部署工具").exists():
-        return False
     return any((root / name).exists() for name in ("long_term_skeleton_review.py", "portal_dashboard.py"))
 
 

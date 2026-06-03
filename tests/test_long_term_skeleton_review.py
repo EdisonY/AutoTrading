@@ -78,6 +78,7 @@ class LongTermSkeletonReviewTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / "long_term_skeleton_review.py").write_text("self", encoding="utf-8")
+            (root / "部署工具").mkdir()
             (root / "main.py").write_text("marker", encoding="utf-8")
             (root / "scanner.py").write_text("strategy_gate_case", encoding="utf-8")
             (root / "binance_client.py").write_text("client", encoding="utf-8")

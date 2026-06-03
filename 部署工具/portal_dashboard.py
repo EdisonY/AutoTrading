@@ -297,6 +297,7 @@ def counterfactual_summary(path: Path | None) -> dict[str, Any]:
         "hours": 0,
         "horizon": 60,
         "overall": {},
+        "replay_fill": {},
         "strategies": [],
         "filters": [],
     }
@@ -316,6 +317,7 @@ def counterfactual_summary(path: Path | None) -> dict[str, Any]:
         "hours": int(payload.get("hours") or 0),
         "horizon": int(payload.get("primary_horizon_minutes") or 60),
         "overall": payload.get("overall") or {},
+        "replay_fill": ((payload.get("overall") or {}).get("replay_fill") or {}),
         "strategies": strategy_rows,
         "filters": payload.get("filters") or [],
     }
@@ -2615,6 +2617,7 @@ def render_html(out_dir: Path) -> str:
 
     counterfactual = data.get("counterfactual") or {}
     cf_overall = counterfactual.get("overall") or {}
+    cf_fill = counterfactual.get("replay_fill") or (cf_overall.get("replay_fill") or {})
     counterfactual_rows = "".join(
         f"""
 <tr>
@@ -2640,6 +2643,25 @@ def render_html(out_dir: Path) -> str:
 """.strip()
         for r in counterfactual.get("filters", [])[:6]
     ) or '<tr><td colspan="5">暂无过滤层评估</td></tr>'
+    counterfactual_fill_rows = "".join(
+        f"""
+<tr>
+  <td>{h(r.get('exit_model'))}</td>
+  <td>{int(r.get('samples') or 0)}</td>
+  <td>{float(r.get('win_rate') or 0):.2f}%</td>
+  <td class="num {'pos' if float(r.get('gross_pnl_usdt') or 0) >= 0 else 'neg'}">{float(r.get('gross_pnl_usdt') or 0):+.2f}</td>
+  <td>{float(r.get('fee_usdt') or 0):.2f}</td>
+  <td>{float(r.get('slippage_usdt') or 0):.2f}</td>
+  <td class="num {'pos' if float(r.get('net_pnl_usdt') or 0) >= 0 else 'neg'}">{float(r.get('net_pnl_usdt') or 0):+.2f}</td>
+  <td>{float(r.get('avg_bars_held') or 0):.2f}</td>
+</tr>
+""".strip()
+        for r in (cf_fill.get("by_exit_model") or [])[:6]
+    ) or '<tr><td colspan="8">暂无 replay/fill 出场模型汇总</td></tr>'
+    cf_exit_reasons = "；".join(
+        f"{row.get('name')}={int(row.get('count') or 0)}"
+        for row in (cf_fill.get("exit_reason_counts") or [])[:5]
+    ) or "暂无"
 
     research_store = data.get("research_store") or {}
     research_funnel_rows = "".join(
@@ -3087,10 +3109,14 @@ th {{ background:#f1f5f9; color:#334155; }}
 
   <section class="section panel">
     <h2>OPEN_SKIPPED 反事实评估</h2>
-    <p class="note">最近 {h(counterfactual.get('hours', '-'))} 小时；以 {h(counterfactual.get('horizon', 60))} 分钟模拟结果判断否决是否错杀。整体若放行：样本 {h(cf_overall.get('samples', '-'))}，胜率 {float(cf_overall.get('win_rate') or 0):.2f}%，PnL <span class="num {'pos' if float(cf_overall.get('pnl') or 0) >= 0 else 'neg'}">{float(cf_overall.get('pnl') or 0):+.2f}</span> USDT；更新 {h(counterfactual.get('age'))}。</p>
+    <p class="note">最近 {h(counterfactual.get('hours', '-'))} 小时；以 {h(counterfactual.get('horizon', 60))} 分钟模拟结果判断否决是否错杀。整体若放行：样本 {h(cf_overall.get('samples', '-'))}，胜率 {float(cf_overall.get('win_rate') or 0):.2f}%，PnL <span class="num {'pos' if float(cf_overall.get('pnl') or 0) >= 0 else 'neg'}">{float(cf_overall.get('pnl') or 0):+.2f}</span> USDT；fill net <span class="num {'pos' if float(cf_fill.get('net_pnl_usdt') or 0) >= 0 else 'neg'}">{float(cf_fill.get('net_pnl_usdt') or 0):+.2f}</span>，fee {float(cf_fill.get('fee_usdt') or 0):.2f}，exit reasons {h(cf_exit_reasons)}；更新 {h(counterfactual.get('age'))}。</p>
     <table>
       <thead><tr><th>策略</th><th>被拒样本</th><th>若放行胜率</th><th>若放行PnL</th><th>平均MFE</th><th>平均MAE</th></tr></thead>
       <tbody>{counterfactual_rows}</tbody>
+    </table>
+    <table class="subtable">
+      <thead><tr><th>出场模型</th><th>样本</th><th>胜率</th><th>Gross</th><th>Fee</th><th>Slippage</th><th>Net</th><th>Avg bars</th></tr></thead>
+      <tbody>{counterfactual_fill_rows}</tbody>
     </table>
     <table class="subtable">
       <thead><tr><th>策略</th><th>主要否决层</th><th>样本</th><th>若放行胜率</th><th>若放行PnL</th></tr></thead>

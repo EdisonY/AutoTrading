@@ -13,7 +13,7 @@ import time
 import urllib.parse
 import urllib.error
 import urllib.request
-from collections import defaultdict
+from collections import Counter, defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -482,6 +482,7 @@ def aggregate(rows: list[Result]) -> dict[str, Any]:
     completed = [row for row in rows if row.status == "complete" and row.sim_pnl_usdt is not None]
     pnl = [float(row.sim_pnl_usdt) for row in completed]
     winners = [value for value in pnl if value > 0]
+    fill_summary = replay_fill_summary(completed)
     return {
         "samples": len(completed),
         "win_rate": len(winners) / len(pnl) * 100 if pnl else None,
@@ -492,6 +493,62 @@ def aggregate(rows: list[Result]) -> dict[str, Any]:
         "avg_mae": mean([float(r.mae_pct) for r in completed]) if completed else None,
         "tp_first": sum(r.barrier_outcome in {"tp_first", "take_profit"} for r in completed),
         "sl_first": sum(r.barrier_outcome in {"sl_first", "both_same_bar_conservative_sl", "stop_loss"} for r in completed),
+        "replay_fill": fill_summary,
+    }
+
+
+def fill_float(payload: dict[str, Any], key: str) -> float:
+    value = num(payload.get(key), 0.0)
+    return float(value or 0.0)
+
+
+def count_rows(counter: Counter[str]) -> list[dict[str, Any]]:
+    return [
+        {"name": name, "count": count}
+        for name, count in sorted(counter.items(), key=lambda item: (-item[1], item[0]))
+    ]
+
+
+def replay_fill_summary(rows: list[Result]) -> dict[str, Any]:
+    fills = [row.replay_fill for row in rows if isinstance(row.replay_fill, dict) and row.replay_fill]
+    exit_model_counts: Counter[str] = Counter()
+    exit_reason_counts: Counter[str] = Counter()
+    by_model: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for fill in fills:
+        model = str(fill.get("exit_model") or "unknown")
+        reason = str(fill.get("exit_reason") or "unknown")
+        exit_model_counts[model] += 1
+        exit_reason_counts[reason] += 1
+        by_model[model].append(fill)
+    by_model_rows = []
+    for model, group in sorted(
+        by_model.items(),
+        key=lambda item: (sum(fill_float(fill, "net_pnl_usdt") for fill in item[1]), item[0]),
+        reverse=True,
+    ):
+        net_values = [fill_float(fill, "net_pnl_usdt") for fill in group]
+        by_model_rows.append(
+            {
+                "exit_model": model,
+                "samples": len(group),
+                "net_pnl_usdt": sum(net_values),
+                "gross_pnl_usdt": sum(fill_float(fill, "gross_pnl_usdt") for fill in group),
+                "fee_usdt": sum(fill_float(fill, "fee_usdt") for fill in group),
+                "slippage_usdt": sum(fill_float(fill, "slippage_usdt") for fill in group),
+                "win_rate": (sum(value > 0 for value in net_values) / len(net_values) * 100) if net_values else None,
+                "avg_bars_held": mean([fill_float(fill, "bars_held") for fill in group]) if group else None,
+            }
+        )
+    return {
+        "samples": len(fills),
+        "exit_model_counts": count_rows(exit_model_counts),
+        "exit_reason_counts": count_rows(exit_reason_counts),
+        "gross_pnl_usdt": sum(fill_float(fill, "gross_pnl_usdt") for fill in fills) if fills else None,
+        "fee_usdt": sum(fill_float(fill, "fee_usdt") for fill in fills) if fills else None,
+        "slippage_usdt": sum(fill_float(fill, "slippage_usdt") for fill in fills) if fills else None,
+        "net_pnl_usdt": sum(fill_float(fill, "net_pnl_usdt") for fill in fills) if fills else None,
+        "avg_bars_held": mean([fill_float(fill, "bars_held") for fill in fills]) if fills else None,
+        "by_exit_model": by_model_rows,
     }
 
 
@@ -576,6 +633,36 @@ def report_markdown(
             f"| {horizon}m | {m['samples']} | {fmt(m['win_rate'])}% | {fmt(m['pnl'], sign=True)} | "
             f"{fmt(m['avg_pnl'], sign=True)} | {fmt(m['avg_mfe'])}% | {fmt(m['avg_mae'])}% | {m['tp_first']} | {m['sl_first']} |"
         )
+    fill_summary = overall.get("replay_fill") or {}
+    model_rows = fill_summary.get("by_exit_model") or []
+    reason_rows = fill_summary.get("exit_reason_counts") or []
+    lines.extend(
+        [
+            "",
+            f"## Replay/fill 出场与成本汇总（{args.primary_horizon}m）",
+            "",
+            f"- 共享 fill 样本: {int(fill_summary.get('samples') or 0)}；"
+            f"gross {fmt(fill_summary.get('gross_pnl_usdt'), sign=True)} USDT，"
+            f"fee {fmt(fill_summary.get('fee_usdt'))} USDT，"
+            f"slippage {fmt(fill_summary.get('slippage_usdt'))} USDT，"
+            f"net {fmt(fill_summary.get('net_pnl_usdt'), sign=True)} USDT；"
+            f"平均持仓 {fmt(fill_summary.get('avg_bars_held'))} bars。",
+            "",
+            "| 出场模型 | 样本 | 胜率 | Gross PnL | Fee | Slippage | Net PnL | Avg bars |",
+            "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+        ]
+    )
+    for row in model_rows:
+        lines.append(
+            f"| {md(row.get('exit_model'))} | {int(row.get('samples') or 0)} | {fmt(row.get('win_rate'))}% | "
+            f"{fmt(row.get('gross_pnl_usdt'), sign=True)} | {fmt(row.get('fee_usdt'))} | "
+            f"{fmt(row.get('slippage_usdt'))} | {fmt(row.get('net_pnl_usdt'), sign=True)} | {fmt(row.get('avg_bars_held'))} |"
+        )
+    if not model_rows:
+        lines.append("| - | 0 | - | - | - | - | - | - |")
+    if reason_rows:
+        reason_text = "；".join(f"{md(row.get('name'))}={int(row.get('count') or 0)}" for row in reason_rows[:8])
+        lines.extend(["", f"- 出场原因分布: {reason_text}。"])
     lines.extend(["", f"## 按策略判断（{args.primary_horizon}m）", "", "| 策略 | 被拒样本 | 若放行胜率 | 若放行PnL USDT | 平均MFE | 平均MAE | 判断 |", "| --- | ---: | ---: | ---: | ---: | ---: | --- |"])
     for strategy in STRATEGIES:
         m = aggregate([r for r in primary if r.event.strategy == strategy])

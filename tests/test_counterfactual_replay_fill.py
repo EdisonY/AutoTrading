@@ -156,6 +156,84 @@ class CounterfactualReplayFillTests(unittest.TestCase):
         self.assertEqual(result.replay_fill["exit_model"], "fixed_pct_barrier")
         self.assertNotIn("trailing_stop_atr", result.replay_fill)
 
+    def test_aggregate_exposes_replay_fill_summary(self):
+        event_ts = datetime(2026, 6, 1, 0, 0, 30, tzinfo=timezone.utc)
+        event = self.tool.SkipEvent(
+            event_id=4,
+            ts=event_ts,
+            strategy="A/v11",
+            symbol="FILLUSDT",
+            side="long",
+            timeframe="15m",
+            score=95.0,
+            stage="threshold",
+            layer="strategy",
+            reason="test fill summary",
+            sentinel=False,
+            replay_decision="reject",
+            replay_gate="threshold",
+            payload={},
+        )
+        rows = [
+            self.tool.Result(
+                event=event,
+                horizon=60,
+                entry_ts=event_ts,
+                entry_price=100.0,
+                end_price=101.0,
+                return_pct=0.9,
+                sim_pnl_usdt=3.6,
+                mfe_pct=1.2,
+                mae_pct=0.2,
+                barrier_outcome="take_profit",
+                status="complete",
+                replay_fill={
+                    "exit_model": "a_v11_atr_trailing",
+                    "exit_reason": "trailing_stop",
+                    "gross_pnl_usdt": 4.0,
+                    "fee_usdt": 0.4,
+                    "slippage_usdt": 0.1,
+                    "net_pnl_usdt": 3.6,
+                    "bars_held": 7,
+                },
+            ),
+            self.tool.Result(
+                event=event,
+                horizon=60,
+                entry_ts=event_ts,
+                entry_price=100.0,
+                end_price=99.0,
+                return_pct=-0.7,
+                sim_pnl_usdt=-2.8,
+                mfe_pct=0.4,
+                mae_pct=1.1,
+                barrier_outcome="stop_loss",
+                status="complete",
+                replay_fill={
+                    "exit_model": "fixed_pct_barrier",
+                    "exit_reason": "stop_loss",
+                    "gross_pnl_usdt": -2.4,
+                    "fee_usdt": 0.4,
+                    "slippage_usdt": 0.0,
+                    "net_pnl_usdt": -2.8,
+                    "bars_held": 3,
+                },
+            ),
+        ]
+
+        summary = self.tool.aggregate(rows)["replay_fill"]
+
+        self.assertEqual(summary["samples"], 2)
+        self.assertAlmostEqual(summary["gross_pnl_usdt"], 1.6)
+        self.assertAlmostEqual(summary["fee_usdt"], 0.8)
+        self.assertAlmostEqual(summary["slippage_usdt"], 0.1)
+        self.assertAlmostEqual(summary["net_pnl_usdt"], 0.8)
+        self.assertEqual(summary["exit_model_counts"][0], {"name": "a_v11_atr_trailing", "count": 1})
+        self.assertIn({"name": "stop_loss", "count": 1}, summary["exit_reason_counts"])
+        by_model = {row["exit_model"]: row for row in summary["by_exit_model"]}
+        self.assertAlmostEqual(by_model["a_v11_atr_trailing"]["net_pnl_usdt"], 3.6)
+        self.assertAlmostEqual(by_model["fixed_pct_barrier"]["net_pnl_usdt"], -2.8)
+
 
 if __name__ == "__main__":
     unittest.main()

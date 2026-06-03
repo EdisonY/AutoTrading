@@ -254,6 +254,60 @@ def verdict(windows: dict[str, dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def decision_packet(approval: dict[str, Any], windows: dict[str, dict[str, Any]], decision: dict[str, Any]) -> dict[str, Any]:
+    day = windows.get("24h", {})
+    three = windows.get("72h", {})
+    week = windows.get("168h", {})
+    closed72 = int(three.get("closed_samples") or 0)
+    closed168 = int(week.get("closed_samples") or 0)
+    if closed168 >= 100:
+        maturity = "mature_168h"
+    elif closed72 >= 50:
+        maturity = "reviewable_72h"
+    elif closed72 > 0:
+        maturity = "thin_live_window"
+    else:
+        maturity = "insufficient_live_window"
+
+    close_reasons = [str(item.get("reason") or "") for item in (three.get("close_reasons") or [])[:3]]
+    top_loser = (three.get("top_losers") or [{}])[0]
+    risks = [
+        f"72h after-cost pnl {float(three.get('pnl_after_cost_usdt') or 0):+.2f} USDT",
+        f"168h after-cost pnl {float(week.get('pnl_after_cost_usdt') or 0):+.2f} USDT",
+        f"72h forced close rate {float(three.get('forced_close_rate') or 0):.1%}",
+    ]
+    if close_reasons:
+        risks.append(f"top close reasons: {', '.join(close_reasons)}")
+    if top_loser.get("symbol"):
+        risks.append(
+            "top loser: {symbol} {side} {pnl:+.2f} USDT".format(
+                symbol=top_loser.get("symbol"),
+                side=top_loser.get("side") or "",
+                pnl=float(top_loser.get("pnl_usdt") or 0),
+            )
+        )
+
+    return {
+        "change": "A/v11 approved trailing-pullback rollout",
+        "live_parameter": approval.get("selected_live_parameter") or {},
+        "expected_advantage": approval.get("decision_reason") or "approved full-live trailing-pullback candidate",
+        "risk": risks,
+        "evidence_maturity": {
+            "label": maturity,
+            "closed_24h": int(day.get("closed_samples") or 0),
+            "closed_72h": closed72,
+            "closed_168h": closed168,
+        },
+        "rollback_path": [
+            "keep automatic rollback disabled",
+            "if operator approves, revert A/v11 trailing pullback parameter/release to previous stable version",
+            "rerun 24h/72h rollout review after revert",
+        ],
+        "operator_action": decision.get("status") or "",
+        "automation": "disabled_report_only",
+    }
+
+
 def build_payload(db: Path, approval: dict[str, Any]) -> dict[str, Any]:
     now = datetime.now(CST)
     approved_at = parse_dt(approval.get("approved_at") or approval.get("applied_at")) or parse_dt(DEFAULT_APPROVED_AT) or now
@@ -263,6 +317,7 @@ def build_payload(db: Path, approval: dict[str, Any]) -> dict[str, Any]:
         start = max(approved_at, now - timedelta(hours=hours))
         windows[f"{hours}h"] = summarize_window(rows, start, now)
     decision = verdict(windows)
+    packet = decision_packet(approval, windows, decision)
     return {
         "generated_at": now.isoformat(timespec="seconds"),
         "strategy": "A/v11",
@@ -271,6 +326,7 @@ def build_payload(db: Path, approval: dict[str, Any]) -> dict[str, Any]:
         "candidate_ids": approval.get("candidate_ids") or [],
         "selected_live_parameter": approval.get("selected_live_parameter") or {},
         "decision": decision,
+        "decision_packet": packet,
         "windows": windows,
     }
 
@@ -289,6 +345,20 @@ def render_md(payload: dict[str, Any]) -> str:
         "## Actions",
     ]
     lines.extend(f"- {item}" for item in decision.get("recommended_actions") or [])
+    packet = payload.get("decision_packet") or {}
+    lines.extend(
+        [
+            "",
+            "## Decision Packet",
+            "",
+            f"- Change: {packet.get('change') or '-'}",
+            f"- Expected advantage: {packet.get('expected_advantage') or '-'}",
+            f"- Evidence maturity: `{((packet.get('evidence_maturity') or {}).get('label')) or '-'}`",
+            f"- Risk: {'; '.join(packet.get('risk') or [])}",
+            f"- Rollback path: {'; '.join(packet.get('rollback_path') or [])}",
+            f"- Automation: `{packet.get('automation') or 'disabled_report_only'}`",
+        ]
+    )
     lines.extend(
         [
             "",

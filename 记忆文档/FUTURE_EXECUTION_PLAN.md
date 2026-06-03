@@ -24,6 +24,7 @@
 
 1. **P1-A A/v11 trailing-pullback 质量决策**
    - 当前问题：已批准 rollout 后进入 rollback-watch；需要决定继续、收窄或回滚。
+   - 已完成：`a_v11_rollout_review.py` 已输出 24h/72h/168h 窗口、成本、强平贡献、top losers/winners、close reasons、side/timeframe PnL；2026-06-03 已新增 A/v11 专用 `decision_packet`，包含 selected live parameter、approval rationale、risk evidence、maturity、rollback path、automation=disabled_report_only。
    - 验收：按 24h/72h/168h 窗口拆出亏损来源、top losers、出场原因、regime、强平/成本贡献，并形成可执行 decision packet；没有 operator-quality evidence 不自动回滚。
 
 2. **P1-B B/v16 full-live 候选质量决策**

@@ -2,6 +2,14 @@
 
 This is the durable reason-and-outcome ledger for every material design, code, configuration, deployment, rollback, optimization, or live operational change.
 
+## 2026-06-03 13:52 CST - Add A/v11 rollout decision packet
+- Trigger / reason: Continue offline P1-A/P1-D work. A/v11 trailing-pullback rollout review already had windows, top losers, costs, and recommendation, but needed a compact operator packet matching the long-term requirement: change, advantage, risk, evidence maturity, rollback path, and automation status.
+- Completed: `a_v11_rollout_review.py` now adds `decision_packet` to its JSON output and renders it in Markdown. The packet summarizes the approved trailing-pullback change, selected live parameter, approval rationale, 24h/72h/168h maturity, after-cost PnL risk, forced-close rate, top close reasons, top loser, rollback path, and `disabled_report_only` automation status. Added focused unit coverage.
+- Not completed / remaining: This remains report-only. It does not perform a rollback, does not decide the operator action automatically, and still needs the final fresh-run/report chain after services are intentionally restarted.
+- Verification: Local `PYTHONDONTWRITEBYTECODE=1 python -m unittest tests.test_a_v11_rollout_review_packet` passed. A no-pyc compile check passed for the changed review script/test. `git diff --check` passed.
+- Live impact / deployment: None. Offline reporting change only; no server deploy, restart, or Binance request.
+- Files / release / commit: `部署工具/a_v11_rollout_review.py`, `tests/test_a_v11_rollout_review_packet.py`, `CHANGELOG.md`, `PROJECT_STATE.md`, `记忆文档/MEMORY.md`, `记忆文档/FUTURE_EXECUTION_PLAN.md`.
+
 ## 2026-06-03 13:18 CST - Add trailing-stop support to replay fill kernel
 - Trigger / reason: Continue offline P1-C replay/fill work after integrating `core.replay_fill` into counterfactual reporting. The remaining fill gap includes strategy-like trailing/recovery exits, especially A/v11 trailing-pullback review.
 - Completed: Extended `ReplayFillRequest` with optional `trailing_stop_pct` and `trailing_activation_pct`. `simulate_replay_fill()` now tracks favorable high/low by side and can exit via `trailing_stop`; same-bar stop/trailing/take conflicts use the existing conservative intrabar policy. Added long and short trailing-stop tests.

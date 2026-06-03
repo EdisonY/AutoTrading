@@ -296,6 +296,7 @@
 - 2026-06-03：继续 P0-B。A/v11 `REQUIRE_RESONANCE` 共振必需门控已抽成 `evaluate_a_v11_resonance_required_gate()`，scanner 原有“无共振，REQUIRE_RESONANCE=True”拒绝文本、stage 和日志口径保持不变。Tencent no-restart release `20260603-071300-strategy-a-f10e98e` 只把代码上传到磁盘；A/v11 scanner 仍 inactive，不改变阈值/仓位/杠杆/止损/下单行为。
 - 2026-06-03：继续 P0-B。A/v11 合约可交易性拒绝已抽成 `evaluate_tradability_gate()`，scanner 仍保留原 `decision_stage=tradability`、`filter_layer=execution`、skip reason 和不可交易币种自动黑名单行为。Tencent no-restart release `20260603-073030-strategy-a-68fc30f` 只上传磁盘，不重启运行中的 A/v11 scanner；不改变阈值/仓位/杠杆/止损/下单行为。
 - 2026-06-03：离线优先继续推进 P0-B/P1-C/P1-D，仍不启动任何 Binance-facing/test 服务。`core.strategy_gate_cases` 已扩到更多现有 pure gates，提升 replay/live same-input case 覆盖面；`counterfactual_open_skips.py` 已接 `core.replay_fill`，OPEN_SKIPPED 假设放行 PnL 由共享 fill kernel 计算；`strategy_evolution_gate.py` 已为每条决策生成 `decision_packet`（改动、预期优势、风险、证据成熟度、回滚路径、operator action、automation=disabled_report_only），`rollback_watch_review.py` 会渲染 P0/P1 rollback-watch packet。自动升级/自动回滚仍关闭。P0-A 仍需最终 staged fresh-run 才能验收。
+- 2026-06-03：`core.replay_fill` 继续补 P1-C，新增通用 trailing-stop primitive：`trailing_stop_pct` / `trailing_activation_pct` 支持 long/short，保守 intrabar 下 stop/trailing/take 冲突按保护优先。它仍不是 A/v11 ATR pullback 完整复刻，也不是 recovery-position replay；后续报告可在此基础上接策略专属出场。
 
 ---
 ## 2026-05-29 全局运行自检与账户方向口径修复

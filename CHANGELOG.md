@@ -2,6 +2,14 @@
 
 This is the durable reason-and-outcome ledger for every material design, code, configuration, deployment, rollback, optimization, or live operational change.
 
+## 2026-06-03 13:18 CST - Add trailing-stop support to replay fill kernel
+- Trigger / reason: Continue offline P1-C replay/fill work after integrating `core.replay_fill` into counterfactual reporting. The remaining fill gap includes strategy-like trailing/recovery exits, especially A/v11 trailing-pullback review.
+- Completed: Extended `ReplayFillRequest` with optional `trailing_stop_pct` and `trailing_activation_pct`. `simulate_replay_fill()` now tracks favorable high/low by side and can exit via `trailing_stop`; same-bar stop/trailing/take conflicts use the existing conservative intrabar policy. Added long and short trailing-stop tests.
+- Not completed / remaining: This is a generic trailing-stop primitive, not a full A/v11 ATR pullback implementation or recovery-position replay. Strategy-specific ATR/trailing and recovery exits still need wiring into reports before P1-C is complete.
+- Verification: Local `PYTHONDONTWRITEBYTECODE=1 python -m unittest tests.test_replay_fill tests.test_counterfactual_replay_fill` passed (`8` tests). A no-pyc compile check passed for changed replay/counterfactual files. `git diff --check` passed.
+- Live impact / deployment: None. Offline code only; no server deploy, restart, or Binance request.
+- Files / release / commit: `core/replay_fill.py`, `tests/test_replay_fill.py`, `CHANGELOG.md`, `PROJECT_STATE.md`, `记忆文档/MEMORY.md`, `记忆文档/FUTURE_EXECUTION_PLAN.md`.
+
 ## 2026-06-03 13:00 CST - Integrate offline decision packets and replay fill reporting
 - Trigger / reason: Continue the user-directed offline-first push for unfinished long-term P0/P1 goals before restarting any server tests. The remaining P0-B/P1-C/P1-D gaps needed broader same-input gate cases, counterfactual fill integration, and operator-grade rollback decision packets.
 - Completed: `strategy_evolution_gate.py` now emits a `decision_packet` for decisions, including change, expected advantage, risk, evidence maturity, rollback path, operator action, and explicit report-only automation status. `rollback_watch_review.py` preserves and renders those packets for active P0/P1 rollback-watch items. `counterfactual_open_skips.py` now routes OPEN_SKIPPED hypothetical fills through `core.replay_fill` and records the fill result in payload JSON, while keeping MFE/MAE and horizon reporting. `core.strategy_gate_cases` now registers a much broader set of existing pure gates, including account-state, sizing, confirmation, cooldown/count, sector/position, tail/stale-price, and market-microstructure cases. Added focused tests for decision packets and counterfactual replay-fill integration; expanded strategy gate case coverage.

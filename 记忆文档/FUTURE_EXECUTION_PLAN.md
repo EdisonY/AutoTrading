@@ -32,8 +32,8 @@
 
 3. **P1-C 完整 replay/fill 引擎**
    - 目标：OPEN_SKIPPED 放行后的成交、持仓、出场、费用/滑点仿真统一到一个 replay/fill 引擎。
-   - 已完成：`core.replay_fill` 第一版 deterministic fill kernel，支持 long/short、SL/TP、fee、slippage、保守 intrabar stop/take 冲突处理、end-of-window exit，并有单元测试；2026-06-03 `counterfactual_open_skips.py` 已用该 kernel 计算 OPEN_SKIPPED 假设放行后的 fill/PnL，并把 replay_fill payload 写进结果。
-   - 未完成：策略专属 trailing/recovery exit、长 Kline feature 窗口和更完整 portal/report 输出。
+   - 已完成：`core.replay_fill` 第一版 deterministic fill kernel，支持 long/short、SL/TP、fee、slippage、保守 intrabar stop/take 冲突处理、end-of-window exit，并有单元测试；2026-06-03 `counterfactual_open_skips.py` 已用该 kernel 计算 OPEN_SKIPPED 假设放行后的 fill/PnL，并把 replay_fill payload 写进结果；同日新增通用 percent trailing-stop activation/exit，支持 long/short 保守 intrabar。
+   - 未完成：A/v11 ATR pullback、策略专属 recovery exit、长 Kline feature 窗口和更完整 portal/report 输出。
    - 验收：每个实盘 OPEN_SKIPPED 能回答“若放行，按同一出场规则会怎样”。
 
 4. **P1-D 灰度/回滚门禁增强**

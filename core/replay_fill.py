@@ -33,6 +33,8 @@ class ReplayFillRequest:
     quantity: float
     stop_loss: float | None = None
     take_profit: float | None = None
+    trailing_stop_pct: float | None = None
+    trailing_activation_pct: float = 0.0
     fee_bps: float = 5.0
     slippage_bps: float = 0.0
     conservative_intrabar: bool = True
@@ -73,22 +75,49 @@ def _gross_pnl(*, side: str, entry_price: float, exit_price: float, quantity: fl
     return (float(exit_price) - float(entry_price)) * float(quantity)
 
 
-def _bar_exit(req: ReplayFillRequest, bar: ReplayBar) -> tuple[str, float] | None:
+def _trailing_exit_price(req: ReplayFillRequest, *, entry_price: float, best_price: float) -> float | None:
+    if req.trailing_stop_pct is None:
+        return None
+    trailing_pct = float(req.trailing_stop_pct or 0.0)
+    if trailing_pct <= 0:
+        return None
+    activation = float(req.trailing_activation_pct or 0.0)
+    side = req.side.lower()
+    if side == "short":
+        favorable_pct = (float(entry_price) - float(best_price)) / float(entry_price) * 100
+        if favorable_pct < activation:
+            return None
+        return float(best_price) * (1 + trailing_pct / 100)
+    favorable_pct = (float(best_price) - float(entry_price)) / float(entry_price) * 100
+    if favorable_pct < activation:
+        return None
+    return float(best_price) * (1 - trailing_pct / 100)
+
+
+def _bar_exit(req: ReplayFillRequest, bar: ReplayBar, trailing_price: float | None = None) -> tuple[str, float] | None:
     side = req.side.lower()
     if side == "short":
         hit_stop = req.stop_loss is not None and bar.high >= float(req.stop_loss)
         hit_take = req.take_profit is not None and bar.low <= float(req.take_profit)
+        hit_trailing = trailing_price is not None and bar.high >= float(trailing_price)
     else:
         hit_stop = req.stop_loss is not None and bar.low <= float(req.stop_loss)
         hit_take = req.take_profit is not None and bar.high >= float(req.take_profit)
-    if hit_stop and hit_take:
-        if req.conservative_intrabar:
+        hit_trailing = trailing_price is not None and bar.low <= float(trailing_price)
+    if req.conservative_intrabar:
+        if hit_stop:
             return "stop_loss", float(req.stop_loss)
+        if hit_trailing:
+            return "trailing_stop", float(trailing_price)
+        if hit_take:
+            return "take_profit", float(req.take_profit)
+        return None
+    if hit_take:
         return "take_profit", float(req.take_profit)
     if hit_stop:
         return "stop_loss", float(req.stop_loss)
-    if hit_take:
-        return "take_profit", float(req.take_profit)
+    if hit_trailing:
+        return "trailing_stop", float(trailing_price)
     return None
 
 
@@ -108,8 +137,14 @@ def simulate_replay_fill(req: ReplayFillRequest, bars: Iterable[ReplayBar | dict
     exit_price = parsed_bars[-1].close
     exit_ts = parsed_bars[-1].ts
     bars_held = len(parsed_bars)
+    best_price = entry_px
     for idx, bar in enumerate(parsed_bars, start=1):
-        hit = _bar_exit(req, bar)
+        if side == "short":
+            best_price = min(best_price, float(bar.low))
+        else:
+            best_price = max(best_price, float(bar.high))
+        trailing_price = _trailing_exit_price(req, entry_price=entry_px, best_price=best_price)
+        hit = _bar_exit(req, bar, trailing_price)
         if hit:
             exit_reason, exit_price = hit
             exit_ts = bar.ts

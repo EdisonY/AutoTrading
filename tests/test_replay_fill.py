@@ -80,6 +80,52 @@ class ReplayFillTest(unittest.TestCase):
         self.assertAlmostEqual(result.exit_price, 10.0899)
         self.assertAlmostEqual(result.net_pnl_usdt, 0.0799)
 
+    def test_long_trailing_stop_after_activation(self):
+        result = simulate_replay_fill(
+            ReplayFillRequest(
+                symbol="ABCUSDT",
+                side="long",
+                entry_price=100,
+                quantity=1,
+                trailing_stop_pct=2,
+                trailing_activation_pct=3,
+                fee_bps=0,
+            ),
+            [
+                {"ts": "t1", "open": 100, "high": 102, "low": 99, "close": 101},
+                {"ts": "t2", "open": 101, "high": 105, "low": 103, "close": 104},
+                {"ts": "t3", "open": 104, "high": 104.2, "low": 102.8, "close": 103},
+            ],
+        )
+
+        self.assertEqual(result.exit_reason, "trailing_stop")
+        self.assertEqual(result.exit_ts, "t3")
+        self.assertAlmostEqual(result.exit_price, 102.9)
+        self.assertAlmostEqual(result.net_pnl_usdt, 2.9)
+
+    def test_short_trailing_stop_after_activation(self):
+        result = simulate_replay_fill(
+            ReplayFillRequest(
+                symbol="ABCUSDT",
+                side="short",
+                entry_price=100,
+                quantity=2,
+                trailing_stop_pct=1,
+                trailing_activation_pct=2,
+                fee_bps=0,
+            ),
+            [
+                {"ts": "t1", "open": 100, "high": 100.5, "low": 98.5, "close": 99},
+                {"ts": "t2", "open": 99, "high": 99.2, "low": 96, "close": 97},
+                {"ts": "t3", "open": 97, "high": 97.2, "low": 96.5, "close": 97},
+            ],
+        )
+
+        self.assertEqual(result.exit_reason, "trailing_stop")
+        self.assertEqual(result.exit_ts, "t2")
+        self.assertAlmostEqual(result.exit_price, 96.96)
+        self.assertAlmostEqual(result.net_pnl_usdt, 6.08)
+
     def test_rejects_invalid_input(self):
         with self.assertRaises(ValueError):
             simulate_replay_fill(ReplayFillRequest("ABCUSDT", "long", 10, 0), [])

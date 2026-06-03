@@ -23,7 +23,8 @@
    - 2026-06-03 20:46 补充：A/v11 replacement release 现在可在 detail 模式下返回所有候选仓位的 `a_v11_releasable_position` exact case，并把成功/失败释放结果与 close `execution_result` 证明一起写入/返回。`EVICT_CLOSE`、`EVICT_FAILED`、`OPEN_RETRY_AFTER_EVICT`、`OPEN_SKIPPED` 可携带 candidate -> release_result -> close_execution 链。
    - 2026-06-03 20:57 补充：A/v11、B/v16、C/v14 成功 `OPEN` 事件现在写入 `execution_result` exact case，strict audit 可验证执行成功/确认成功，不再把成功开仓全部当 missing-case gap。
    - 2026-06-03 21:10 补充：B/v16 成功 `OPEN` 事件现在写入 `[confirmation, entry_threshold, execution_result]` exact chain；C/v14 成功 `OPEN` 事件现在写入 `[confirmation, tail_guard, execution_result]` exact chain。B/C 成功开仓已从单 execution proof 前进到第一版 orchestration proof。
-   - 未完成：历史事件驱动的同输入 replay/live 结论一致性测试仍需扩大；A/v11 open success 仍缺更完整的多 gate 上下文链（信号 -> replacement/risk -> 执行 -> 持仓确认），B/C 成功开仓的 risk/position/execution-confirmation context chain 仍需扩展。没有 exact case 的行只能算 coverage gap，不能算 replay/live parity 已通过。
+   - 2026-06-03 21:38 补充：A/v11 成功 `OPEN` 事件现在写入第一版 open-success orchestration chain。普通 Hanmuxia 开仓包含 entry-threshold、resonance-required（如适用）、pool-capacity、market/tradability/position/sizing/account-state/risk 和 execution；VPB 开仓不伪装成 Hanmuxia threshold pass，只带 shared pool/safety/risk/sizing/execution context；replacement 成功开仓会把 release cases 并入最终 `OPEN`。同时修复 A/v11 成功执行后 `min_notional_adjustment` 与 margin bounds 未定义的旧隐患。
+   - 未完成：历史事件驱动的同输入 replay/live 结论一致性测试仍需扩大；B/C 成功开仓的 risk/position/execution-confirmation context chain 仍需扩展；A/v11 仍可继续把 post-open sizing cleanup 成功链与完整持仓确认状态做更细分。没有 exact case 的行只能算 coverage gap，不能算 replay/live parity 已通过。
    - 验收：给定同一时间、币种、上下文，replay 与 live 入场/否决结论一致；关键 OPEN_SKIPPED/OPEN_FAILED 无未知 gate。
 
 ### Long-term P1 - P0 稳住后并行推进
@@ -673,6 +674,7 @@ Phase 9   实盘过渡验证                ← 8完成后
 - [x] P0-B scan-level exact parity: `replay_live_parity_audit.py` now reads `sentinel_scans` gate rows separately from open-flow events, and A/B/C selected pre-filter/cooldown/score/risk scan rows persist exact cases without mixing scan metrics into open-flow coverage.
 - [x] P0-B close-flow exact parity: `replay_live_parity_audit.py` now reports close/replacement/post-open cleanup rows separately, and A/B/C close failure paths persist exact `execution_result` cases without changing live order behavior.
 - [x] P0-B B/C open-success chain parity: B/v16 successful opens now persist confirmation -> threshold -> execution exact cases, and C/v14 successful opens now persist confirmation -> tail_guard -> execution exact cases.
+- [x] P0-B A/v11 open-success chain parity: A/v11 successful Hanmuxia opens now persist entry/pool/safety/risk/sizing/execution exact chains; VPB opens preserve VPB semantics and carry only shared context; replacement-success opens append release cases.
 - [x] P1-B B/v16 full-live rollout review: read-only 24h/72h/168h windows, cost-adjusted PnL, failure/forced-close pressure, decision packet, portal section, Aliyun refresh, reverse sync, and live-context pull. No automatic rollback or parameter change.
-- [ ] Remaining P0-B: expand event-driven same-input replay/live checks beyond single pure gates into orchestration context, especially A/v11 success-path open context, B/C risk/execution success chains, and historical same-input replay conclusions.
+- [ ] Remaining P0-B: expand event-driven same-input replay/live checks beyond single pure gates into orchestration context, especially B/C risk/execution success chains, A/v11 post-open cleanup success context, and historical same-input replay conclusions.
 - [ ] Remaining P1-B/P1-D: wait for enough post-refresh samples, then review strategy/change-type thresholds, paper fill/slippage simulation, and cross-regime robustness before any manual parameter decision.

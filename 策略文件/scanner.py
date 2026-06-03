@@ -1106,18 +1106,20 @@ class Scanner:
             return 0.0, 0.0
         return usdt_balance_summary(cached_state.balance)
 
-    def _can_open_new_position(self, risk_usdt: float, now_str: str, tf: str, sym: str, side: str, score: float) -> bool:
+    def _can_open_new_position(self, risk_usdt: float, now_str: str, tf: str, sym: str, side: str, score: float, return_cases: bool = False):
+        cases = []
         try:
             cached_state = load_cached_account_state(PROJECT_ROOT, "A/v11")
             state_gate = evaluate_account_state_available_gate(account_state_available=bool(cached_state))
+            state_case = strategy_gate_case(
+                name="a_v11_account_state_available",
+                gate="account_state_available",
+                inputs={"account_state_available": bool(cached_state)},
+                decision=state_gate,
+                meta={"strategy": "A/v11", "timeframe": tf},
+            )
+            cases.append(state_case)
             if not state_gate.allowed:
-                state_case = strategy_gate_case(
-                    name="a_v11_account_state_available",
-                    gate="account_state_available",
-                    inputs={"account_state_available": False},
-                    decision=state_gate,
-                    meta={"strategy": "A/v11", "timeframe": tf},
-                )
                 logger.info(f"  ⏸️ [{tf}] {sym} 中心账户状态不可用，暂停新开仓以避免 signed REST 压力")
                 log_event({
                     "time": now_str, "event": "OPEN_SKIPPED", "symbol": sym,
@@ -1129,13 +1131,20 @@ class Scanner:
                     "strategy_gate_case": state_case,
                     **sentinel_fields(sym),
                 })
-                return False
+                return (False, cases) if return_cases else False
             exchange_positions = cached_state.positions
             total_positions = max(self._total_local_positions(), count_active_positions(exchange_positions))
             side_count = count_side_positions(exchange_positions, side)
         except Exception as e:
             logger.debug(f"  开仓风控快照读取失败: {e}")
             state_gate = evaluate_account_state_available_gate(account_state_available=False, read_error=True)
+            state_case = strategy_gate_case(
+                name="a_v11_account_state_read_failed",
+                gate="account_state_available",
+                inputs={"account_state_available": False, "read_error": True},
+                decision=state_gate,
+                meta={"strategy": "A/v11", "timeframe": tf, "error": str(e)[:160]},
+            )
             log_event({
                 "time": now_str, "event": "OPEN_SKIPPED", "symbol": sym,
                 "side": side, "score": score, "timeframe": tf,
@@ -1143,16 +1152,10 @@ class Scanner:
                 "risk_category": "account_state_unavailable",
                 "decision_stage": "risk_gate",
                 "filter_layer": "risk",
-                "strategy_gate_case": strategy_gate_case(
-                    name="a_v11_account_state_read_failed",
-                    gate="account_state_available",
-                    inputs={"account_state_available": False, "read_error": True},
-                    decision=state_gate,
-                    meta={"strategy": "A/v11", "timeframe": tf, "error": str(e)[:160]},
-                ),
+                "strategy_gate_case": state_case,
                 **sentinel_fields(sym),
             })
-            return False
+            return (False, [state_case]) if return_cases else False
         balance = cached_state.balance
         decision = self.risk_engine.check_entry(
             total_positions=total_positions,
@@ -1172,6 +1175,23 @@ class Scanner:
                 min_available_balance_pct=self.risk_engine.limits.min_available_balance_pct,
                 min_available_balance_usdt=self.risk_engine.limits.min_available_balance_usdt,
             )
+            risk_case = strategy_gate_case(
+                name="a_v11_entry_risk",
+                gate="entry_risk",
+                inputs={
+                    "total_positions": decision.total_positions,
+                    "side_positions": decision.side_positions,
+                    "total_balance": decision.total_balance,
+                    "available_balance": decision.available_balance,
+                    "risk_usdt": risk_usdt,
+                    "max_total_positions": self.risk_engine.limits.max_total_positions,
+                    "max_positions_per_side": self.risk_engine.limits.max_positions_per_side,
+                    "min_available_balance_pct": self.risk_engine.limits.min_available_balance_pct,
+                    "min_available_balance_usdt": self.risk_engine.limits.min_available_balance_usdt,
+                },
+                decision=risk_gate,
+                meta={"strategy": "A/v11", "timeframe": tf},
+            )
             logger.info(f"  ⏭️ [{tf}] {sym} {decision.reason}，暂停新开仓")
             log_event({
                 "time": now_str, "event": "OPEN_SKIPPED", "symbol": sym,
@@ -1184,27 +1204,39 @@ class Scanner:
                 "reserve": round(decision.reserve_required, 4),
                 "decision_stage": "risk_gate",
                 "filter_layer": "risk",
-                "strategy_gate_case": strategy_gate_case(
-                    name="a_v11_entry_risk",
-                    gate="entry_risk",
-                    inputs={
-                        "total_positions": decision.total_positions,
-                        "side_positions": decision.side_positions,
-                        "total_balance": decision.total_balance,
-                        "available_balance": decision.available_balance,
-                        "risk_usdt": risk_usdt,
-                        "max_total_positions": self.risk_engine.limits.max_total_positions,
-                        "max_positions_per_side": self.risk_engine.limits.max_positions_per_side,
-                        "min_available_balance_pct": self.risk_engine.limits.min_available_balance_pct,
-                        "min_available_balance_usdt": self.risk_engine.limits.min_available_balance_usdt,
-                    },
-                    decision=risk_gate,
-                    meta={"strategy": "A/v11", "timeframe": tf},
-                ),
+                "strategy_gate_case": risk_case,
                 **sentinel_fields(sym),
             })
-            return False
-        return True
+            return (False, [*cases, risk_case]) if return_cases else False
+        risk_gate = evaluate_entry_risk_gate(
+            total_positions=decision.total_positions,
+            side_positions=decision.side_positions,
+            total_balance=decision.total_balance,
+            available_balance=decision.available_balance,
+            risk_usdt=risk_usdt,
+            max_total_positions=self.risk_engine.limits.max_total_positions,
+            max_positions_per_side=self.risk_engine.limits.max_positions_per_side,
+            min_available_balance_pct=self.risk_engine.limits.min_available_balance_pct,
+            min_available_balance_usdt=self.risk_engine.limits.min_available_balance_usdt,
+        )
+        risk_case = strategy_gate_case(
+            name="a_v11_entry_risk",
+            gate="entry_risk",
+            inputs={
+                "total_positions": decision.total_positions,
+                "side_positions": decision.side_positions,
+                "total_balance": decision.total_balance,
+                "available_balance": decision.available_balance,
+                "risk_usdt": risk_usdt,
+                "max_total_positions": self.risk_engine.limits.max_total_positions,
+                "max_positions_per_side": self.risk_engine.limits.max_positions_per_side,
+                "min_available_balance_pct": self.risk_engine.limits.min_available_balance_pct,
+                "min_available_balance_usdt": self.risk_engine.limits.min_available_balance_usdt,
+            },
+            decision=risk_gate,
+            meta={"strategy": "A/v11", "timeframe": tf},
+        )
+        return (True, [*cases, risk_case]) if return_cases else True
 
     def _effective_signal_score(self, sig: dict, resonance: bool = False) -> float:
         return effective_a_v11_signal_score(
@@ -1265,6 +1297,14 @@ class Scanner:
             ),
         ]
         return replacement_gate, pool_gate, cases
+
+    def _open_pool_capacity_cases(self, replacement_cases: list, *, timeframe_full: bool) -> list:
+        if timeframe_full:
+            return list(replacement_cases)
+        return [
+            case for case in replacement_cases
+            if isinstance(case, dict) and case.get("gate") == "a_v11_pool_capacity_replacement"
+        ]
 
     def _releasable_position_case(
         self,
@@ -1329,6 +1369,43 @@ class Scanner:
             short_entry_penalty=SHORT_ENTRY_PENALTY,
         )
         return decision.allowed
+
+    def _entry_threshold_case(self, sig: dict, *, chain_step: str = "entry_threshold") -> dict:
+        decision = evaluate_a_v11_entry_threshold(
+            timeframe=sig["timeframe"],
+            side=sig["trade_side"],
+            score=sig["net_score"],
+            score_thresholds=SCORE_THRESHOLDS,
+            score_threshold=SCORE_THRESHOLD,
+            short_entry_penalty=SHORT_ENTRY_PENALTY,
+        )
+        return strategy_gate_case(
+            name="a_v11_entry_threshold",
+            gate="a_v11_entry_threshold",
+            inputs={
+                "timeframe": sig["timeframe"],
+                "side": sig["trade_side"],
+                "score": sig["net_score"],
+                "score_thresholds": SCORE_THRESHOLDS,
+                "score_threshold": SCORE_THRESHOLD,
+                "short_entry_penalty": SHORT_ENTRY_PENALTY,
+            },
+            decision=decision,
+            meta={"strategy": "A/v11", "timeframe": sig["timeframe"], "chain_step": chain_step},
+        )
+
+    def _resonance_required_case(self, sig: dict, *, has_resonance: bool) -> dict:
+        decision = evaluate_a_v11_resonance_required_gate(
+            require_resonance=REQUIRE_RESONANCE,
+            has_resonance=has_resonance,
+        )
+        return strategy_gate_case(
+            name="a_v11_resonance_required",
+            gate="a_v11_resonance_required",
+            inputs={"require_resonance": REQUIRE_RESONANCE, "has_resonance": has_resonance},
+            decision=decision,
+            meta={"strategy": "A/v11", "timeframe": sig["timeframe"], "chain_step": "resonance_required"},
+        )
 
     def _has_position(self, sym: str, side: str = None) -> bool:
         """检查是否已有某币种/方向的持仓（跨周期）"""
@@ -2186,7 +2263,17 @@ class Scanner:
                             strategy_gate_cases=replacement_cases,
                         )
                         continue
-                    self._open_position(sig, now_str, resonance=True, force_replacement=tf_full)
+                    open_chain_cases = [
+                        self._entry_threshold_case(sig),
+                        *self._open_pool_capacity_cases(replacement_cases, timeframe_full=tf_full),
+                    ]
+                    self._open_position(
+                        sig,
+                        now_str,
+                        resonance=True,
+                        force_replacement=tf_full,
+                        open_chain_cases=open_chain_cases,
+                    )
                     opened_symbols.add(sym)
 
         # 再处理单周期信号
@@ -2197,9 +2284,10 @@ class Scanner:
                 if sig["symbol"] in opened_symbols:
                     continue
                 # REQUIRE_RESONANCE=False 时不强制共振
+                has_resonance = sig["symbol"] in resonance_map
                 resonance_gate = evaluate_a_v11_resonance_required_gate(
                     require_resonance=REQUIRE_RESONANCE,
-                    has_resonance=sig["symbol"] in resonance_map,
+                    has_resonance=has_resonance,
                 )
                 if not resonance_gate.allowed:
                     logger.debug(f"  ⏭️ [{tf}] {sig['symbol']} 无共振，跳过（REQUIRE_RESONANCE=True）")
@@ -2227,7 +2315,18 @@ class Scanner:
                         strategy_gate_cases=replacement_cases,
                     )
                     continue
-                self._open_position(sig, now_str, resonance=False, force_replacement=tf_full)
+                open_chain_cases = [
+                    self._entry_threshold_case(sig),
+                    self._resonance_required_case(sig, has_resonance=has_resonance),
+                    *self._open_pool_capacity_cases(replacement_cases, timeframe_full=tf_full),
+                ]
+                self._open_position(
+                    sig,
+                    now_str,
+                    resonance=False,
+                    force_replacement=tf_full,
+                    open_chain_cases=open_chain_cases,
+                )
 
         # 7. VPB 策略开仓（独立开仓，不受半木夏共振限制）
         for tf in TIMEFRAMES:
@@ -2256,13 +2355,38 @@ class Scanner:
                         strategy_gate_cases=replacement_cases,
                     )
                     continue
-                self._open_position(vsig, now_str, resonance=vsig.get("vpb_resonance", False), force_replacement=tf_full)
+                self._open_position(
+                    vsig,
+                    now_str,
+                    resonance=vsig.get("vpb_resonance", False),
+                    force_replacement=tf_full,
+                    open_chain_cases=self._open_pool_capacity_cases(replacement_cases, timeframe_full=tf_full),
+                )
 
-    def _open_position(self, sig: dict, now_str: str, resonance: bool = False, force_replacement: bool = False):
+    def _open_position(
+        self,
+        sig: dict,
+        now_str: str,
+        resonance: bool = False,
+        force_replacement: bool = False,
+        open_chain_cases=None,
+    ):
         """根据信号开仓，同时在交易所下真实订单。"""
         now_dt = datetime.now(CST)
         tf = sig["timeframe"]
         side = sig["trade_side"]
+        open_chain_cases = list(open_chain_cases or [])
+        has_replacement_chain = any(
+            isinstance(case, dict)
+            and str(case.get("gate") or "") in {
+                "a_v11_replacement_signal",
+                "a_v11_pool_capacity_replacement",
+                "a_v11_replacement_release_result",
+                "a_v11_releasable_position",
+            }
+            for case in open_chain_cases
+        )
+        runtime_chain_cases = []
 
         # 共振加分
         net_score = self._effective_signal_score(sig, resonance=resonance)
@@ -2371,6 +2495,14 @@ class Scanner:
             }
             log_event(event)
             return
+        market_case = strategy_gate_case(
+            name="a_v11_market_microstructure",
+            gate="a_v11_market_microstructure",
+            inputs={"atr": atr, "side": side, "stop_loss": sl, "entry_price": price},
+            decision=market_gate,
+            meta={"strategy": "A/v11", "timeframe": tf, "chain_step": "market_microstructure"},
+        )
+        runtime_chain_cases.append(market_case)
 
         # ── 合约可交易性检查 ──
         tradable = self.client.is_tradable(inst_id)
@@ -2407,6 +2539,14 @@ class Scanner:
                 ATR_ZERO_BLACKLIST.add(inst_id)
                 logger.warning(f"  📛 {inst_id} 已加入黑名单（不可交易: {tradability_gate.reason}）")
             return
+        tradability_case = strategy_gate_case(
+            name="a_v11_tradability",
+            gate="tradability",
+            inputs={"tradable": bool(tradable.get("tradable")), "reason": str(tradable.get("reason") or "")},
+            decision=tradability_gate,
+            meta={"strategy": "A/v11", "timeframe": tf, "chain_step": "tradability"},
+        )
+        runtime_chain_cases.append(tradability_case)
 
         existing_exchange_pos = self._exchange_symbol_position(inst_id)
         position_gate = evaluate_no_same_symbol_position_gate(
@@ -2443,6 +2583,14 @@ class Scanner:
                 **sentinel_fields(inst_id),
             })
             return
+        position_case = strategy_gate_case(
+            name="a_v11_no_same_symbol_position",
+            gate="no_same_symbol_position",
+            inputs={"has_exchange_position": bool(existing_exchange_pos), "has_local_position": self._has_position(inst_id)},
+            decision=position_gate,
+            meta={"strategy": "A/v11", "timeframe": tf, "chain_step": "position_duplicate"},
+        )
+        runtime_chain_cases.append(position_case)
 
         # ── 真实下单 ──
         order_id = ""
@@ -2467,6 +2615,10 @@ class Scanner:
                 order_margin_tolerance_pct=ORDER_MARGIN_TOLERANCE_PCT,
                 min_notional_floor=min_notional_floor,
             )
+            sizing_evidence = sizing_gate.evidence or {}
+            min_notional_adjustment = bool(sizing_evidence.get("min_notional_adjustment"))
+            min_margin_usdt = risk_usdt * (1 - ORDER_MARGIN_TOLERANCE_PCT)
+            max_margin_usdt = risk_usdt * (1 + ORDER_MARGIN_TOLERANCE_PCT)
             if not sizing_gate.allowed:
                 logger.warning(
                     f"  ⚠️ {inst_id}({tf}) 保证金校验失败: qty={exchange_qty:g}, "
@@ -2503,8 +2655,24 @@ class Scanner:
                     **sentinel_fields(inst_id),
                 })
                 return
+            sizing_case = strategy_gate_case(
+                name="a_v11_margin_sizing",
+                gate="a_v11_margin_sizing",
+                inputs={
+                    "quantity": exchange_qty,
+                    "price": price,
+                    "risk_usdt": risk_usdt,
+                    "leverage": self.leverage,
+                    "order_margin_tolerance_pct": ORDER_MARGIN_TOLERANCE_PCT,
+                    "min_notional_floor": min_notional_floor,
+                },
+                decision=sizing_gate,
+                meta={"strategy": "A/v11", "timeframe": tf, "chain_step": "margin_sizing"},
+            )
+            runtime_chain_cases.append(sizing_case)
 
             released_for_replacement = False
+            release_cases = []
             if force_replacement:
                 _, _, replacement_cases = self._replacement_orchestration_cases(
                     sig,
@@ -2524,6 +2692,10 @@ class Scanner:
                 )
                 if release_success:
                     released_for_replacement = True
+                    if not has_replacement_chain:
+                        runtime_chain_cases.extend(replacement_cases)
+                        has_replacement_chain = True
+                    runtime_chain_cases.extend(release_cases)
                     log_event({
                         "time": now_str, "event": "OPEN_RETRY_AFTER_EVICT",
                         "symbol": inst_id, "side": side, "score": net_score,
@@ -2573,7 +2745,18 @@ class Scanner:
                     })
                     return
 
-            if not released_for_replacement and not self._can_open_new_position(risk_usdt, now_str, tf, inst_id, side, net_score):
+            risk_allowed, risk_cases = (True, [])
+            if not released_for_replacement:
+                risk_allowed, risk_cases = self._can_open_new_position(
+                    risk_usdt,
+                    now_str,
+                    tf,
+                    inst_id,
+                    side,
+                    net_score,
+                    return_cases=True,
+                )
+            if not released_for_replacement and not risk_allowed:
                 total_positions = max(self._total_local_positions(), self._total_exchange_positions())
                 release_success, release_cases = (
                     self._release_position_for_strong_signal(
@@ -2587,6 +2770,8 @@ class Scanner:
                     else (False, [])
                 )
                 if release_success:
+                    runtime_chain_cases.extend(risk_cases)
+                    runtime_chain_cases.extend(release_cases)
                     log_event({
                         "time": now_str, "event": "OPEN_RETRY_AFTER_EVICT",
                         "symbol": inst_id, "side": side, "score": net_score,
@@ -2598,6 +2783,8 @@ class Scanner:
                     })
                 else:
                     return
+            elif risk_cases:
+                runtime_chain_cases.extend(risk_cases)
 
             # 下单
             if side == "long":
@@ -2885,12 +3072,16 @@ class Scanner:
             "exchange_success": exchange_success,
             "decision_stage": "open",
             "filter_layer": "execution",
-            "strategy_gate_case": _execution_result_case(
-                "a_v11_open_execution_result",
-                exec_result,
-                timeframe=tf,
-                phase="open",
-            ),
+            "strategy_gate_cases": [
+                *open_chain_cases,
+                *runtime_chain_cases,
+                _execution_result_case(
+                    "a_v11_open_execution_result",
+                    exec_result,
+                    timeframe=tf,
+                    phase="open",
+                ),
+            ],
             **sentinel_fields(sig["symbol"]),
         }
         log_event(event)

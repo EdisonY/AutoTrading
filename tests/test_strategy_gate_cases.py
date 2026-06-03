@@ -3,8 +3,10 @@ import sys
 import unittest
 from datetime import datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 
 from core.execution_engine import ExecutionResult
+from core.risk_engine import RiskEngine, RiskLimits
 from core.strategy_gate_cases import evaluate_strategy_gate_case, evaluate_strategy_gate_cases, strategy_gate_case
 from core.strategy_gates import evaluate_positive_quantity_gate, evaluate_symbol_blacklist_gate, evaluate_symbol_cooldown_gate
 
@@ -34,6 +36,28 @@ class _CloseExecution:
     def close_position(self, req):
         self.requests.append(req)
         return self.result
+
+
+class _OpenExecution:
+    def __init__(self, result, quantity=4.0):
+        self.result = result
+        self.quantity = quantity
+        self.open_requests = []
+
+    def calc_quantity(self, symbol, price, risk_usdt, leverage):
+        return self.quantity
+
+    def open_position(self, req):
+        self.open_requests.append(req)
+        return self.result
+
+
+class _TradableClient:
+    def is_tradable(self, symbol):
+        return {"tradable": True, "reason": ""}
+
+    def get_symbol_rules(self, symbol):
+        return SimpleNamespace(min_notional=0.0)
 
 
 class StrategyGateCasesTest(unittest.TestCase):
@@ -369,6 +393,91 @@ class StrategyGateCasesTest(unittest.TestCase):
             [row["reason"] for row in results],
             ["replacement_signal_fail", "周期池满且未达到强信号替换条件", "周期池满且无可释放弱仓"],
         )
+
+    def test_a_v11_successful_open_chain_cases_replay(self):
+        scanner = self._scanner_without_runtime()
+        scanner.leverage = 4
+        scanner.max_positions = 2
+        scanner.risk_engine = RiskEngine(RiskLimits(
+            max_total_positions=30,
+            max_positions_per_side=15,
+            min_available_balance_pct=0.25,
+            min_available_balance_usdt=300,
+        ))
+        scanner.client = _TradableClient()
+        scanner.execution = _OpenExecution(
+            ExecutionResult(True, "open", "OPENUSDT", "long", quantity=4.0, order_id="open-1", raw={"orderId": "open-1"})
+        )
+
+        sig = {
+            "symbol": "OPENUSDT",
+            "timeframe": "15m",
+            "trade_side": "long",
+            "net_score": 120,
+            "price": 100,
+            "atr": 2,
+            "sl_long": 95,
+            "tp_long": 115,
+            "sl_short": 105,
+            "tp_short": 85,
+            "reasons_long": ["test"],
+            "reasons_short": [],
+            "divergence_primary": {"description": "test"},
+            "st_direction": 1,
+            "st_flipped": False,
+        }
+        events = []
+        cached_state = SimpleNamespace(
+            positions=[],
+            balance={"totalWalletBalance": "5000", "availableBalance": "4500"},
+        )
+        original_log_event = scanner_module.log_event
+        original_load_cached = scanner_module.load_cached_account_state
+        original_logger_disabled = scanner_module.logger.disabled
+        scanner_module.log_event = events.append
+        scanner_module.load_cached_account_state = lambda root, strategy: cached_state
+        scanner_module.logger.disabled = True
+        try:
+            open_chain_cases = [
+                scanner._entry_threshold_case(sig),
+                *scanner._open_pool_capacity_cases(
+                    scanner._replacement_orchestration_cases(
+                        sig,
+                        resonance=False,
+                        timeframe_full=False,
+                        tf="15m",
+                    )[2],
+                    timeframe_full=False,
+                ),
+            ]
+            scanner._open_position(
+                sig,
+                "2026-06-03 21:20:00",
+                resonance=False,
+                force_replacement=False,
+                open_chain_cases=open_chain_cases,
+            )
+        finally:
+            scanner_module.log_event = original_log_event
+            scanner_module.load_cached_account_state = original_load_cached
+            scanner_module.logger.disabled = original_logger_disabled
+
+        self.assertEqual(events[0]["event"], "OPEN")
+        cases = events[0]["strategy_gate_cases"]
+        self.assertEqual([case["gate"] for case in cases], [
+            "a_v11_entry_threshold",
+            "a_v11_pool_capacity_replacement",
+            "a_v11_market_microstructure",
+            "tradability",
+            "no_same_symbol_position",
+            "a_v11_margin_sizing",
+            "account_state_available",
+            "entry_risk",
+            "execution_result",
+        ])
+        self.assertEqual([row["passed"] for row in evaluate_strategy_gate_cases(cases)], [True] * len(cases))
+        self.assertEqual(scanner.execution.open_requests[0].quantity, 4.0)
+        self.assertIn(("OPENUSDT", "long"), scanner.positions["15m"])
 
     def test_b_v16_successful_open_chain_cases_replay(self):
         results = evaluate_strategy_gate_cases(

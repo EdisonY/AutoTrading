@@ -74,6 +74,39 @@ class LongTermSkeletonReviewTests(unittest.TestCase):
             self.assertEqual(payload["status"], "blocked_by_staged_validation")
             self.assertEqual(payload["summary"]["validation_blockers"], 1)
 
+    def test_deployed_flat_root_resolves_release_aliases_and_repo_only_tests(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "long_term_skeleton_review.py").write_text("self", encoding="utf-8")
+            (root / "main.py").write_text("marker", encoding="utf-8")
+            (root / "scanner.py").write_text("strategy_gate_case", encoding="utf-8")
+            (root / "binance_client.py").write_text("client", encoding="utf-8")
+            (root / "systemd").mkdir()
+            (root / "systemd" / "crypto-demo.service").write_text("[Service]", encoding="utf-8")
+            specs = [
+                self.tool.module_spec(
+                    item_id="P0-X",
+                    priority="P0",
+                    name="deployed flat",
+                    objective="test deployed aliases",
+                    inputs=[self.tool.bone("tool", "部署工具/main.py", contains="marker")],
+                    main=[self.tool.bone("scanner", "策略文件/scanner.py", contains="strategy_gate_case")],
+                    outputs=[self.tool.bone("client", "交易客户端/binance_client.py")],
+                    portal=[],
+                    sync=[self.tool.bone("unit", "部署工具/systemd/crypto-demo.service")],
+                    tests=[self.tool.bone("repo-only test", "tests/test_demo.py")],
+                )
+            ]
+
+            payload = self.tool.build_payload(root, specs)
+            module = payload["modules"][0]
+
+            self.assertEqual(payload["status"], "skeleton_ready")
+            self.assertEqual(module["ready_bones"], module["total_bones"])
+            test_item = module["categories"]["tests"]["items"][0]
+            self.assertTrue(test_item["ready"])
+            self.assertIn("repo-only", test_item["detail"])
+
     def test_main_writes_runtime_and_report_files(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

@@ -356,6 +356,7 @@
 - 2026-06-04：P1-C/P1-E depth snapshot planner/warehouse 骨架已离线落地。新增 `research_depth_backfill.py`：默认只生成当前盘口采样计划；可在 staged run 时用 `--submit` 把 `/fapi/v1/depth` 请求写入 central API queue；可用 `--ingest-done` 把 DONE 队列结果合并到 `research_store/depth_snapshots` 并刷新 `runtime/depth_cache`。研究仓查询、入口页、Aliyun refresh/shadow、release/deploy、反向同步、live-context pull 已接入。当前没有真实提交队列、没有启动 executor、没有请求 Binance；depth 是当前快照累计，不是历史盘口 backfill。
 - 2026-06-04：P1-C queue-ahead / market-impact 假设层已离线落地。`core.replay_fill` 支持 `entry_order_book_queue_ahead_quantity` 与 `entry_market_impact_bps`，OPEN_SKIPPED 反事实报告和入口页显示 queue ahead、market impact、OB fill 等字段。默认 0，不改变旧 replay 口径；这仍是 report-only 假设，不是真实交易所排队撮合，不抓 Binance，不改实盘下单。
 - 2026-06-04：P1-B/P1-C B/v16 保护性出场 replay parity 已离线落地。`core.replay_fill` 新增默认关闭的 close-price hard-bottom / profit-retrace exits；`b_v16_rollout_review.py` 开启 B/v16 实盘常量：10% 杠杆硬底、30 USDT 最低最高浮盈、25% 盈利回撤。B/v16 rollout replay 现在可把回放出场归因为 `hard_bottom` / `profit_retrace`，但仍只读本地/镜像 Kline/depth，不抓 Binance、不改实盘出场。
+- 2026-06-04：长期骨架远端验收路径误判已修。Tencent/Aliyun 是扁平 release root，`long_term_skeleton_review.py` 现在支持 `部署工具/`、`策略文件/`、`交易客户端/`、`部署工具/systemd/` 的部署别名，远端未部署的源码/测试骨架按“本地 strict skeleton review 已验收的 repo-only bone”处理；`release_manager.py` portal post hook 先跑 skeleton review 再跑 system alerts，避免施工暂停服务被误报成 P0。此修复不启动服务、不请求 Binance、不清脏数据；最终 staged validation 和 zero-run 仍未完成。
 
 ---
 ## 2026-05-29 全局运行自检与账户方向口径修复

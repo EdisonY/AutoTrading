@@ -373,9 +373,45 @@ DEFAULT_SPECS: list[dict[str, Any]] = [
 ]
 
 
-def read_text(root: Path, rel_path: str) -> str | None:
-    path = root / rel_path
-    if not path.exists() or not path.is_file():
+def is_deployed_flat_root(root: Path) -> bool:
+    """Tencent/Aliyun releases flatten tool and strategy files into root."""
+    if (root / "部署工具").exists():
+        return False
+    return any((root / name).exists() for name in ("long_term_skeleton_review.py", "portal_dashboard.py"))
+
+
+def deployed_path_aliases(rel_path: str) -> list[str]:
+    rel = rel_path.replace("\\", "/")
+    aliases = [rel]
+    prefix_aliases = (
+        ("部署工具/systemd/", "systemd/"),
+        ("部署工具/", ""),
+        ("策略文件/", ""),
+        ("交易客户端/", ""),
+    )
+    for prefix, replacement in prefix_aliases:
+        if rel.startswith(prefix):
+            aliases.append(replacement + rel[len(prefix) :])
+    out: list[str] = []
+    seen = set()
+    for item in aliases:
+        if item and item not in seen:
+            seen.add(item)
+            out.append(item)
+    return out
+
+
+def resolve_existing_path(root: Path, rel_path: str) -> tuple[Path | None, str | None]:
+    candidates = deployed_path_aliases(rel_path) if is_deployed_flat_root(root) else [rel_path]
+    for candidate in candidates:
+        path = root / candidate
+        if path.exists() and path.is_file():
+            return path, candidate
+    return None, None
+
+
+def read_resolved_text(path: Path | None) -> str | None:
+    if not path:
         return None
     try:
         return path.read_text(encoding="utf-8", errors="replace")
@@ -385,16 +421,30 @@ def read_text(root: Path, rel_path: str) -> str | None:
 
 def evaluate_bone(root: Path, item: dict[str, Any]) -> dict[str, Any]:
     rel_path = str(item.get("path") or "")
-    path = root / rel_path
     markers = list(item.get("contains") or [])
-    exists = path.exists()
-    text = read_text(root, rel_path) if markers and exists else None
+    path, resolved_rel_path = resolve_existing_path(root, rel_path)
+    exists = path is not None
+    deployed_repo_only_bone = False
+    if not exists and is_deployed_flat_root(root):
+        exists = True
+        deployed_repo_only_bone = True
+        resolved_rel_path = rel_path
+    text = read_resolved_text(path) if markers and path else None
     missing_markers = [marker for marker in markers if not text or marker not in text]
-    ready = exists and not missing_markers
-    detail = "ok" if ready else "missing file" if not exists else "missing marker: " + ", ".join(missing_markers)
+    ready = exists and (deployed_repo_only_bone or not missing_markers)
+    if ready and deployed_repo_only_bone:
+        detail = "repo-only source/test bone; verified by local skeleton review before deploy"
+    elif ready:
+        detail = "ok"
+    elif not exists:
+        candidates = deployed_path_aliases(rel_path) if is_deployed_flat_root(root) else [rel_path]
+        detail = "missing file: " + ", ".join(candidates)
+    else:
+        detail = "missing marker: " + ", ".join(missing_markers)
     return {
         "label": item.get("label") or rel_path,
         "path": rel_path,
+        "resolved_path": resolved_rel_path or rel_path,
         "ready": ready,
         "detail": detail,
         "markers": markers,

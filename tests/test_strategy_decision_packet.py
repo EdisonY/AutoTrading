@@ -78,6 +78,27 @@ class StrategyDecisionPacketTests(unittest.TestCase):
         self.assertEqual(quality["label"], "bad")
         self.assertTrue(any("conservative_cost_0.25%" in reason for reason in quality["reasons"]))
 
+    def test_window_quality_includes_fill_liquidity_sensitivity(self):
+        quality = self.evolution.classify_window_quality(
+            {
+                "window_hours": 72,
+                "opens": 60,
+                "closes": 55,
+                "forced_closes": 0,
+                "open_failed": 0,
+                "close_failed": 0,
+                "realized_pnl_usdt": 120.0,
+            }
+        )
+
+        rows = quality["paper_fill_liquidity_sensitivity"]
+        self.assertEqual([row["fill_ratio"] for row in rows], [1.0, 0.75, 0.5, 0.25])
+        self.assertEqual(quality["conservative_fill_liquidity"]["fill_ratio"], 0.5)
+        self.assertEqual(quality["conservative_fill_liquidity"]["filled_notional_per_trade_usdt"], 200.0)
+        self.assertEqual(quality["conservative_fill_liquidity"]["unfilled_notional_per_trade_usdt"], 200.0)
+        self.assertAlmostEqual(quality["conservative_fill_liquidity"]["pnl_after_cost_usdt"], 43.5)
+        self.assertEqual(quality["conservative_fill_liquidity"]["automation"], "disabled_report_only")
+
     def test_window_quality_flags_mature_low_profit_factor(self):
         profile = self.evolution.gate_profile_for(
             "A/v11",
@@ -378,6 +399,40 @@ class StrategyDecisionPacketTests(unittest.TestCase):
         self.assertEqual(packet["paper_cost_sensitivity"]["conservative_cost_pct"], 0.25)
         self.assertEqual(len(packet["paper_cost_sensitivity"]["window_24h"]), 4)
         self.assertEqual(packet["window_profit_factor"]["window_24h"]["status"], "weak")
+
+    def test_decision_packet_surfaces_fill_liquidity_risk(self):
+        fill_rows = self.evolution.build_paper_fill_liquidity_sensitivity(-10.0, 55)
+        post_approval = {
+            "windows": {
+                "24h": {
+                    "quality": {
+                        "closed_samples": 55,
+                        "required_closed_samples": 50,
+                        "paper_fill_liquidity_sensitivity": fill_rows,
+                        "conservative_fill_liquidity": fill_rows[2],
+                    }
+                },
+            }
+        }
+
+        packet = self.evolution.build_decision_packet(
+            {"proposal": "liquidity stress"},
+            {"shadow_pnl": 20, "original_pnl": 10, "sample_trades": 55},
+            "support",
+            {"pnl": 5},
+            {},
+            post_approval,
+            [],
+            "rollback_watch",
+            "investigate_live_degradation",
+            70,
+            40,
+        )
+
+        self.assertIn("24h fill_ratio_0.50 pnl -21.50", packet["risk"]["items"])
+        self.assertEqual(packet["paper_fill_liquidity"]["conservative_fill_ratio"], 0.5)
+        self.assertEqual(len(packet["paper_fill_liquidity"]["window_24h"]), 4)
+        self.assertEqual(packet["paper_fill_liquidity"]["automation"], "disabled_report_only")
 
     def test_rollback_review_keeps_decision_packet(self):
         decision = {

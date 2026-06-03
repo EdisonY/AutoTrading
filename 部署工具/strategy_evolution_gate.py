@@ -319,6 +319,8 @@ def priority_from(status: str) -> str:
 FEE_SLIPPAGE_ADJUSTMENT_PCT = 0.15  # 0.15% total cost per round-trip
 PAPER_COST_SENSITIVITY_PCTS = (0.10, 0.15, 0.25, 0.35)
 PAPER_CONSERVATIVE_COST_PCT = 0.25
+PAPER_FILL_LIQUIDITY_RATIOS = (1.0, 0.75, 0.5, 0.25)
+PAPER_CONSERVATIVE_FILL_RATIO = 0.5
 MIN_SAMPLE_TRADES = 30
 MIN_SAMPLE_FOR_P0 = 50
 MIN_SAMPLE_FOR_P1 = 30
@@ -488,6 +490,43 @@ def build_paper_cost_sensitivity(
                 "label": "base" if abs(pct - FEE_SLIPPAGE_ADJUSTMENT_PCT) < 1e-9 else (
                     "conservative" if abs(pct - PAPER_CONSERVATIVE_COST_PCT) < 1e-9 else "stress"
                 ),
+            }
+        )
+    return rows
+
+
+def build_paper_fill_liquidity_sensitivity(
+    realized_pnl: float,
+    closed_samples: int,
+    notional_per_trade: float = POST_APPROVAL_NOTIONAL_PER_TRADE,
+    cost_pct: float = FEE_SLIPPAGE_ADJUSTMENT_PCT,
+) -> list[dict[str, Any]]:
+    """Report-only target-size fill sensitivity for post-approval closed trades."""
+    target_notional = closed_samples * notional_per_trade
+    rows: list[dict[str, Any]] = []
+    for ratio in PAPER_FILL_LIQUIDITY_RATIOS:
+        fill_ratio = max(0.0, min(1.0, float(ratio)))
+        filled_notional = target_notional * fill_ratio
+        unfilled_notional = max(0.0, target_notional - filled_notional)
+        scaled_pnl = realized_pnl * fill_ratio
+        cost = filled_notional * cost_pct / 100.0
+        pnl_after_cost = scaled_pnl - cost
+        rows.append(
+            {
+                "fill_ratio": round(fill_ratio, 4),
+                "requested_notional_per_trade_usdt": round(notional_per_trade, 4),
+                "filled_notional_per_trade_usdt": round(notional_per_trade * fill_ratio, 4),
+                "unfilled_notional_per_trade_usdt": round(notional_per_trade * (1 - fill_ratio), 4),
+                "estimated_filled_notional_usdt": round(filled_notional, 4),
+                "estimated_unfilled_notional_usdt": round(unfilled_notional, 4),
+                "estimated_cost_usdt": round(cost, 4),
+                "pnl_after_cost_usdt": round(pnl_after_cost, 4),
+                "partial_fill": fill_ratio < 1.0,
+                "pnl_negative": pnl_after_cost < 0,
+                "label": "full" if fill_ratio == 1.0 else (
+                    "conservative" if abs(fill_ratio - PAPER_CONSERVATIVE_FILL_RATIO) < 1e-9 else "partial"
+                ),
+                "automation": "disabled_report_only",
             }
         )
     return rows
@@ -778,6 +817,7 @@ def classify_window_quality(metrics: dict[str, Any], gate_profile: dict[str, Any
     realized_pnl = to_float(metrics.get("realized_pnl_usdt"))
     pnl_after_cost = realized_pnl - cost
     cost_sensitivity = build_paper_cost_sensitivity(realized_pnl, closed_total)
+    fill_liquidity_sensitivity = build_paper_fill_liquidity_sensitivity(realized_pnl, closed_total)
     realized_profit = to_float(metrics.get("realized_profit_usdt"))
     realized_loss = to_float(metrics.get("realized_loss_usdt"))
     if realized_profit <= 0 and realized_loss <= 0 and abs(realized_pnl) > 0:
@@ -788,6 +828,10 @@ def classify_window_quality(metrics: dict[str, Any], gate_profile: dict[str, Any
     profit_factor = build_window_profit_factor(realized_profit, realized_loss, min_pf)
     conservative = next(
         (row for row in cost_sensitivity if abs(to_float(row.get("cost_pct")) - PAPER_CONSERVATIVE_COST_PCT) < 1e-9),
+        {},
+    )
+    conservative_fill = next(
+        (row for row in fill_liquidity_sensitivity if abs(to_float(row.get("fill_ratio")) - PAPER_CONSERVATIVE_FILL_RATIO) < 1e-9),
         {},
     )
     reasons: list[str] = []
@@ -832,6 +876,8 @@ def classify_window_quality(metrics: dict[str, Any], gate_profile: dict[str, Any
         "profit_factor": profit_factor,
         "paper_cost_sensitivity": cost_sensitivity,
         "conservative_cost": conservative,
+        "paper_fill_liquidity_sensitivity": fill_liquidity_sensitivity,
+        "conservative_fill_liquidity": conservative_fill,
         "reasons": reasons[:4],
     }
 
@@ -1367,6 +1413,12 @@ def build_decision_packet(
             pf_value = pf.get("profit_factor")
             pf_text = "none" if pf_value is None else f"{to_float(pf_value):.2f}"
             risks.append(f"{label} profit_factor {pf_text} < {to_float(pf.get('min_profit_factor')):.2f}")
+        conservative_fill = quality.get("conservative_fill_liquidity") or {}
+        if conservative_fill.get("partial_fill") and conservative_fill.get("pnl_negative"):
+            risks.append(
+                f"{label} fill_ratio_{to_float(conservative_fill.get('fill_ratio')):.2f} "
+                f"pnl {to_float(conservative_fill.get('pnl_after_cost_usdt')):.2f}"
+            )
     if acc_risk.get("sizing_violation_count"):
         risks.append(f"账户尺寸违规 {acc_risk.get('sizing_violation_count')}")
     if acc_risk.get("risk_count"):
@@ -1419,6 +1471,14 @@ def build_decision_packet(
         "window_profit_factor": {
             "window_24h": q24.get("profit_factor") or {},
             "window_72h": q72.get("profit_factor") or {},
+        },
+        "paper_fill_liquidity": {
+            "requested_notional_per_trade_usdt": POST_APPROVAL_NOTIONAL_PER_TRADE,
+            "base_cost_pct": FEE_SLIPPAGE_ADJUSTMENT_PCT,
+            "conservative_fill_ratio": PAPER_CONSERVATIVE_FILL_RATIO,
+            "window_24h": q24.get("paper_fill_liquidity_sensitivity") or [],
+            "window_72h": q72.get("paper_fill_liquidity_sensitivity") or [],
+            "automation": "disabled_report_only",
         },
         "gate_profile": {
             "profile_id": profile.get("profile_id"),

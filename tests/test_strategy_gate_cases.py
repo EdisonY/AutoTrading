@@ -1,4 +1,5 @@
 import json
+import importlib.util
 import sys
 import unittest
 from datetime import datetime, timedelta
@@ -15,6 +16,18 @@ sys.path.insert(0, str(PROJECT_ROOT / "策略文件"))
 sys.path.insert(0, str(PROJECT_ROOT / "交易客户端"))
 import scanner as scanner_module
 from scanner import Scanner, SimPosition
+
+
+def _load_strategy_module(module_name, file_name):
+    spec = importlib.util.spec_from_file_location(module_name, PROJECT_ROOT / "策略文件" / file_name)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+scanner_v16_module = _load_strategy_module("scanner_v16_for_gate_case_tests", "scanner_v16.py")
+scanner_v14_module = _load_strategy_module("scanner_v14_for_gate_case_tests", "scanner_v14.py")
 
 
 class _ScalarLike:
@@ -58,6 +71,17 @@ class _TradableClient:
 
     def get_symbol_rules(self, symbol):
         return SimpleNamespace(min_notional=0.0)
+
+
+class _LeverageClient:
+    def __init__(self):
+        self.calls = []
+
+    def set_leverage(self, symbol, leverage):
+        self.calls.append(("set_leverage", symbol, leverage))
+
+    def set_margin_type(self, symbol, margin_type):
+        self.calls.append(("set_margin_type", symbol, margin_type))
 
 
 class StrategyGateCasesTest(unittest.TestCase):
@@ -480,119 +504,217 @@ class StrategyGateCasesTest(unittest.TestCase):
         self.assertIn(("OPENUSDT", "long"), scanner.positions["15m"])
 
     def test_b_v16_successful_open_chain_cases_replay(self):
-        results = evaluate_strategy_gate_cases(
-            [
-                {
-                    "name": "b-confirm-pass",
-                    "gate": "b_v16_confirmation",
-                    "inputs": {
-                        "side": "long",
-                        "raw_score": 92,
-                        "confirm_signal": {"trade_side": "long", "net_score": 36},
-                        "open_positions": 1,
-                        "max_active_new_positions": 4,
-                        "no_confirm_high_score_pass": 95,
-                        "confirm_opposite_reject_score": 35,
-                        "opposite_high_score_pass": 90,
-                        "weak_confirm_pass_score": 88,
-                        "confirm_min_score": 25,
-                        "confirm_bonus": 5,
-                        "confirm_strong_bonus": 8,
-                    },
-                    "expected_allowed": True,
-                    "expected_reason": "15m确认36+8",
-                },
-                {
-                    "name": "b-threshold-pass",
-                    "gate": "b_v16_entry_threshold",
-                    "inputs": {
-                        "timeframe": "1h",
-                        "side": "long",
-                        "score": 92,
-                        "symbol": "BTCUSDT",
-                        "open_positions": 1,
-                        "confirm_reason": "15m确认36+8",
-                        "score_thresholds": {"1h": 80},
-                        "score_min": 80,
-                        "short_entry_penalty": 10,
-                        "major_symbols": ["BTCUSDT", "ETHUSDT"],
-                        "low_position_threshold_discount": 5,
-                        "no_confirm_threshold_penalty": 8,
-                        "weak_opposite_confirm_penalty": 4,
-                        "confirm_bonus": 5,
-                        "confirm_strong_bonus": 8,
-                    },
-                    "expected_allowed": True,
-                    "expected_reason": "threshold_pass",
-                },
-                {
-                    "name": "b-open-execution",
-                    "gate": "execution_result",
-                    "inputs": {
-                        "success": True,
-                        "preflight_rejected": False,
-                        "code": "",
-                        "message": "",
-                    },
-                    "expected_allowed": True,
-                    "expected_reason": "execution_success",
-                },
-            ]
+        scanner = scanner_v16_module.ScannerV16.__new__(scanner_v16_module.ScannerV16)
+        scanner.positions = {"1h": {}, "15m": {}}
+        scanner.cooldowns = {"1h": {}, "15m": {}}
+        scanner.risk_engine = RiskEngine(RiskLimits(
+            max_total_positions=20,
+            max_positions_per_side=12,
+            min_available_balance_pct=0.25,
+            min_available_balance_usdt=300,
+        ))
+        scanner.execution = _OpenExecution(
+            ExecutionResult(True, "open", "BOPENUSDT", "long", quantity=4.0, order_id="b-open-1", raw={"orderId": "b-open-1"})
         )
+        sig = {
+            "symbol": "BOPENUSDT",
+            "trade_side": "long",
+            "price": 100,
+            "atr": 2,
+            "sl_long": 95,
+            "tp_long": 115,
+            "sl_short": 105,
+            "tp_short": 85,
+            "reasons_long": ["test"],
+            "reasons_short": [],
+            "cvd": 1.0,
+            "ofi": 0.5,
+            "sl_mult": 2.0,
+        }
+        confirm_case = {
+            "name": "b_v16_confirmation",
+            "gate": "b_v16_confirmation",
+            "inputs": {
+                "side": "long",
+                "raw_score": 92,
+                "confirm_signal": {"trade_side": "long", "net_score": 36},
+                "open_positions": 1,
+                "max_active_new_positions": 4,
+                "no_confirm_high_score_pass": 95,
+                "confirm_opposite_reject_score": 35,
+                "opposite_high_score_pass": 90,
+                "weak_confirm_pass_score": 88,
+                "confirm_min_score": 25,
+                "confirm_bonus": 5,
+                "confirm_strong_bonus": 8,
+            },
+            "expected_allowed": True,
+            "expected_reason": "15m确认36+8",
+        }
+        threshold_case = {
+            "name": "b_v16_entry_threshold",
+            "gate": "b_v16_entry_threshold",
+            "inputs": {
+                "timeframe": "1h",
+                "side": "long",
+                "score": 92,
+                "symbol": "BOPENUSDT",
+                "open_positions": 1,
+                "confirm_reason": "15m确认36+8",
+                "score_thresholds": {"1h": 38, "15m": 55},
+                "score_min": 35,
+                "short_entry_penalty": 8,
+                "major_symbols": list(scanner_v16_module.MAJOR_SYMBOLS),
+                "low_position_threshold_discount": scanner_v16_module.LOW_POSITION_THRESHOLD_DISCOUNT,
+                "no_confirm_threshold_penalty": scanner_v16_module.NO_CONFIRM_THRESHOLD_PENALTY,
+                "weak_opposite_confirm_penalty": scanner_v16_module.WEAK_OPPOSITE_CONFIRM_PENALTY,
+                "confirm_bonus": scanner_v16_module.CONFIRM_BONUS,
+                "confirm_strong_bonus": scanner_v16_module.CONFIRM_STRONG_BONUS,
+            },
+            "expected_allowed": True,
+            "expected_reason": "threshold_pass",
+        }
+        events = []
+        cached_state = SimpleNamespace(
+            positions=[],
+            balance={"totalWalletBalance": "5000", "availableBalance": "4500"},
+        )
+        original_log_event = scanner_v16_module.log_event
+        original_load_cached = scanner_v16_module.load_cached_account_state
+        original_logger_disabled = scanner_v16_module.logger.disabled
+        scanner_v16_module.log_event = events.append
+        scanner_v16_module.load_cached_account_state = lambda root, strategy: cached_state
+        scanner_v16_module.logger.disabled = True
+        try:
+            opened = scanner._open_position(
+                "1h",
+                "BOPENUSDT",
+                sig,
+                "long",
+                92,
+                "15m确认36+8",
+                open_chain_cases=[confirm_case, threshold_case],
+            )
+        finally:
+            scanner_v16_module.log_event = original_log_event
+            scanner_v16_module.load_cached_account_state = original_load_cached
+            scanner_v16_module.logger.disabled = original_logger_disabled
 
-        self.assertEqual([row["gate"] for row in results], ["b_v16_confirmation", "b_v16_entry_threshold", "execution_result"])
-        self.assertEqual([row["passed"] for row in results], [True, True, True])
+        self.assertTrue(opened)
+        self.assertEqual(events[0]["event"], "OPEN")
+        cases = events[0]["strategy_gate_cases"]
+        self.assertEqual([case["gate"] for case in cases], [
+            "b_v16_confirmation",
+            "b_v16_entry_threshold",
+            "no_same_symbol_position",
+            "account_state_available",
+            "entry_risk",
+            "positive_quantity",
+            "execution_result",
+        ])
+        self.assertEqual([row["passed"] for row in evaluate_strategy_gate_cases(cases)], [True] * len(cases))
+        self.assertIn("BOPENUSDT", scanner.positions["1h"])
 
     def test_c_v14_successful_open_chain_cases_replay(self):
-        results = evaluate_strategy_gate_cases(
-            [
-                {
-                    "name": "c-confirm-pass",
-                    "gate": "c_v14_confirmation",
-                    "inputs": {
-                        "side": "long",
-                        "entry_score": 72,
-                        "confirm_signal": {"trade_side": "long", "net_score": 35, "can_trade": True},
-                        "confirm_timeframe": "15m",
-                        "no_confirm_high_score_pass": 80,
-                        "weak_confirm_min_score": 20,
-                        "confirm_min_score": 25,
-                    },
-                    "expected_allowed": True,
-                    "expected_reason": "15m确认35",
-                },
-                {
-                    "name": "c-tail-pass",
-                    "gate": "c_v14_tail_guard",
-                    "inputs": {
-                        "signal": {"net_score": 72, "bb_pos": 55, "rsi": 52, "vol_ratio": 1.4, "atr_pct": 0.02},
-                        "side": "long",
-                        "tail_guard_min_score": 70,
-                        "tail_guard_long_bb_pos": 75,
-                        "tail_guard_short_bb_pos": 25,
-                        "tail_guard_min_vol_ratio": 1.2,
-                        "tail_guard_max_atr_pct": 0.08,
-                    },
-                    "expected_allowed": True,
-                    "expected_reason": "tail_guard_pass_high_score",
-                },
-                {
-                    "name": "c-open-execution",
-                    "gate": "execution_result",
-                    "inputs": {
-                        "success": True,
-                        "preflight_rejected": False,
-                        "code": "",
-                        "message": "",
-                    },
-                    "expected_allowed": True,
-                    "expected_reason": "execution_success",
-                },
-            ]
+        scanner = scanner_v14_module.Scanner.__new__(scanner_v14_module.Scanner)
+        scanner.positions = {"1h": {}, "15m": {}}
+        scanner.cooldowns = {"1h": {}, "15m": {}}
+        scanner.recent_entry_prices = {}
+        scanner.leverage = 4
+        scanner.client = _LeverageClient()
+        scanner.risk_engine = RiskEngine(RiskLimits(
+            max_total_positions=20,
+            max_positions_per_side=12,
+            min_available_balance_pct=0.25,
+            min_available_balance_usdt=300,
+        ))
+        scanner.execution = _OpenExecution(
+            ExecutionResult(True, "open", "COPENUSDT", "long", quantity=4.0, order_id="c-open-1", raw={"orderId": "c-open-1"})
         )
+        sig = {
+            "symbol": "COPENUSDT",
+            "timeframe": "1h",
+            "trade_side": "long",
+            "net_score": 72,
+            "price": 100,
+            "atr": 2,
+            "atr_pct": 0.02,
+            "bb_pos": 55,
+            "rsi": 52,
+            "adx": 25,
+            "vol_ratio": 1.4,
+            "mfi": 50,
+            "st_flipped": False,
+            "sl_long": 95,
+            "tp_long": 115,
+            "sl_short": 105,
+            "tp_short": 85,
+            "reasons_long": ["test"],
+            "reasons_short": [],
+        }
+        confirm_case = {
+            "name": "c_v14_confirmation",
+            "gate": "c_v14_confirmation",
+            "inputs": {
+                "side": "long",
+                "entry_score": 72,
+                "confirm_signal": {"trade_side": "long", "net_score": 35, "can_trade": True},
+                "confirm_timeframe": "15m",
+                "no_confirm_high_score_pass": 80,
+                "weak_confirm_min_score": 20,
+                "confirm_min_score": 25,
+            },
+            "expected_allowed": True,
+            "expected_reason": "15m确认35",
+        }
+        tail_case = {
+            "name": "c_v14_tail_guard",
+            "gate": "c_v14_tail_guard",
+            "inputs": {
+                "signal": sig,
+                "side": "long",
+                "tail_guard_min_score": 70,
+                "tail_guard_long_bb_pos": 75,
+                "tail_guard_short_bb_pos": 25,
+                "tail_guard_min_vol_ratio": 1.2,
+                "tail_guard_max_atr_pct": 0.08,
+            },
+            "expected_allowed": True,
+            "expected_reason": "tail_guard_pass_high_score",
+        }
+        events = []
+        cached_state = SimpleNamespace(
+            positions=[],
+            balance={"totalWalletBalance": "5000", "availableBalance": "4500"},
+        )
+        original_log_event = scanner_v14_module.log_event
+        original_load_cached = scanner_v14_module.load_cached_account_state
+        original_logger_disabled = scanner_v14_module.logger.disabled
+        scanner_v14_module.log_event = events.append
+        scanner_v14_module.load_cached_account_state = lambda root, strategy: cached_state
+        scanner_v14_module.logger.disabled = True
+        try:
+            scanner._open_position(sig, "2026-06-03 22:00:00", open_chain_cases=[confirm_case, tail_case])
+        finally:
+            scanner_v14_module.log_event = original_log_event
+            scanner_v14_module.load_cached_account_state = original_load_cached
+            scanner_v14_module.logger.disabled = original_logger_disabled
 
-        self.assertEqual([row["gate"] for row in results], ["c_v14_confirmation", "c_v14_tail_guard", "execution_result"])
-        self.assertEqual([row["passed"] for row in results], [True, True, True])
+        self.assertEqual(events[0]["event"], "OPEN")
+        cases = events[0]["strategy_gate_cases"]
+        self.assertEqual([case["gate"] for case in cases], [
+            "c_v14_confirmation",
+            "c_v14_tail_guard",
+            "no_same_symbol_position",
+            "account_state_available",
+            "entry_risk",
+            "c_v14_stale_entry_price",
+            "c_v14_market_microstructure",
+            "positive_quantity",
+            "execution_result",
+        ])
+        self.assertEqual([row["passed"] for row in evaluate_strategy_gate_cases(cases)], [True] * len(cases))
+        self.assertIn(("COPENUSDT", "long"), scanner.positions["1h"])
 
     def test_strategy_gate_case_is_json_safe_and_replayable(self):
         decision = evaluate_symbol_blacklist_gate(

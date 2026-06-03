@@ -1160,10 +1160,19 @@ class Scanner:
             return 0.0, 0.0
         return usdt_balance_summary(cached_state.balance)
 
-    def _can_open_new_position(self, risk_usdt: float, now_str: str, tf: str, sym: str, side: str, score: float) -> bool:
+    def _can_open_new_position(self, risk_usdt: float, now_str: str, tf: str, sym: str, side: str, score: float, return_cases: bool = False):
+        cases = []
         try:
             cached_state = load_cached_account_state(PROJECT_ROOT, "C/v14")
             state_gate = evaluate_account_state_available_gate(account_state_available=bool(cached_state))
+            state_case = strategy_gate_case(
+                name="c_v14_account_state_available",
+                gate="account_state_available",
+                inputs={"account_state_available": bool(cached_state)},
+                decision=state_gate,
+                meta={"strategy": "C/v14", "timeframe": tf},
+            )
+            cases.append(state_case)
             if not state_gate.allowed:
                 logger.info(f"  ⏸️ [{tf}] {sym} 中心账户状态不可用，暂停新开仓以避免 signed REST 压力")
                 log_event({
@@ -1173,22 +1182,23 @@ class Scanner:
                     "risk_category": "account_state_unavailable",
                     "decision_stage": "risk_gate",
                     "filter_layer": "risk",
-                    "strategy_gate_case": strategy_gate_case(
-                        name="c_v14_account_state_available",
-                        gate="account_state_available",
-                        inputs={"account_state_available": False},
-                        decision=state_gate,
-                        meta={"strategy": "C/v14", "timeframe": tf},
-                    ),
+                    "strategy_gate_case": state_case,
                     **sentinel_fields(sym),
                 })
-                return False
+                return (False, cases) if return_cases else False
             exchange_positions = cached_state.positions
             total_positions = max(self._total_local_positions(), count_active_positions(exchange_positions))
             side_count = count_side_positions(exchange_positions, side)
         except Exception as e:
             logger.debug(f"  开仓风控快照读取失败: {e}")
             state_gate = evaluate_account_state_available_gate(account_state_available=False, read_error=True)
+            state_case = strategy_gate_case(
+                name="c_v14_account_state_read_failed",
+                gate="account_state_available",
+                inputs={"account_state_available": False, "read_error": True},
+                decision=state_gate,
+                meta={"strategy": "C/v14", "timeframe": tf, "error": str(e)[:160]},
+            )
             log_event({
                 "time": now_str, "event": "OPEN_SKIPPED", "symbol": sym,
                 "side": side, "score": score, "timeframe": tf,
@@ -1196,16 +1206,10 @@ class Scanner:
                 "risk_category": "account_state_unavailable",
                 "decision_stage": "risk_gate",
                 "filter_layer": "risk",
-                "strategy_gate_case": strategy_gate_case(
-                    name="c_v14_account_state_read_failed",
-                    gate="account_state_available",
-                    inputs={"account_state_available": False, "read_error": True},
-                    decision=state_gate,
-                    meta={"strategy": "C/v14", "timeframe": tf, "error": str(e)[:160]},
-                ),
+                "strategy_gate_case": state_case,
                 **sentinel_fields(sym),
             })
-            return False
+            return (False, [state_case]) if return_cases else False
         balance = cached_state.balance
         decision = self.risk_engine.check_entry(
             total_positions=total_positions,
@@ -1225,6 +1229,23 @@ class Scanner:
                 min_available_balance_pct=self.risk_engine.limits.min_available_balance_pct,
                 min_available_balance_usdt=self.risk_engine.limits.min_available_balance_usdt,
             )
+            risk_case = strategy_gate_case(
+                name="c_v14_entry_risk",
+                gate="entry_risk",
+                inputs={
+                    "total_positions": decision.total_positions,
+                    "side_positions": decision.side_positions,
+                    "total_balance": decision.total_balance,
+                    "available_balance": decision.available_balance,
+                    "risk_usdt": risk_usdt,
+                    "max_total_positions": self.risk_engine.limits.max_total_positions,
+                    "max_positions_per_side": self.risk_engine.limits.max_positions_per_side,
+                    "min_available_balance_pct": self.risk_engine.limits.min_available_balance_pct,
+                    "min_available_balance_usdt": self.risk_engine.limits.min_available_balance_usdt,
+                },
+                decision=risk_gate,
+                meta={"strategy": "C/v14", "timeframe": tf},
+            )
             logger.info(f"  ⏭️ [{tf}] {sym} {decision.reason}，暂停新开仓")
             log_event({
                 "time": now_str, "event": "OPEN_SKIPPED", "symbol": sym,
@@ -1237,27 +1258,39 @@ class Scanner:
                 "reserve": round(decision.reserve_required, 4),
                 "decision_stage": "risk_gate",
                 "filter_layer": "risk",
-                "strategy_gate_case": strategy_gate_case(
-                    name="c_v14_entry_risk",
-                    gate="entry_risk",
-                    inputs={
-                        "total_positions": decision.total_positions,
-                        "side_positions": decision.side_positions,
-                        "total_balance": decision.total_balance,
-                        "available_balance": decision.available_balance,
-                        "risk_usdt": risk_usdt,
-                        "max_total_positions": self.risk_engine.limits.max_total_positions,
-                        "max_positions_per_side": self.risk_engine.limits.max_positions_per_side,
-                        "min_available_balance_pct": self.risk_engine.limits.min_available_balance_pct,
-                        "min_available_balance_usdt": self.risk_engine.limits.min_available_balance_usdt,
-                    },
-                    decision=risk_gate,
-                    meta={"strategy": "C/v14", "timeframe": tf},
-                ),
+                "strategy_gate_case": risk_case,
                 **sentinel_fields(sym),
             })
-            return False
-        return True
+            return (False, [*cases, risk_case]) if return_cases else False
+        risk_gate = evaluate_entry_risk_gate(
+            total_positions=decision.total_positions,
+            side_positions=decision.side_positions,
+            total_balance=decision.total_balance,
+            available_balance=decision.available_balance,
+            risk_usdt=risk_usdt,
+            max_total_positions=self.risk_engine.limits.max_total_positions,
+            max_positions_per_side=self.risk_engine.limits.max_positions_per_side,
+            min_available_balance_pct=self.risk_engine.limits.min_available_balance_pct,
+            min_available_balance_usdt=self.risk_engine.limits.min_available_balance_usdt,
+        )
+        risk_case = strategy_gate_case(
+            name="c_v14_entry_risk",
+            gate="entry_risk",
+            inputs={
+                "total_positions": decision.total_positions,
+                "side_positions": decision.side_positions,
+                "total_balance": decision.total_balance,
+                "available_balance": decision.available_balance,
+                "risk_usdt": risk_usdt,
+                "max_total_positions": self.risk_engine.limits.max_total_positions,
+                "max_positions_per_side": self.risk_engine.limits.max_positions_per_side,
+                "min_available_balance_pct": self.risk_engine.limits.min_available_balance_pct,
+                "min_available_balance_usdt": self.risk_engine.limits.min_available_balance_usdt,
+            },
+            decision=risk_gate,
+            meta={"strategy": "C/v14", "timeframe": tf},
+        )
+        return (True, [*cases, risk_case]) if return_cases else True
 
     def _has_position(self, sym: str, side: str = None) -> bool:
         """检查是否已有某币种/方向的持仓（跨周期）"""
@@ -2091,6 +2124,7 @@ class Scanner:
     def _open_position(self, sig: dict, now_str: str, open_chain_cases=None):
         """开仓"""
         open_chain_cases = list(open_chain_cases or [])
+        runtime_chain_cases = []
         tf = sig["timeframe"]
         side = sig["trade_side"]
         net_score = sig["net_score"]
@@ -2151,9 +2185,30 @@ class Scanner:
                 **sentinel_fields(inst_id),
             })
             return
+        position_case = strategy_gate_case(
+            name="c_v14_no_same_symbol_position",
+            gate="no_same_symbol_position",
+            inputs={
+                "has_exchange_position": bool(existing_exchange_pos),
+                "has_local_position": self._has_position(inst_id),
+            },
+            decision=position_gate,
+            meta={"strategy": "C/v14", "timeframe": tf, "chain_step": "position_duplicate"},
+        )
+        runtime_chain_cases.append(position_case)
 
-        if not self._can_open_new_position(risk_usdt, now_str, tf, inst_id, side, abs_score):
+        risk_allowed, risk_cases = self._can_open_new_position(
+            risk_usdt,
+            now_str,
+            tf,
+            inst_id,
+            side,
+            abs_score,
+            return_cases=True,
+        )
+        if not risk_allowed:
             return
+        runtime_chain_cases.extend(risk_cases)
 
         # 价格停滞检测
         recent_prices = self.recent_entry_prices.get(inst_id, [])
@@ -2177,6 +2232,14 @@ class Scanner:
                 **sentinel_fields(inst_id),
             })
             return
+        stale_price_case = strategy_gate_case(
+            name="c_v14_stale_entry_price",
+            gate="c_v14_stale_entry_price",
+            inputs={"recent_prices": recent_prices},
+            decision=stale_price_gate,
+            meta={"strategy": "C/v14", "timeframe": tf, "chain_step": "stale_entry_price"},
+        )
+        runtime_chain_cases.append(stale_price_case)
 
         # ATR保护
         market_gate = evaluate_c_v14_market_microstructure_gate(atr=atr)
@@ -2198,6 +2261,14 @@ class Scanner:
                 **sentinel_fields(inst_id),
             })
             return
+        market_case = strategy_gate_case(
+            name="c_v14_market_microstructure",
+            gate="c_v14_market_microstructure",
+            inputs={"atr": atr},
+            decision=market_gate,
+            meta={"strategy": "C/v14", "timeframe": tf, "chain_step": "market_microstructure"},
+        )
+        runtime_chain_cases.append(market_case)
 
         # 设置杠杆和保证金类型
         self.client.set_leverage(inst_id, self.leverage)
@@ -2234,6 +2305,14 @@ class Scanner:
                 **sentinel_fields(inst_id),
             })
             return
+        quantity_case = strategy_gate_case(
+            name="c_v14_positive_quantity",
+            gate="positive_quantity",
+            inputs={"quantity": qty},
+            decision=quantity_gate,
+            meta={"strategy": "C/v14", "timeframe": tf, "chain_step": "positive_quantity"},
+        )
+        runtime_chain_cases.append(quantity_case)
 
         exec_result = self.execution.open_position(OpenRequest(
             symbol=inst_id,
@@ -2370,6 +2449,7 @@ class Scanner:
             "order_id": order_id,
             "strategy_gate_cases": [
                 *open_chain_cases,
+                *runtime_chain_cases,
                 _execution_result_case(
                     "c_v14_open_execution_result",
                     exec_result,

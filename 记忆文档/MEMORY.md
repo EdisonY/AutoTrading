@@ -316,6 +316,7 @@
 - 2026-06-03：P0-B A/v11 replacement orchestration 第一刀已离线落地。A/v11 scan-level 周期池满替换拒绝写 `replacement_signal + pool_capacity` exact chain；强制替换 open-flow 若找不到可释放弱仓，会追加 `replacement_release_result` 失败 gate。没有启动/重启服务；仍需继续补候选枚举、close 结果和 B/C 风控执行链。
 - 2026-06-03：P0-B entry-risk exact case 已离线落地。新增 `entry_risk` pure gate，A/B/C 风控拒绝会写总仓位、方向仓位、余额 reserve 保护的 exact case。没有启动/重启服务，也没有改风控阈值；后续继续补确认/执行链和历史同输入 replay。
 - 2026-06-03：P0-B execution failure exact case 已离线落地。A/B/C 非 preflight 的 `OPEN_FAILED` 现在也写 `execution_result` exact case，异常分支也可回放；没有启动/重启服务，也没有改下单逻辑。后续继续补 close/confirm 链和历史同输入 replay。
+- 2026-06-03：P0-B B/C 成功开仓 runtime 链已离线落地。B/v16 成功 `OPEN` 现在除 confirmation/threshold/execution 外，还写 duplicate-position、central account-state、entry-risk、positive-quantity pass case；C/v14 成功 `OPEN` 还写 stale-price 与 market-microstructure pass case。没有启动/重启服务，也没有改阈值、风控或下单逻辑；后续继续补 A/v11 post-open sizing cleanup success context 和历史同输入 replay 结论。
 
 ---
 ## 2026-05-29 全局运行自检与账户方向口径修复

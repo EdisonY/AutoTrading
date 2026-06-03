@@ -24,7 +24,8 @@
    - 2026-06-03 20:57 补充：A/v11、B/v16、C/v14 成功 `OPEN` 事件现在写入 `execution_result` exact case，strict audit 可验证执行成功/确认成功，不再把成功开仓全部当 missing-case gap。
    - 2026-06-03 21:10 补充：B/v16 成功 `OPEN` 事件现在写入 `[confirmation, entry_threshold, execution_result]` exact chain；C/v14 成功 `OPEN` 事件现在写入 `[confirmation, tail_guard, execution_result]` exact chain。B/C 成功开仓已从单 execution proof 前进到第一版 orchestration proof。
    - 2026-06-03 21:38 补充：A/v11 成功 `OPEN` 事件现在写入第一版 open-success orchestration chain。普通 Hanmuxia 开仓包含 entry-threshold、resonance-required（如适用）、pool-capacity、market/tradability/position/sizing/account-state/risk 和 execution；VPB 开仓不伪装成 Hanmuxia threshold pass，只带 shared pool/safety/risk/sizing/execution context；replacement 成功开仓会把 release cases 并入最终 `OPEN`。同时修复 A/v11 成功执行后 `min_notional_adjustment` 与 margin bounds 未定义的旧隐患。
-   - 未完成：历史事件驱动的同输入 replay/live 结论一致性测试仍需扩大；B/C 成功开仓的 risk/position/execution-confirmation context chain 仍需扩展；A/v11 仍可继续把 post-open sizing cleanup 成功链与完整持仓确认状态做更细分。没有 exact case 的行只能算 coverage gap，不能算 replay/live parity 已通过。
+   - 2026-06-03 21:50 补充：B/v16 成功 `OPEN` 事件现在把 runtime pass context 扩到 duplicate-position、central account-state、entry-risk、positive-quantity；C/v14 成功 `OPEN` 事件现在把 runtime pass context 扩到 duplicate-position、central account-state、entry-risk、stale-price、market-microstructure、positive-quantity。B/C 成功开仓 risk/position/quantity/market context gap 已补第一版。
+   - 未完成：历史事件驱动的同输入 replay/live 结论一致性测试仍需扩大；A/v11 仍可继续把 post-open sizing cleanup 成功链与完整持仓确认状态做更细分；没有 exact case 的行只能算 coverage gap，不能算 replay/live parity 已通过。
    - 验收：给定同一时间、币种、上下文，replay 与 live 入场/否决结论一致；关键 OPEN_SKIPPED/OPEN_FAILED 无未知 gate。
 
 ### Long-term P1 - P0 稳住后并行推进

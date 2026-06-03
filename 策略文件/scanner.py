@@ -126,6 +126,7 @@ from core.strategy_gates import (
     evaluate_a_v11_releasable_position,
     evaluate_a_v11_replacement_signal,
     evaluate_a_v11_resonance_required_gate,
+    evaluate_entry_risk_gate,
     evaluate_execution_result_gate,
     evaluate_no_same_symbol_position_gate,
     evaluate_symbol_blacklist_gate,
@@ -1107,6 +1108,17 @@ class Scanner:
             risk_usdt=risk_usdt,
         )
         if not decision.allowed:
+            risk_gate = evaluate_entry_risk_gate(
+                total_positions=decision.total_positions,
+                side_positions=decision.side_positions,
+                total_balance=decision.total_balance,
+                available_balance=decision.available_balance,
+                risk_usdt=risk_usdt,
+                max_total_positions=self.risk_engine.limits.max_total_positions,
+                max_positions_per_side=self.risk_engine.limits.max_positions_per_side,
+                min_available_balance_pct=self.risk_engine.limits.min_available_balance_pct,
+                min_available_balance_usdt=self.risk_engine.limits.min_available_balance_usdt,
+            )
             logger.info(f"  ⏭️ [{tf}] {sym} {decision.reason}，暂停新开仓")
             log_event({
                 "time": now_str, "event": "OPEN_SKIPPED", "symbol": sym,
@@ -1119,6 +1131,23 @@ class Scanner:
                 "reserve": round(decision.reserve_required, 4),
                 "decision_stage": "risk_gate",
                 "filter_layer": "risk",
+                "strategy_gate_case": strategy_gate_case(
+                    name="a_v11_entry_risk",
+                    gate="entry_risk",
+                    inputs={
+                        "total_positions": decision.total_positions,
+                        "side_positions": decision.side_positions,
+                        "total_balance": decision.total_balance,
+                        "available_balance": decision.available_balance,
+                        "risk_usdt": risk_usdt,
+                        "max_total_positions": self.risk_engine.limits.max_total_positions,
+                        "max_positions_per_side": self.risk_engine.limits.max_positions_per_side,
+                        "min_available_balance_pct": self.risk_engine.limits.min_available_balance_pct,
+                        "min_available_balance_usdt": self.risk_engine.limits.min_available_balance_usdt,
+                    },
+                    decision=risk_gate,
+                    meta={"strategy": "A/v11", "timeframe": tf},
+                ),
                 **sentinel_fields(sym),
             })
             return False

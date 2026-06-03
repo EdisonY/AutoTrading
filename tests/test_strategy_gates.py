@@ -21,6 +21,7 @@ from core.strategy_gates import (
     evaluate_c_v14_stale_entry_price_gate,
     evaluate_c_v14_tail_guard,
     evaluate_consecutive_loss_cooldown_gate,
+    evaluate_entry_risk_gate,
     evaluate_execution_result_gate,
     evaluate_no_same_symbol_position_gate,
     evaluate_positive_quantity_gate,
@@ -51,6 +52,63 @@ class StrategyGateParityTest(unittest.TestCase):
         failed = evaluate_account_state_available_gate(account_state_available=False, read_error=True)
         self.assertFalse(failed.allowed)
         self.assertEqual(failed.reason, "account_state_read_failed")
+
+    def test_entry_risk_gate(self):
+        total_limit = evaluate_entry_risk_gate(
+            total_positions=30,
+            side_positions=4,
+            total_balance=5000,
+            available_balance=2000,
+            risk_usdt=100,
+            max_total_positions=30,
+            max_positions_per_side=12,
+            min_available_balance_pct=0.25,
+            min_available_balance_usdt=300,
+        )
+        self.assertFalse(total_limit.allowed)
+        self.assertEqual(total_limit.reason, "总持仓30>=30")
+
+        side_limit = evaluate_entry_risk_gate(
+            total_positions=4,
+            side_positions=12,
+            total_balance=5000,
+            available_balance=2000,
+            risk_usdt=100,
+            max_total_positions=30,
+            max_positions_per_side=12,
+            min_available_balance_pct=0.25,
+            min_available_balance_usdt=300,
+        )
+        self.assertFalse(side_limit.allowed)
+        self.assertEqual(side_limit.reason, "方向持仓12>=12")
+
+        capital_guard = evaluate_entry_risk_gate(
+            total_positions=4,
+            side_positions=3,
+            total_balance=1000,
+            available_balance=340,
+            risk_usdt=100,
+            max_total_positions=30,
+            max_positions_per_side=12,
+            min_available_balance_pct=0.25,
+            min_available_balance_usdt=300,
+        )
+        self.assertFalse(capital_guard.allowed)
+        self.assertEqual(capital_guard.reason, "可用余额保护 available=340.00, reserve=300.00")
+
+        allowed = evaluate_entry_risk_gate(
+            total_positions=4,
+            side_positions=3,
+            total_balance=1000,
+            available_balance=500,
+            risk_usdt=100,
+            max_total_positions=30,
+            max_positions_per_side=12,
+            min_available_balance_pct=0.25,
+            min_available_balance_usdt=300,
+        )
+        self.assertTrue(allowed.allowed)
+        self.assertEqual(allowed.reason, "entry_risk_allowed")
 
     def test_tradability_gate(self):
         ok = evaluate_tradability_gate(tradable=True, reason="")

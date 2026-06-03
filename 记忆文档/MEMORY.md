@@ -309,6 +309,7 @@
 - 2026-06-03：P0-B scan-level exact parity 已离线落地。`replay_live_parity_audit.py` 现在单独读取 `sentinel_scans` 前置 gate rows，分开报告 open-flow 与 scan-level exact coverage/pass/mismatch/error；A/v11 前置 blacklist/timeframe/stop-loss cooldown/symbol cooldown/threshold、B/v16 score-max、C/v14 blacklist/timeframe/symbol cooldown/same-side/score-max/stop-loss/sector 写入 exact case。`symbol_cooldown` 已支持 ISO datetime 回放。没有启动/重启服务；剩余重点转向 orchestration parity。
 - 2026-06-03：P0-B orchestration parity 第一刀已离线落地。B/v16 threshold reject 事件现在写 `strategy_gate_cases=[confirmation, threshold]`，C/v14 tail-guard reject 事件现在写 `strategy_gate_cases=[confirmation, tail_guard]`；strict audit 单测证明一行可计多条 exact cases。没有启动/重启服务；后续继续补 A/v11 replacement close/open 链和 B/C risk/execution 链。
 - 2026-06-03：P0-B A/v11 replacement orchestration 第一刀已离线落地。A/v11 scan-level 周期池满替换拒绝写 `replacement_signal + pool_capacity` exact chain；强制替换 open-flow 若找不到可释放弱仓，会追加 `replacement_release_result` 失败 gate。没有启动/重启服务；仍需继续补候选枚举、close 结果和 B/C 风控执行链。
+- 2026-06-03：P0-B entry-risk exact case 已离线落地。新增 `entry_risk` pure gate，A/B/C 风控拒绝会写总仓位、方向仓位、余额 reserve 保护的 exact case。没有启动/重启服务，也没有改风控阈值；后续继续补确认/执行链和历史同输入 replay。
 
 ---
 ## 2026-05-29 全局运行自检与账户方向口径修复

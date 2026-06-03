@@ -306,6 +306,51 @@ def evaluate_active_position_limit_gate(
     return StrategyGateDecision(True, "risk_gate", "active_position_limit_ok", evidence={"open_positions": count})
 
 
+def evaluate_entry_risk_gate(
+    *,
+    total_positions: int,
+    side_positions: int,
+    total_balance: float,
+    available_balance: float,
+    risk_usdt: float,
+    max_total_positions: int,
+    max_positions_per_side: int,
+    min_available_balance_pct: float,
+    min_available_balance_usdt: float,
+) -> StrategyGateDecision:
+    """Evaluate shared entry risk limits without touching account state."""
+    total_count = int(total_positions or 0)
+    side_count = int(side_positions or 0)
+    total = float(total_balance or 0.0)
+    available = float(available_balance or 0.0)
+    risk = float(risk_usdt or 0.0)
+    max_total = int(max_total_positions)
+    max_side = int(max_positions_per_side)
+    reserve = max(float(min_available_balance_usdt), total * float(min_available_balance_pct))
+    evidence = {
+        "total_positions": total_count,
+        "side_positions": side_count,
+        "total_balance": total,
+        "available_balance": available,
+        "risk_usdt": risk,
+        "reserve_required": reserve,
+        "max_total_positions": max_total,
+        "max_positions_per_side": max_side,
+    }
+    if total_count >= max_total:
+        return StrategyGateDecision(False, "risk_gate", f"总持仓{total_count}>={max_total}", evidence={**evidence, "category": "position_limit"})
+    if side_count >= max_side:
+        return StrategyGateDecision(False, "risk_gate", f"方向持仓{side_count}>={max_side}", evidence={**evidence, "category": "side_limit"})
+    if available < risk + reserve:
+        return StrategyGateDecision(
+            False,
+            "risk_gate",
+            f"可用余额保护 available={available:.2f}, reserve={reserve:.2f}",
+            evidence={**evidence, "category": "capital_guard"},
+        )
+    return StrategyGateDecision(True, "risk_gate", "entry_risk_allowed", evidence={**evidence, "category": "allowed"})
+
+
 def evaluate_positive_quantity_gate(
     *,
     quantity: float,

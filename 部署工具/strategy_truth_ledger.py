@@ -31,11 +31,13 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from core.replay_fill import ReplayFillRequest, simulate_replay_fill
+from core.replay_depth_cache import default_depth_cache_dirs, load_depth_snapshot
 from core.replay_kline_source import load_research_store_kline_rows
 
 CST = timezone(timedelta(hours=8))
 KLINE_CACHE_LIMITS = (100, 200, 500, 1000)
 RECOVERY_REPLAY_TIMEFRAMES = ("15m", "30m", "1h")
+DEPTH_CACHE_MAX_AGE_SEC = 300.0
 
 STRATEGY_MAP = {
     "A/v11": {"account": "A", "name": "半木夏"},
@@ -762,6 +764,13 @@ def build_recovery_bar_replay_evidence(pos: dict[str, Any]) -> dict[str, Any]:
         if not bars:
             attempts.append({"timeframe": timeframe, "status": "missing_bars", "kline_source": source})
             continue
+        depth_snapshot = load_depth_snapshot(
+            symbol,
+            first_seen,
+            side=side,
+            cache_dirs=default_depth_cache_dirs(ROOT),
+            max_age_seconds=DEPTH_CACHE_MAX_AGE_SEC,
+        )
         try:
             fill = simulate_replay_fill(
                 ReplayFillRequest(
@@ -773,6 +782,7 @@ def build_recovery_bar_replay_evidence(pos: dict[str, Any]) -> dict[str, Any]:
                     trailing_activation_pct=activation_pct,
                     fee_bps=FEE_RATE_TAKER * 10_000,
                     slippage_bps=0.0,
+                    entry_order_book=depth_snapshot.order_book if depth_snapshot else None,
                 ),
                 bars,
             )
@@ -797,12 +807,19 @@ def build_recovery_bar_replay_evidence(pos: dict[str, Any]) -> dict[str, Any]:
             "current_unrealized_pnl_usdt": round(current_upnl, 4),
             "pnl_delta_vs_current_usdt": round(fill.net_pnl_usdt - current_upnl, 4),
             "bars_held": fill.bars_held,
+            "entry_fill_source": fill.entry_fill_source,
+            "depth_slippage_usdt": fill.depth_slippage_usdt,
+            "order_book_levels_used": fill.order_book_levels_used,
+            "order_book_available_quantity": fill.order_book_available_quantity,
+            "order_book_fill_ratio": fill.order_book_fill_ratio,
             "kline_source": source,
+            "depth_snapshot_source": depth_snapshot.source if depth_snapshot else "",
+            "depth_snapshot_age_seconds": round(depth_snapshot.age_seconds, 3) if depth_snapshot else None,
             "trailing_activation_pct": round(activation_pct, 4),
             "trailing_stop_pct": round(trailing_pct, 4),
             "thresholds_on_margin": profile,
             "automation": "disabled_report_only",
-            "note": "local research_store/klines when available, then kline cache; no Binance API call; recovery entry time is first-seen snapshot, not original exchange open time",
+            "note": "local research_store/klines when available, then kline cache; optional local depth_cache for entry fill; no Binance API call; recovery entry time is first-seen snapshot, not original exchange open time",
         }
     return {
         "status": "missing_data",
@@ -810,7 +827,7 @@ def build_recovery_bar_replay_evidence(pos: dict[str, Any]) -> dict[str, Any]:
         "attempts": attempts[:6],
         "thresholds_on_margin": profile,
         "automation": "disabled_report_only",
-        "note": "local research_store/klines when available, then kline cache; no Binance API call",
+        "note": "local research_store/klines when available, then kline/depth cache; no Binance API call",
     }
 
 
@@ -837,6 +854,9 @@ def evaluate_recovery_bar_replay_evidence(recovery: list[dict[str, Any]]) -> dic
                 "replay_exit_reason": evidence.get("replay_exit_reason") or "",
                 "replay_pnl_usdt": evidence.get("replay_pnl_usdt"),
                 "pnl_delta_vs_current_usdt": evidence.get("pnl_delta_vs_current_usdt"),
+                "entry_fill_source": evidence.get("entry_fill_source") or "",
+                "depth_slippage_usdt": evidence.get("depth_slippage_usdt"),
+                "depth_snapshot_age_seconds": evidence.get("depth_snapshot_age_seconds"),
             }
         )
     return {
@@ -844,6 +864,11 @@ def evaluate_recovery_bar_replay_evidence(recovery: list[dict[str, Any]]) -> dic
         "automation": "disabled_report_only",
         "action_counts": dict(sorted(action_counts.items())),
         "status_counts": dict(sorted(status_counts.items())),
+        "order_book_fill_count": sum(1 for pos in recovery if (pos.get("recovery_replay_evidence") or {}).get("entry_fill_source") == "order_book"),
+        "depth_slippage_usdt": round(
+            sum(safe_float((pos.get("recovery_replay_evidence") or {}).get("depth_slippage_usdt")) for pos in recovery),
+            4,
+        ),
         "manual_review_positions": int(action_counts.get("bar_replay_exit_manual_review", 0)),
         "data_gap_positions": int(action_counts.get("replay_data_gap", 0)),
         "positions": positions,

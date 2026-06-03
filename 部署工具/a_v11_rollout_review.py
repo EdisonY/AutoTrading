@@ -31,6 +31,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from core.replay_fill import ReplayFillRequest, simulate_replay_fill
+from core.replay_depth_cache import default_depth_cache_dirs, load_depth_snapshot
 from core.replay_kline_source import load_research_store_kline_rows
 
 CST = timezone(timedelta(hours=8))
@@ -43,6 +44,7 @@ COST_SENSITIVITY_PCTS = (0.10, 0.15, 0.25)
 A_V11_TRAILING_ACTIVATE_ATR = {"15m": 1.0, "30m": 1.2}
 A_V11_TRAILING_PULLBACK_ATR = {"15m": 1.0, "30m": 0.8}
 KLINE_CACHE_LIMITS = (100, 200, 500, 1000)
+DEPTH_CACHE_MAX_AGE_SEC = 300.0
 TIMEFRAME_RE = re.compile(r"^(\d+)([mh])$")
 
 
@@ -341,6 +343,13 @@ def replay_trade_pair(pair: dict[str, Any]) -> dict[str, Any]:
     quantity = quantity_from_payload(open_payload, close_payload, entry_price)
     if quantity <= 0:
         return {"status": "missing_quantity", "symbol": symbol, "side": side, "timeframe": timeframe, "kline_source": source}
+    depth_snapshot = load_depth_snapshot(
+        symbol,
+        entry_ts,
+        side=side,
+        cache_dirs=default_depth_cache_dirs(ROOT),
+        max_age_seconds=DEPTH_CACHE_MAX_AGE_SEC,
+    )
     try:
         fill = simulate_replay_fill(
             ReplayFillRequest(
@@ -355,6 +364,7 @@ def replay_trade_pair(pair: dict[str, Any]) -> dict[str, Any]:
                 trailing_stop_atr=A_V11_TRAILING_PULLBACK_ATR[timeframe],
                 fee_bps=FEE_SLIPPAGE_PCT * 50.0,
                 slippage_bps=0.0,
+                entry_order_book=depth_snapshot.order_book if depth_snapshot else None,
             ),
             bars,
         )
@@ -378,8 +388,15 @@ def replay_trade_pair(pair: dict[str, Any]) -> dict[str, Any]:
         "pnl_delta_usdt": round(delta, 4),
         "exit_reason": str(payload_text(close_payload, "reason", "close_reason") or ""),
         "replay_exit_reason": fill.exit_reason,
+        "entry_fill_source": fill.entry_fill_source,
+        "depth_slippage_usdt": fill.depth_slippage_usdt,
+        "order_book_levels_used": fill.order_book_levels_used,
+        "order_book_available_quantity": fill.order_book_available_quantity,
+        "order_book_fill_ratio": fill.order_book_fill_ratio,
         "bars_held": fill.bars_held,
         "kline_source": source,
+        "depth_snapshot_source": depth_snapshot.source if depth_snapshot else "",
+        "depth_snapshot_age_seconds": round(depth_snapshot.age_seconds, 3) if depth_snapshot else None,
         "trailing_activation_atr": A_V11_TRAILING_ACTIVATE_ATR[timeframe],
         "trailing_stop_atr": A_V11_TRAILING_PULLBACK_ATR[timeframe],
     }
@@ -395,6 +412,8 @@ def build_replay_fill_comparison(rows: list[sqlite3.Row], start: datetime, end: 
     actual_pnl = sum(float(item.get("actual_pnl_usdt") or 0.0) for item in completed)
     by_exit_reason: collections.Counter[str] = collections.Counter(str(item.get("replay_exit_reason") or "") for item in completed)
     top_delta = sorted(completed, key=lambda item: abs(float(item.get("pnl_delta_usdt") or 0.0)), reverse=True)[:8]
+    order_book_rows = [item for item in completed if item.get("entry_fill_source") == "order_book"]
+    depth_ages = [float(item.get("depth_snapshot_age_seconds") or 0.0) for item in order_book_rows if item.get("depth_snapshot_age_seconds") is not None]
     return {
         "status": "ready" if completed else "missing_data",
         "window_since": start.isoformat(timespec="seconds"),
@@ -408,9 +427,19 @@ def build_replay_fill_comparison(rows: list[sqlite3.Row], start: datetime, end: 
         "pnl_delta_usdt": round(replay_pnl - actual_pnl, 4),
         "median_abs_delta_usdt": round(median([abs(v) for v in deltas]), 4) if deltas else 0.0,
         "replay_exit_reasons": [{"reason": k, "count": v} for k, v in by_exit_reason.most_common(8)],
+        "order_book_fill_count": len(order_book_rows),
+        "depth_snapshot_count": len(order_book_rows),
+        "depth_slippage_usdt": round(sum(float(item.get("depth_slippage_usdt") or 0.0) for item in completed), 4),
+        "avg_order_book_fill_ratio": round(mean_fill_ratio(order_book_rows), 4),
+        "avg_depth_snapshot_age_seconds": round(sum(depth_ages) / len(depth_ages), 3) if depth_ages else 0.0,
         "top_deltas": top_delta,
-        "note": "Uses local research_store/klines when available, then local kline cache; no Binance API call is made.",
+        "note": "Uses local research_store/klines when available, then local kline cache; optional local depth_cache for entry fill; no Binance API call is made.",
     }
+
+
+def mean_fill_ratio(rows: list[dict[str, Any]]) -> float:
+    values = [float(item.get("order_book_fill_ratio") or 0.0) for item in rows]
+    return sum(values) / len(values) if values else 0.0
 
 
 def find_db(explicit: str = "") -> Path | None:
@@ -802,16 +831,18 @@ def render_md(payload: dict[str, Any]) -> str:
             f"- Paired/completed: `{int(replay72.get('paired_trades') or 0)}/{int(replay72.get('completed') or 0)}`",
             f"- Actual vs replay PnL: `{float(replay72.get('actual_pnl_usdt') or 0):+.2f}` / `{float(replay72.get('replay_pnl_usdt') or 0):+.2f}` USDT",
             f"- Delta: `{float(replay72.get('pnl_delta_usdt') or 0):+.2f}` USDT; median abs delta `{float(replay72.get('median_abs_delta_usdt') or 0):.2f}`",
+            f"- Depth entry fills: `{int(replay72.get('order_book_fill_count') or 0)}`; depth slippage `{float(replay72.get('depth_slippage_usdt') or 0):.2f}` USDT; avg depth age `{float(replay72.get('avg_depth_snapshot_age_seconds') or 0):.1f}s`",
             f"- Status counts: `{json.dumps(replay72.get('status_counts') or {}, ensure_ascii=False)}`",
-            f"- Note: {replay72.get('note') or 'local research_store/klines when available, then kline cache; no Binance API call'}",
+            f"- Note: {replay72.get('note') or 'local research_store/klines when available, then kline/depth cache; no Binance API call'}",
             "",
-            "| Symbol | Side | TF | Actual PnL | Replay PnL | Delta | Actual exit | Replay exit | Replay reason |",
-            "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | --- |",
+            "| Symbol | Side | TF | Fill | Actual PnL | Replay PnL | Delta | Actual exit | Replay exit | Replay reason |",
+            "| --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | --- |",
         ]
     )
     for item in replay72.get("top_deltas") or []:
         lines.append(
             f"| {item.get('symbol') or '-'} | {item.get('side') or '-'} | {item.get('timeframe') or '-'} | "
+            f"{item.get('entry_fill_source') or 'synthetic'} | "
             f"{float(item.get('actual_pnl_usdt') or 0):+.2f} | {float(item.get('replay_pnl_usdt') or 0):+.2f} | "
             f"{float(item.get('pnl_delta_usdt') or 0):+.2f} | {float(item.get('actual_exit_price') or 0):.6g} | "
             f"{float(item.get('replay_exit_price') or 0):.6g} | {item.get('replay_exit_reason') or '-'} |"

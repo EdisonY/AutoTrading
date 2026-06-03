@@ -288,6 +288,47 @@ class AV11RolloutReviewPacketTests(unittest.TestCase):
         self.assertIn("research_store/klines", comparison["note"])
         self.assertIn("research_store", comparison["top_deltas"][0]["kline_source"])
 
+    def test_replay_fill_comparison_uses_local_depth_cache_when_available(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            old_root = self.tool.ROOT
+            try:
+                self.tool.ROOT = Path(tmp)
+                rows = [
+                    [int(self.tool.parse_dt("2026-06-03T10:00:00+08:00").timestamp() * 1000), "100", "103", "99", "102"],
+                    [int(self.tool.parse_dt("2026-06-03T10:15:00+08:00").timestamp() * 1000), "102", "104", "101", "103"],
+                    [int(self.tool.parse_dt("2026-06-03T10:30:00+08:00").timestamp() * 1000), "103", "105", "102", "104"],
+                ]
+                self.write_research_klines(Path(tmp), "AAAUSDT", "15m", rows)
+                depth_dir = Path(tmp) / "runtime" / "depth_cache"
+                depth_dir.mkdir(parents=True)
+                (depth_dir / "AAAUSDT_latest.json").write_text(
+                    json.dumps(
+                        {
+                            "symbol": "AAAUSDT",
+                            "ts": "2026-06-03T10:00:00+08:00",
+                            "bids": [["99.9", "10"]],
+                            "asks": [["100", "1"], ["101", "3"]],
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+
+                comparison = self.tool.build_replay_fill_comparison(
+                    self.replay_db_rows(),
+                    self.tool.parse_dt("2026-06-03T09:00:00+08:00"),
+                    self.tool.parse_dt("2026-06-03T11:00:00+08:00"),
+                )
+            finally:
+                self.tool.ROOT = old_root
+
+        top = comparison["top_deltas"][0]
+        self.assertEqual(comparison["order_book_fill_count"], 1)
+        self.assertEqual(comparison["depth_snapshot_count"], 1)
+        self.assertGreater(comparison["depth_slippage_usdt"], 0)
+        self.assertEqual(top["entry_fill_source"], "order_book")
+        self.assertEqual(top["order_book_levels_used"], 2)
+        self.assertIn("depth_cache", top["depth_snapshot_source"])
+
     def test_decision_packet_includes_replay_fill_comparison(self):
         windows = {
             "24h": {"closed_samples": 1, "pnl_after_cost_usdt": 1, "forced_close_rate": 0},

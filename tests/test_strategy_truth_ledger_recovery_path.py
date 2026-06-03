@@ -371,6 +371,46 @@ class StrategyTruthLedgerRecoveryPathTests(unittest.TestCase):
         self.assertIn("research_store", evidence["kline_source"])
         self.assertEqual(summary["manual_review_positions"], 1)
 
+    def test_recovery_bar_replay_uses_local_depth_cache_when_available(self):
+        tool = load_tool()
+        with tempfile.TemporaryDirectory() as tmp:
+            old_root = tool.ROOT
+            try:
+                tool.ROOT = Path(tmp)
+                rows = [
+                    [self.kline_ms("2026-06-03T08:00:00+08:00"), "100", "101", "100", "101"],
+                    [self.kline_ms("2026-06-03T08:15:00+08:00"), "101", "101", "100.4", "100.5"],
+                    [self.kline_ms("2026-06-03T08:30:00+08:00"), "100.5", "100.6", "100.1", "100.2"],
+                ]
+                self.write_research_klines(Path(tmp), "BTCUSDT", "15m", rows)
+                depth_dir = Path(tmp) / "runtime" / "depth_cache"
+                depth_dir.mkdir(parents=True)
+                (depth_dir / "BTCUSDT_latest.json").write_text(
+                    json.dumps(
+                        {
+                            "symbol": "BTCUSDT",
+                            "ts": "2026-06-03T08:00:00+08:00",
+                            "bids": [["99.9", "10"]],
+                            "asks": [["100", "1"], ["100.5", "3"]],
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+                recovery = [self.sample_recovery_position()]
+
+                summary = tool.evaluate_recovery_bar_replay_evidence(recovery)
+                evidence = recovery[0]["recovery_replay_evidence"]
+            finally:
+                tool.ROOT = old_root
+
+        self.assertEqual(evidence["status"], "complete")
+        self.assertEqual(evidence["entry_fill_source"], "order_book")
+        self.assertEqual(evidence["order_book_levels_used"], 2)
+        self.assertGreater(evidence["depth_slippage_usdt"], 0)
+        self.assertIn("depth_cache", evidence["depth_snapshot_source"])
+        self.assertEqual(summary["order_book_fill_count"], 1)
+        self.assertGreater(summary["depth_slippage_usdt"], 0)
+
     def test_recovery_bar_replay_missing_cache_is_data_gap(self):
         tool = load_tool()
         with tempfile.TemporaryDirectory() as tmp:

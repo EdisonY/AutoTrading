@@ -2592,6 +2592,8 @@ def render_html(out_dir: Path) -> str:
     recovery_signal = recovery_review.get("signal_counts") or {}
     recovery_replay = truth.get("recovery_bar_replay_evidence") or {}
     recovery_replay_counts = recovery_replay.get("action_counts") or recovery_review.get("replay_counts") or {}
+    recovery_replay_depth_fills = int(recovery_replay.get("order_book_fill_count") or 0)
+    recovery_replay_depth_slip = float(recovery_replay.get("depth_slippage_usdt") or 0)
     recovery_total_upnl = float(
         truth_summary.get("total_recovery_unrealized_pnl_usdt")
         or truth_summary.get("total_recovery_unrealized_pnl_usd")
@@ -2922,6 +2924,7 @@ def render_html(out_dir: Path) -> str:
     a_v11_rollout = data.get("a_v11_rollout") or {}
     a_v11_rollout_decision = a_v11_rollout.get("decision") or {}
     a_v11_rollout_windows = a_v11_rollout.get("windows") or {}
+    a_v11_rollout_72h_replay = ((a_v11_rollout.get("replay_fill_comparison") or {}).get("72h") or {})
     a_v11_rollout_rows = "".join(
         f"""
 <tr>
@@ -3243,7 +3246,7 @@ th {{ background:#f1f5f9; color:#334155; }}
 
   <section class="section panel">
     <h2>A/v11 trailing rollout复盘</h2>
-    <p class="note">只读复盘已批准 trailing-pullback 上线后的 24h/72h/168h 真实窗口；当前结论 {h(a_v11_rollout_decision.get('priority', '-'))}/{h(a_v11_rollout_decision.get('status', '-'))}，更新 {h(a_v11_rollout.get('age'))}。这里不自动回滚，也不改实盘阈值。</p>
+    <p class="note">只读复盘已批准 trailing-pullback 上线后的 24h/72h/168h 真实窗口；当前结论 {h(a_v11_rollout_decision.get('priority', '-'))}/{h(a_v11_rollout_decision.get('status', '-'))}，更新 {h(a_v11_rollout.get('age'))}。72h replay depth entry fills={int(a_v11_rollout_72h_replay.get('order_book_fill_count') or 0)}，depth slip={float(a_v11_rollout_72h_replay.get('depth_slippage_usdt') or 0):.2f} USDT。这里不自动回滚，也不改实盘阈值。</p>
     <table>
       <thead><tr><th>窗口</th><th>开仓</th><th>平仓</th><th>强平</th><th>开仓失败</th><th>已实现PnL</th><th>估算成本</th><th>扣费后PnL</th><th>强平率</th></tr></thead>
       <tbody>{a_v11_rollout_rows}</tbody>
@@ -3276,7 +3279,7 @@ th {{ background:#f1f5f9; color:#334155; }}
       <tbody>{quality_rows}</tbody>
     </table>
     <p class="note">主动策略累计 PnL: <b class="{'pos' if float(truth_summary.get('total_active_pnl_usd', 0)) >= 0 else 'neg'}">{float(truth_summary.get('total_active_pnl_usd', 0)):+.2f}</b> USDT；恢复仓未实现 PnL: <b class="{'pos' if recovery_total_upnl >= 0 else 'neg'}">{recovery_total_upnl:+.2f}</b> USDT。</p>
-    <p class="note">恢复仓独立审查：review={int(recovery_risk.get('review') or 0)}，watch={int(recovery_risk.get('watch') or 0)}，none={int(recovery_risk.get('none') or 0)}；同策略重开支持={int(recovery_signal.get('same_strategy_reopen_supported') or 0)}，反向信号复核={int(recovery_signal.get('opposite_signal_review') or 0)}；策略退出证据 manual={int(recovery_strategy_exit.get('manual_review_positions') or 0)}，watch={int(recovery_strategy_exit.get('watch_positions') or 0)}，hold-bias={int(recovery_strategy_exit.get('hold_bias_positions') or 0)}；本地K线replay exit-review={int(recovery_replay_counts.get('bar_replay_exit_manual_review') or 0)}，data-gap={int(recovery_replay_counts.get('replay_data_gap') or 0)}；只读 shadow，不自动平仓。</p>
+    <p class="note">恢复仓独立审查：review={int(recovery_risk.get('review') or 0)}，watch={int(recovery_risk.get('watch') or 0)}，none={int(recovery_risk.get('none') or 0)}；同策略重开支持={int(recovery_signal.get('same_strategy_reopen_supported') or 0)}，反向信号复核={int(recovery_signal.get('opposite_signal_review') or 0)}；策略退出证据 manual={int(recovery_strategy_exit.get('manual_review_positions') or 0)}，watch={int(recovery_strategy_exit.get('watch_positions') or 0)}，hold-bias={int(recovery_strategy_exit.get('hold_bias_positions') or 0)}；本地K线replay exit-review={int(recovery_replay_counts.get('bar_replay_exit_manual_review') or 0)}，data-gap={int(recovery_replay_counts.get('replay_data_gap') or 0)}，depth entry fills={recovery_replay_depth_fills}，depth slip={recovery_replay_depth_slip:.2f} USDT；只读 shadow，不自动平仓。</p>
     <table>
       <thead><tr><th>策略</th><th>币种</th><th>方向</th><th>年龄h</th><th>浮盈</th><th>浮盈/保证金</th><th>MFE</th><th>MAE</th><th>MFE回撤</th><th>同向重开</th><th>反向信号</th><th>信号动作</th><th>策略退出证据</th><th>Bar replay</th><th>风险</th><th>Shadow动作</th></tr></thead>
       <tbody>{recovery_review_rows}</tbody>

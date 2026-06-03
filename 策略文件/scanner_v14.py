@@ -2034,23 +2034,23 @@ class Scanner:
                     tail_guard_max_atr_pct=TAIL_GUARD_MAX_ATR_PCT,
                 )
                 tail_reason = tail_gate.reason
+                tail_gate_case = strategy_gate_case(
+                    name="c_v14_tail_guard",
+                    gate="c_v14_tail_guard",
+                    inputs={
+                        "signal": sig,
+                        "side": side,
+                        "tail_guard_min_score": TAIL_GUARD_MIN_SCORE,
+                        "tail_guard_long_bb_pos": TAIL_GUARD_LONG_BB_POS,
+                        "tail_guard_short_bb_pos": TAIL_GUARD_SHORT_BB_POS,
+                        "tail_guard_min_vol_ratio": TAIL_GUARD_MIN_VOL_RATIO,
+                        "tail_guard_max_atr_pct": TAIL_GUARD_MAX_ATR_PCT,
+                    },
+                    decision=tail_gate,
+                    meta={"strategy": "C/v14", "timeframe": tf, "chain_step": "tail_guard"},
+                )
                 if not tail_gate.allowed:
                     logger.info(f"  skip [{tf}] {sym} {side} {tail_reason}")
-                    tail_gate_case = strategy_gate_case(
-                        name="c_v14_tail_guard",
-                        gate="c_v14_tail_guard",
-                        inputs={
-                            "signal": sig,
-                            "side": side,
-                            "tail_guard_min_score": TAIL_GUARD_MIN_SCORE,
-                            "tail_guard_long_bb_pos": TAIL_GUARD_LONG_BB_POS,
-                            "tail_guard_short_bb_pos": TAIL_GUARD_SHORT_BB_POS,
-                            "tail_guard_min_vol_ratio": TAIL_GUARD_MIN_VOL_RATIO,
-                            "tail_guard_max_atr_pct": TAIL_GUARD_MAX_ATR_PCT,
-                        },
-                        decision=tail_gate,
-                        meta={"strategy": "C/v14", "timeframe": tf, "chain_step": "tail_guard"},
-                    )
                     log_event({
                         "time": now_str, "event": "OPEN_SKIPPED", "symbol": sym,
                         "side": side, "score": abs_score, "timeframe": tf,
@@ -2071,7 +2071,7 @@ class Scanner:
                     })
                     continue
 
-                self._open_position(sig, now_str)
+                self._open_position(sig, now_str, open_chain_cases=[confirmation_gate_case, tail_gate_case])
                 opened_symbols.add(sym)
 
         # 心跳日志
@@ -2088,8 +2088,9 @@ class Scanner:
             "status": "running",
         })
 
-    def _open_position(self, sig: dict, now_str: str):
+    def _open_position(self, sig: dict, now_str: str, open_chain_cases=None):
         """开仓"""
+        open_chain_cases = list(open_chain_cases or [])
         tf = sig["timeframe"]
         side = sig["trade_side"]
         net_score = sig["net_score"]
@@ -2367,12 +2368,15 @@ class Scanner:
             "mfi": sig.get("mfi"),
             "st_flipped": sig.get("st_flipped"),
             "order_id": order_id,
-            "strategy_gate_case": _execution_result_case(
-                "c_v14_open_execution_result",
-                exec_result,
-                timeframe=tf,
-                phase="open",
-            ),
+            "strategy_gate_cases": [
+                *open_chain_cases,
+                _execution_result_case(
+                    "c_v14_open_execution_result",
+                    exec_result,
+                    timeframe=tf,
+                    phase="open",
+                ),
+            ],
             **sentinel_fields(inst_id),
         })
 

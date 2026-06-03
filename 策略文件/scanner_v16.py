@@ -1264,31 +1264,31 @@ class ScannerV16:
                     confirm_bonus=CONFIRM_BONUS,
                     confirm_strong_bonus=CONFIRM_STRONG_BONUS,
                 )
+                threshold_gate_case = strategy_gate_case(
+                    name="b_v16_entry_threshold",
+                    gate="b_v16_entry_threshold",
+                    inputs={
+                        "timeframe": tf,
+                        "side": side,
+                        "score": score,
+                        "symbol": sym,
+                        "open_positions": open_positions,
+                        "confirm_reason": confirm_reason,
+                        "score_thresholds": SCORE_THRESHOLDS,
+                        "score_min": SCORE_MIN,
+                        "short_entry_penalty": SHORT_ENTRY_PENALTY,
+                        "major_symbols": MAJOR_SYMBOLS,
+                        "low_position_threshold_discount": LOW_POSITION_THRESHOLD_DISCOUNT,
+                        "no_confirm_threshold_penalty": NO_CONFIRM_THRESHOLD_PENALTY,
+                        "weak_opposite_confirm_penalty": WEAK_OPPOSITE_CONFIRM_PENALTY,
+                        "confirm_bonus": CONFIRM_BONUS,
+                        "confirm_strong_bonus": CONFIRM_STRONG_BONUS,
+                    },
+                    decision=threshold_gate,
+                    meta={"strategy": "B/v16", "timeframe": tf, "chain_step": "entry_threshold"},
+                )
                 if not threshold_gate.allowed:
                     scan_stats["threshold_fail"] += 1
-                    threshold_gate_case = strategy_gate_case(
-                        name="b_v16_entry_threshold",
-                        gate="b_v16_entry_threshold",
-                        inputs={
-                            "timeframe": tf,
-                            "side": side,
-                            "score": score,
-                            "symbol": sym,
-                            "open_positions": open_positions,
-                            "confirm_reason": confirm_reason,
-                            "score_thresholds": SCORE_THRESHOLDS,
-                            "score_min": SCORE_MIN,
-                            "short_entry_penalty": SHORT_ENTRY_PENALTY,
-                            "major_symbols": MAJOR_SYMBOLS,
-                            "low_position_threshold_discount": LOW_POSITION_THRESHOLD_DISCOUNT,
-                            "no_confirm_threshold_penalty": NO_CONFIRM_THRESHOLD_PENALTY,
-                            "weak_opposite_confirm_penalty": WEAK_OPPOSITE_CONFIRM_PENALTY,
-                            "confirm_bonus": CONFIRM_BONUS,
-                            "confirm_strong_bonus": CONFIRM_STRONG_BONUS,
-                        },
-                        decision=threshold_gate,
-                        meta={"strategy": "B/v16", "timeframe": tf, "chain_step": "entry_threshold"},
-                    )
                     log_event({
                         "time": str(datetime.now(CST)), "event": "OPEN_SKIPPED",
                         "symbol": sym, "side": side, "score": score,
@@ -1301,13 +1301,15 @@ class ScannerV16:
                     })
                     continue
 
-                if self._open_position(tf, sym, sig, side, score, confirm_reason):
+                open_chain_cases = [confirmation_gate_case, threshold_gate_case]
+                if self._open_position(tf, sym, sig, side, score, confirm_reason, open_chain_cases=open_chain_cases):
                     open_positions += 1
                     scan_stats["opened"] += 1
 
         log_system({"ts": str(datetime.now(CST)), "event": "SCAN_STATS", **scan_stats})
 
-    def _open_position(self, tf, sym, sig, side, score, confirm_reason=""):
+    def _open_position(self, tf, sym, sig, side, score, confirm_reason="", open_chain_cases=None):
+        open_chain_cases = list(open_chain_cases or [])
         price = sig["price"]
         atr = sig["atr"]
         sl = sig["sl_long"] if side == "long" else sig["sl_short"]
@@ -1495,12 +1497,15 @@ class ScannerV16:
                     else ",".join(APPROVED_FULL_LIVE_CANDIDATE_IDS)
                 ),
                 "approved_candidate_ids": APPROVED_FULL_LIVE_CANDIDATE_IDS,
-                "strategy_gate_case": _execution_result_case(
-                    "b_v16_open_execution_result",
-                    exec_result,
-                    timeframe=tf,
-                    phase="open",
-                ),
+                "strategy_gate_cases": [
+                    *open_chain_cases,
+                    _execution_result_case(
+                        "b_v16_open_execution_result",
+                        exec_result,
+                        timeframe=tf,
+                        phase="open",
+                    ),
+                ],
                 **sentinel_fields(sym),
             })
             return True

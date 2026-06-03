@@ -22,7 +22,8 @@
    - 2026-06-03 20:26 补充：`replay_live_parity_audit.py` 已新增 close-flow 独立统计，close/replacement/post-open sizing cleanup rows 与 open-flow、scan-level 分开报告 exact coverage/pass/mismatch/error；A/v11 `EVICT_FAILED`、normal/hard-stop close failure、post-open sizing close failure，以及 B/C normal close、forced-close failure 现在写入 `execution_result` exact case；B/C hard-stop exception 也会写成 `FORCED_CLOSE_FAILED` 观测事件。audit 已对 `raw`/`raw_event` 重复 nested case 去重。
    - 2026-06-03 20:46 补充：A/v11 replacement release 现在可在 detail 模式下返回所有候选仓位的 `a_v11_releasable_position` exact case，并把成功/失败释放结果与 close `execution_result` 证明一起写入/返回。`EVICT_CLOSE`、`EVICT_FAILED`、`OPEN_RETRY_AFTER_EVICT`、`OPEN_SKIPPED` 可携带 candidate -> release_result -> close_execution 链。
    - 2026-06-03 20:57 补充：A/v11、B/v16、C/v14 成功 `OPEN` 事件现在写入 `execution_result` exact case，strict audit 可验证执行成功/确认成功，不再把成功开仓全部当 missing-case gap。
-   - 未完成：历史事件驱动的同输入 replay/live 结论一致性测试仍需扩大；A/B/C open success 仍缺更完整的多 gate 上下文链（信号 -> 风控 -> 执行 -> 持仓确认），B/C 风控/执行多 gate 成功链也还不完整。没有 exact case 的行只能算 coverage gap，不能算 replay/live parity 已通过。
+   - 2026-06-03 21:10 补充：B/v16 成功 `OPEN` 事件现在写入 `[confirmation, entry_threshold, execution_result]` exact chain；C/v14 成功 `OPEN` 事件现在写入 `[confirmation, tail_guard, execution_result]` exact chain。B/C 成功开仓已从单 execution proof 前进到第一版 orchestration proof。
+   - 未完成：历史事件驱动的同输入 replay/live 结论一致性测试仍需扩大；A/v11 open success 仍缺更完整的多 gate 上下文链（信号 -> replacement/risk -> 执行 -> 持仓确认），B/C 成功开仓的 risk/position/execution-confirmation context chain 仍需扩展。没有 exact case 的行只能算 coverage gap，不能算 replay/live parity 已通过。
    - 验收：给定同一时间、币种、上下文，replay 与 live 入场/否决结论一致；关键 OPEN_SKIPPED/OPEN_FAILED 无未知 gate。
 
 ### Long-term P1 - P0 稳住后并行推进
@@ -671,6 +672,7 @@ Phase 9   实盘过渡验证                ← 8完成后
 - [x] P0-B second scanner exact-case persistence: B/v16 now adds exact cases for small-live stage guard, 15m confirmation, and entry-threshold rejects; C/v14 now adds exact cases for 15m confirmation and tail-guard rejects. Scalar-like values are normalized before JSON serialization.
 - [x] P0-B scan-level exact parity: `replay_live_parity_audit.py` now reads `sentinel_scans` gate rows separately from open-flow events, and A/B/C selected pre-filter/cooldown/score/risk scan rows persist exact cases without mixing scan metrics into open-flow coverage.
 - [x] P0-B close-flow exact parity: `replay_live_parity_audit.py` now reports close/replacement/post-open cleanup rows separately, and A/B/C close failure paths persist exact `execution_result` cases without changing live order behavior.
+- [x] P0-B B/C open-success chain parity: B/v16 successful opens now persist confirmation -> threshold -> execution exact cases, and C/v14 successful opens now persist confirmation -> tail_guard -> execution exact cases.
 - [x] P1-B B/v16 full-live rollout review: read-only 24h/72h/168h windows, cost-adjusted PnL, failure/forced-close pressure, decision packet, portal section, Aliyun refresh, reverse sync, and live-context pull. No automatic rollback or parameter change.
-- [ ] Remaining P0-B: expand event-driven same-input replay/live checks beyond single pure gates into orchestration context, especially A/v11 replacement candidate enumeration, success-path close/open flow, and execution-confirmation context.
+- [ ] Remaining P0-B: expand event-driven same-input replay/live checks beyond single pure gates into orchestration context, especially A/v11 success-path open context, B/C risk/execution success chains, and historical same-input replay conclusions.
 - [ ] Remaining P1-B/P1-D: wait for enough post-refresh samples, then review strategy/change-type thresholds, paper fill/slippage simulation, and cross-regime robustness before any manual parameter decision.

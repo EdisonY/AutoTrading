@@ -21,7 +21,8 @@
    - 2026-06-03 20:04 补充：A/B/C non-preflight `OPEN_FAILED` 已写入 `execution_result` exact case，preflight skip 与真实执行失败现在都能被 strict audit 区分。
    - 2026-06-03 20:26 补充：`replay_live_parity_audit.py` 已新增 close-flow 独立统计，close/replacement/post-open sizing cleanup rows 与 open-flow、scan-level 分开报告 exact coverage/pass/mismatch/error；A/v11 `EVICT_FAILED`、normal/hard-stop close failure、post-open sizing close failure，以及 B/C normal close、forced-close failure 现在写入 `execution_result` exact case；B/C hard-stop exception 也会写成 `FORCED_CLOSE_FAILED` 观测事件。audit 已对 `raw`/`raw_event` 重复 nested case 去重。
    - 2026-06-03 20:46 补充：A/v11 replacement release 现在可在 detail 模式下返回所有候选仓位的 `a_v11_releasable_position` exact case，并把成功/失败释放结果与 close `execution_result` 证明一起写入/返回。`EVICT_CLOSE`、`EVICT_FAILED`、`OPEN_RETRY_AFTER_EVICT`、`OPEN_SKIPPED` 可携带 candidate -> release_result -> close_execution 链。
-   - 未完成：历史事件驱动的同输入 replay/live 结论一致性测试仍需扩大；A/v11 post-release open success 与 open/close confirmation context 还需要更多 exact case；B/C 风控/执行多 gate 成功链也还不完整。没有 exact case 的行只能算 coverage gap，不能算 replay/live parity 已通过。
+   - 2026-06-03 20:57 补充：A/v11、B/v16、C/v14 成功 `OPEN` 事件现在写入 `execution_result` exact case，strict audit 可验证执行成功/确认成功，不再把成功开仓全部当 missing-case gap。
+   - 未完成：历史事件驱动的同输入 replay/live 结论一致性测试仍需扩大；A/B/C open success 仍缺更完整的多 gate 上下文链（信号 -> 风控 -> 执行 -> 持仓确认），B/C 风控/执行多 gate 成功链也还不完整。没有 exact case 的行只能算 coverage gap，不能算 replay/live parity 已通过。
    - 验收：给定同一时间、币种、上下文，replay 与 live 入场/否决结论一致；关键 OPEN_SKIPPED/OPEN_FAILED 无未知 gate。
 
 ### Long-term P1 - P0 稳住后并行推进

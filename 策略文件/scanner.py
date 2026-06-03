@@ -2885,6 +2885,12 @@ class Scanner:
             "exchange_success": exchange_success,
             "decision_stage": "open",
             "filter_layer": "execution",
+            "strategy_gate_case": _execution_result_case(
+                "a_v11_open_execution_result",
+                exec_result,
+                timeframe=tf,
+                phase="open",
+            ),
             **sentinel_fields(sig["symbol"]),
         }
         log_event(event)

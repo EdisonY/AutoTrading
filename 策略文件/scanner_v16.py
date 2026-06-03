@@ -1495,6 +1495,12 @@ class ScannerV16:
                     else ",".join(APPROVED_FULL_LIVE_CANDIDATE_IDS)
                 ),
                 "approved_candidate_ids": APPROVED_FULL_LIVE_CANDIDATE_IDS,
+                "strategy_gate_case": _execution_result_case(
+                    "b_v16_open_execution_result",
+                    exec_result,
+                    timeframe=tf,
+                    phase="open",
+                ),
                 **sentinel_fields(sym),
             })
             return True

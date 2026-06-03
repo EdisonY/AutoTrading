@@ -2367,6 +2367,12 @@ class Scanner:
             "mfi": sig.get("mfi"),
             "st_flipped": sig.get("st_flipped"),
             "order_id": order_id,
+            "strategy_gate_case": _execution_result_case(
+                "c_v14_open_execution_result",
+                exec_result,
+                timeframe=tf,
+                phase="open",
+            ),
             **sentinel_fields(inst_id),
         })
 

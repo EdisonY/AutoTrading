@@ -306,6 +306,7 @@
 - 2026-06-03：P0-B exact replay/live parity audit 已落地。新增 `replay_live_parity_audit.py`，只把事件 payload 中 serialized `strategy_gate_case(s)` 送入 `core.strategy_gate_cases`，输出 exact case 覆盖率、pass/mismatch/error，并在入口页、Aliyun refresh/shadow、反向同步和 live-context pull 中展示。缺 case 行现在明确算 coverage gap，不再用 observed gate 归因冒充同输入一致；后续要让 live scanners 持久化更多 exact case。
 - 2026-06-03：P0-B scanner exact case 第一批持久化已离线落地。`strategy_gate_case()` 会生成 JSON-safe same-input case；A/v11、B/v16、C/v14 的重要 `OPEN_SKIPPED` 路径现在写入 exact case，覆盖中心账户状态、重复持仓、执行数量/预检，并补 A/v11 market/tradability/margin、B/v16 active-position limit、C/v14 stale-price/ATR market-data。没有启动/重启服务；下一步继续扩 threshold/confirmation/score/cooldown/pre-filter 与 orchestration parity。
 - 2026-06-03：P0-B scanner exact case 第二批持久化已离线落地。B/v16 `OPEN_SKIPPED` 增加 small-live stage guard、15m confirmation、entry-threshold exact case；C/v14 增加 15m confirmation、tail-guard exact case；`strategy_gate_case()` 现在会先把 scalar-like `.item()` 转成原生 JSON 值。没有启动/重启服务；剩余重点是 A/v11 threshold/pre-filter、B/C pre-filter/cooldown/score，以及单 gate 之外的 orchestration parity。
+- 2026-06-03：P0-B scan-level exact parity 已离线落地。`replay_live_parity_audit.py` 现在单独读取 `sentinel_scans` 前置 gate rows，分开报告 open-flow 与 scan-level exact coverage/pass/mismatch/error；A/v11 前置 blacklist/timeframe/stop-loss cooldown/symbol cooldown/threshold、B/v16 score-max、C/v14 blacklist/timeframe/symbol cooldown/same-side/score-max/stop-loss/sector 写入 exact case。`symbol_cooldown` 已支持 ISO datetime 回放。没有启动/重启服务；剩余重点转向 orchestration parity。
 
 ---
 ## 2026-05-29 全局运行自检与账户方向口径修复

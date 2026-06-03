@@ -129,6 +129,7 @@ from core.strategy_gates import (
     evaluate_no_same_symbol_position_gate,
     evaluate_symbol_blacklist_gate,
     evaluate_symbol_cooldown_gate,
+    evaluate_symbol_stop_loss_gate,
     evaluate_timeframe_position_gate,
     evaluate_tradability_gate,
 )
@@ -1680,32 +1681,101 @@ class Scanner:
                 # ATR=0异常币种黑名单
                 blacklist_gate = evaluate_symbol_blacklist_gate(symbol=sym, blacklisted_symbols=ATR_ZERO_BLACKLIST, reason="ATR=0黑名单")
                 if not blacklist_gate.allowed:
-                    log_sentinel_scan(sym, tf, "pre_filter_rejected", "ATR=0黑名单", decision_stage="pre_filter")
+                    log_sentinel_scan(
+                        sym, tf, "pre_filter_rejected", "ATR=0黑名单",
+                        decision_stage="pre_filter",
+                        strategy_gate_case=strategy_gate_case(
+                            name="a_v11_symbol_blacklist",
+                            gate="symbol_blacklist",
+                            inputs={"symbol": sym, "blacklisted_symbols": ATR_ZERO_BLACKLIST, "reason": "ATR=0黑名单"},
+                            decision=blacklist_gate,
+                            meta={"strategy": "A/v11", "timeframe": tf},
+                        ),
+                    )
                     continue
                 # 已持仓的跳过
                 timeframe_position_gate = evaluate_timeframe_position_gate(has_timeframe_position=self._has_position_in_tf(tf, sym))
                 if not timeframe_position_gate.allowed:
-                    log_sentinel_scan(sym, tf, "pre_filter_rejected", "本周期已有持仓", decision_stage="pre_filter")
+                    log_sentinel_scan(
+                        sym, tf, "pre_filter_rejected", "本周期已有持仓",
+                        decision_stage="pre_filter",
+                        strategy_gate_case=strategy_gate_case(
+                            name="a_v11_timeframe_position",
+                            gate="timeframe_position",
+                            inputs={"has_timeframe_position": True},
+                            decision=timeframe_position_gate,
+                            meta={"strategy": "A/v11", "timeframe": tf},
+                        ),
+                    )
                     continue
-                if self.sl_counts.get(sym, 0) >= MAX_SL_PER_SYMBOL:
-                    log_sentinel_scan(sym, tf, "cooldown_rejected", "同币种当日止损已达上限", decision_stage="cooldown", filter_layer="risk")
+                symbol_sl_gate = evaluate_symbol_stop_loss_gate(
+                    stop_loss_count=self.sl_counts.get(sym, 0),
+                    max_stop_loss_per_symbol=MAX_SL_PER_SYMBOL,
+                )
+                if not symbol_sl_gate.allowed:
+                    log_sentinel_scan(
+                        sym, tf, "cooldown_rejected", "同币种当日止损已达上限",
+                        decision_stage="cooldown", filter_layer="risk",
+                        strategy_gate_case=strategy_gate_case(
+                            name="a_v11_symbol_stop_loss",
+                            gate="symbol_stop_loss",
+                            inputs={
+                                "stop_loss_count": self.sl_counts.get(sym, 0),
+                                "max_stop_loss_per_symbol": MAX_SL_PER_SYMBOL,
+                            },
+                            decision=symbol_sl_gate,
+                            meta={"strategy": "A/v11", "timeframe": tf},
+                        ),
+                    )
                     continue
                 # 冷却期检查
                 cd = self.cooldowns.get(tf, {}).get(sym)
                 cooldown_gate = evaluate_symbol_cooldown_gate(cooldown_until=cd, now=now)
                 if not cooldown_gate.allowed:
-                    log_sentinel_scan(sym, tf, "cooldown_rejected", "冷却期内", decision_stage="cooldown", filter_layer="risk")
+                    log_sentinel_scan(
+                        sym, tf, "cooldown_rejected", "冷却期内",
+                        decision_stage="cooldown", filter_layer="risk",
+                        strategy_gate_case=strategy_gate_case(
+                            name="a_v11_symbol_cooldown",
+                            gate="symbol_cooldown",
+                            inputs={"cooldown_until": cd, "now": now},
+                            decision=cooldown_gate,
+                            meta={"strategy": "A/v11", "timeframe": tf},
+                        ),
+                    )
                     continue
                 try:
                     result = self.strategy_engine.analyze(sym, tf)
                     if result and result["can_trade"] and self._passes_entry_threshold(result):
                         tf_signals.append(result)
                     elif result and result["can_trade"]:
+                        threshold_gate = evaluate_a_v11_entry_threshold(
+                            timeframe=result["timeframe"],
+                            side=result["trade_side"],
+                            score=result["net_score"],
+                            score_thresholds=SCORE_THRESHOLDS,
+                            score_threshold=SCORE_THRESHOLD,
+                            short_entry_penalty=SHORT_ENTRY_PENALTY,
+                        )
                         log_sentinel_scan(
                             sym, tf, "score_rejected", "策略分数未达入场阈值",
                             side=result.get("trade_side", ""),
                             score=abs(float(result.get("net_score") or 0)),
                             decision_stage="threshold",
+                            strategy_gate_case=strategy_gate_case(
+                                name="a_v11_entry_threshold",
+                                gate="a_v11_entry_threshold",
+                                inputs={
+                                    "timeframe": result["timeframe"],
+                                    "side": result["trade_side"],
+                                    "score": result["net_score"],
+                                    "score_thresholds": SCORE_THRESHOLDS,
+                                    "score_threshold": SCORE_THRESHOLD,
+                                    "short_entry_penalty": SHORT_ENTRY_PENALTY,
+                                },
+                                decision=threshold_gate,
+                                meta={"strategy": "A/v11", "timeframe": tf},
+                            ),
                         )
                     elif result:
                         log_sentinel_scan(

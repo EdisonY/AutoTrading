@@ -1074,6 +1074,13 @@ class ScannerV16:
                         sym, tf, "score_rejected", score_max_gate.reason,
                         side=side, score=score, raw_score=raw_score,
                         decision_stage="score_gate",
+                        strategy_gate_case=strategy_gate_case(
+                            name="b_v16_score_max",
+                            gate="score_max",
+                            inputs={"score": score, "score_max": SCORE_MAX},
+                            decision=score_max_gate,
+                            meta={"strategy": "B/v16", "timeframe": tf},
+                        ),
                     )
                     continue
                 stage_gate = evaluate_b_v16_small_live_stage_guard(

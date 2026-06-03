@@ -1,9 +1,9 @@
 import json
 import unittest
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from core.strategy_gate_cases import evaluate_strategy_gate_case, evaluate_strategy_gate_cases, strategy_gate_case
-from core.strategy_gates import evaluate_positive_quantity_gate, evaluate_symbol_blacklist_gate
+from core.strategy_gates import evaluate_positive_quantity_gate, evaluate_symbol_blacklist_gate, evaluate_symbol_cooldown_gate
 
 
 class _ScalarLike:
@@ -198,6 +198,23 @@ class StrategyGateCasesTest(unittest.TestCase):
         self.assertTrue(replayed.allowed)
         self.assertEqual(case["inputs"]["quantity"], 2.5)
         self.assertIs(case["meta"]["flag"], True)
+
+    def test_strategy_gate_case_replays_serialized_datetime_inputs(self):
+        now = datetime(2026, 6, 3, 19, 30)
+        cooldown_until = now + timedelta(minutes=12)
+        decision = evaluate_symbol_cooldown_gate(cooldown_until=cooldown_until, now=now)
+        case = strategy_gate_case(
+            name="symbol-cooldown-active",
+            gate="symbol_cooldown",
+            inputs={"cooldown_until": cooldown_until, "now": now},
+            decision=decision,
+        )
+
+        restored = json.loads(json.dumps(case, ensure_ascii=False))
+        replayed = evaluate_strategy_gate_case(restored)
+
+        self.assertFalse(replayed.allowed)
+        self.assertEqual(replayed.reason, "symbol_cooldown_active")
 
 
 if __name__ == "__main__":

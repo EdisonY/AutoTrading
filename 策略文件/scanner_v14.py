@@ -1641,17 +1641,47 @@ class Scanner:
             for sym in symbols:
                 blacklist_gate = evaluate_symbol_blacklist_gate(symbol=sym, blacklisted_symbols=ATR_ZERO_BLACKLIST, reason="ATR=0黑名单")
                 if not blacklist_gate.allowed:
-                    log_sentinel_scan(sym, tf, "pre_filter_rejected", "ATR=0黑名单", decision_stage="pre_filter")
+                    log_sentinel_scan(
+                        sym, tf, "pre_filter_rejected", "ATR=0黑名单",
+                        decision_stage="pre_filter",
+                        strategy_gate_case=strategy_gate_case(
+                            name="c_v14_symbol_blacklist",
+                            gate="symbol_blacklist",
+                            inputs={"symbol": sym, "blacklisted_symbols": ATR_ZERO_BLACKLIST, "reason": "ATR=0黑名单"},
+                            decision=blacklist_gate,
+                            meta={"strategy": "C/v14", "timeframe": tf},
+                        ),
+                    )
                     continue
                 # v14修复(2026-05-08): 双向持仓独立检查
                 timeframe_position_gate = evaluate_timeframe_position_gate(has_timeframe_position=self._has_position_in_tf(tf, sym))
                 if not timeframe_position_gate.allowed:
-                    log_sentinel_scan(sym, tf, "pre_filter_rejected", "本周期已有持仓", decision_stage="pre_filter")
+                    log_sentinel_scan(
+                        sym, tf, "pre_filter_rejected", "本周期已有持仓",
+                        decision_stage="pre_filter",
+                        strategy_gate_case=strategy_gate_case(
+                            name="c_v14_timeframe_position",
+                            gate="timeframe_position",
+                            inputs={"has_timeframe_position": True},
+                            decision=timeframe_position_gate,
+                            meta={"strategy": "C/v14", "timeframe": tf},
+                        ),
+                    )
                     continue
                 cd = self.cooldowns.get(tf, {}).get(sym)
                 cooldown_gate = evaluate_symbol_cooldown_gate(cooldown_until=cd, now=now)
                 if not cooldown_gate.allowed:
-                    log_sentinel_scan(sym, tf, "pre_filter_rejected", "冷却期内", decision_stage="pre_filter")
+                    log_sentinel_scan(
+                        sym, tf, "pre_filter_rejected", "冷却期内",
+                        decision_stage="pre_filter",
+                        strategy_gate_case=strategy_gate_case(
+                            name="c_v14_symbol_cooldown",
+                            gate="symbol_cooldown",
+                            inputs={"cooldown_until": cd, "now": now},
+                            decision=cooldown_gate,
+                            meta={"strategy": "C/v14", "timeframe": tf},
+                        ),
+                    )
                     continue
                 try:
                     result = self.strategy_engine.analyze(sym, tf)
@@ -1741,6 +1771,13 @@ class Scanner:
                         sym, tf, "position_rejected", "同方向持仓已存在",
                         side=side, score=abs(sig["net_score"]),
                         decision_stage="position_gate", filter_layer="risk",
+                        strategy_gate_case=strategy_gate_case(
+                            name="c_v14_same_side_position",
+                            gate="same_side_position",
+                            inputs={"has_same_side_position": already_holding},
+                            decision=same_side_gate,
+                            meta={"strategy": "C/v14", "timeframe": tf},
+                        ),
                     )
                     continue
 
@@ -1752,6 +1789,13 @@ class Scanner:
                     log_sentinel_scan(
                         sym, tf, "score_rejected", score_max_gate.reason,
                         side=side, score=abs_score, decision_stage="score_gate",
+                        strategy_gate_case=strategy_gate_case(
+                            name="c_v14_score_max",
+                            gate="score_max",
+                            inputs={"score": abs_score, "score_max": SCORE_MAX},
+                            decision=score_max_gate,
+                            meta={"strategy": "C/v14", "timeframe": tf},
+                        ),
                     )
                     continue
 
@@ -1767,6 +1811,16 @@ class Scanner:
                         sym, tf, "cooldown_rejected", symbol_sl_gate.reason,
                         side=side, score=abs_score, decision_stage="cooldown",
                         filter_layer="risk",
+                        strategy_gate_case=strategy_gate_case(
+                            name="c_v14_symbol_stop_loss",
+                            gate="symbol_stop_loss",
+                            inputs={
+                                "stop_loss_count": sl_cnt,
+                                "max_stop_loss_per_symbol": MAX_SL_PER_SYMBOL,
+                            },
+                            decision=symbol_sl_gate,
+                            meta={"strategy": "C/v14", "timeframe": tf},
+                        ),
                     )
                     continue
 
@@ -1784,6 +1838,17 @@ class Scanner:
                         sym, tf, "risk_rejected", sector_gate.reason,
                         side=side, score=abs_score, decision_stage="sector_guard",
                         filter_layer="risk",
+                        strategy_gate_case=strategy_gate_case(
+                            name="c_v14_sector_position",
+                            gate="sector_position",
+                            inputs={
+                                "sector": sec,
+                                "sector_position_count": sector_counts.get(sec, 0),
+                                "max_positions_per_sector": MAX_POS_PER_SECTOR,
+                            },
+                            decision=sector_gate,
+                            meta={"strategy": "C/v14", "timeframe": tf},
+                        ),
                     )
                     continue
 

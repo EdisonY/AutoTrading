@@ -25,7 +25,7 @@ class ReplayLiveParityAuditTests(unittest.TestCase):
     def setUpClass(cls):
         cls.tool = load_tool()
 
-    def make_db(self, rows):
+    def make_db(self, rows, scan_rows=None):
         tmp = tempfile.TemporaryDirectory()
         db_path = Path(tmp.name) / "events.sqlite3"
         con = sqlite3.connect(db_path)
@@ -44,6 +44,28 @@ class ReplayLiveParityAuditTests(unittest.TestCase):
                 layer text,
                 reason text,
                 source text,
+                payload_json text
+            )
+            """
+        )
+        con.execute(
+            """
+            create table sentinel_scans (
+                id integer primary key,
+                ts text,
+                date text,
+                strategy text,
+                symbol text,
+                event_type text,
+                reason text,
+                category text,
+                decision_stage text,
+                filter_layer text,
+                change_pct real,
+                velocity_pct real,
+                abs_velocity_pct real,
+                quote_volume real,
+                scan_result text,
                 payload_json text
             )
             """
@@ -70,6 +92,31 @@ class ReplayLiveParityAuditTests(unittest.TestCase):
                     row.get("layer") or "",
                     row.get("reason") or "",
                     row.get("source") or "test/events",
+                    payload,
+                ),
+            )
+        for row in scan_rows or []:
+            payload = json.dumps(row.get("payload") or {}, ensure_ascii=False)
+            ts = row.get("ts") or self.tool.now_cst().isoformat()
+            con.execute(
+                """
+                insert into sentinel_scans (
+                    ts, date, strategy, symbol, event_type, reason, category,
+                    decision_stage, filter_layer, scan_result, payload_json
+                )
+                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    ts,
+                    ts[:10],
+                    row.get("strategy") or "A/v11",
+                    row.get("symbol") or "BTCUSDT",
+                    row.get("event_type") or "SENTINEL_SCANNED",
+                    row.get("reason") or "",
+                    row.get("category") or "sentinel_score_rejected",
+                    row.get("decision_stage") or "score_gate",
+                    row.get("filter_layer") or "strategy",
+                    row.get("scan_result") or "score_rejected",
                     payload,
                 ),
             )
@@ -143,6 +190,38 @@ class ReplayLiveParityAuditTests(unittest.TestCase):
         self.assertEqual(summary["missing_case_rows"], 1)
         self.assertEqual(summary["gate_cases"], 0)
         self.assertEqual(summary["status"], "missing_exact_cases")
+
+    def test_sentinel_scan_exact_cases_are_reported_separately(self):
+        tmp, db_path = self.make_db(
+            [],
+            scan_rows=[
+                {
+                    "payload": {
+                        "strategy_gate_case": {
+                            "name": "score-too-hot",
+                            "gate": "score_max",
+                            "inputs": {"score": 91, "score_max": 85},
+                            "expected_allowed": False,
+                            "expected_reason": "评分91超过85",
+                        }
+                    }
+                }
+            ],
+        )
+        self.addCleanup(tmp.cleanup)
+
+        payload = self.tool.build_payload(db_path, days=1, limit=100)
+        summary = payload["summary"]
+
+        self.assertEqual(summary["open_flow_rows"], 0)
+        self.assertEqual(summary["gate_cases"], 0)
+        self.assertEqual(summary["scan_gate_rows"], 1)
+        self.assertEqual(summary["scan_rows_with_exact_cases"], 1)
+        self.assertEqual(summary["scan_gate_cases"], 1)
+        self.assertEqual(summary["scan_passed"], 1)
+        self.assertEqual(summary["scan_mismatched"], 0)
+        self.assertEqual(summary["status"], "ok")
+        self.assertEqual(payload["strategies"][0]["scan_top_gates"][0]["name"], "score_max")
 
 
 if __name__ == "__main__":

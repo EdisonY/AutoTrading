@@ -32,6 +32,7 @@ from core.strategy_gates import (
     evaluate_score_max_gate,
     evaluate_sector_position_gate,
     evaluate_symbol_blacklist_gate,
+    evaluate_symbol_cooldown_gate,
     evaluate_symbol_scan_cooldown_gate,
     evaluate_symbol_stop_loss_gate,
     evaluate_timeframe_position_gate,
@@ -68,6 +69,7 @@ GATE_EVALUATORS: dict[str, GateEvaluator] = {
     "score_max": evaluate_score_max_gate,
     "sector_position": evaluate_sector_position_gate,
     "symbol_blacklist": evaluate_symbol_blacklist_gate,
+    "symbol_cooldown": evaluate_symbol_cooldown_gate,
     "symbol_scan_cooldown": evaluate_symbol_scan_cooldown_gate,
     "symbol_stop_loss": evaluate_symbol_stop_loss_gate,
     "timeframe_position": evaluate_timeframe_position_gate,
@@ -91,6 +93,27 @@ def _json_safe(value: Any) -> Any:
     if isinstance(value, (list, tuple, set, frozenset)):
         return [_json_safe(v) for v in value]
     return str(value)
+
+
+def _parse_datetime(value: Any) -> datetime | None:
+    if value is None or isinstance(value, datetime):
+        return value
+    if isinstance(value, str):
+        try:
+            return datetime.fromisoformat(value)
+        except ValueError:
+            return None
+    return None
+
+
+def _coerce_inputs(gate: str, inputs: Mapping[str, Any]) -> dict[str, Any]:
+    coerced = dict(inputs)
+    if gate == "symbol_cooldown":
+        coerced["cooldown_until"] = _parse_datetime(coerced.get("cooldown_until"))
+        now_value = _parse_datetime(coerced.get("now"))
+        if now_value is not None:
+            coerced["now"] = now_value
+    return coerced
 
 
 def strategy_gate_case(
@@ -143,7 +166,7 @@ def evaluate_strategy_gate_case(case: StrategyGateCase | Mapping[str, Any]) -> S
     evaluator = GATE_EVALUATORS.get(gate_case.gate)
     if evaluator is None:
         raise KeyError(f"unknown strategy gate case: {gate_case.gate}")
-    return evaluator(**dict(gate_case.inputs))
+    return evaluator(**_coerce_inputs(gate_case.gate, gate_case.inputs))
 
 
 def evaluate_strategy_gate_cases(cases: Iterable[StrategyGateCase | Mapping[str, Any]]) -> list[dict[str, Any]]:

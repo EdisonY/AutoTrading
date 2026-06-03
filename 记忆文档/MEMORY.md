@@ -319,6 +319,7 @@
 - 2026-06-03：P0-B B/C 成功开仓 runtime 链已离线落地。B/v16 成功 `OPEN` 现在除 confirmation/threshold/execution 外，还写 duplicate-position、central account-state、entry-risk、positive-quantity pass case；C/v14 成功 `OPEN` 还写 stale-price 与 market-microstructure pass case。没有启动/重启服务，也没有改阈值、风控或下单逻辑；后续继续补 A/v11 post-open sizing cleanup success context 和历史同输入 replay 结论。
 - 2026-06-03：P0-B A/v11 post-open sizing cleanup exact chain 已离线落地。`OPEN_SIZING_MISMATCH_CLOSED/FAILED` 现在写 confirmed `a_v11_margin_sizing` fail + close `execution_result`，成功撤销也能被 strict close-flow parity 审计。没有启动/重启服务，也没有改 sizing 目标、容忍度或关闭行为；后续剩余重点是历史同输入 replay/live 结论。
 - 2026-06-03：P0-B 历史 same-input replay/live 结论层已离线落地。`replay_live_parity_audit.py` 现在输出 open/scan/close 三类 acceptance、readiness score、blocking flows、fresh_run_required 和下一步动作。旧历史行没有 exact case 仍算 coverage gap；最终仍需要 offline 成果部署后的 staged fresh-run 新数据来验收。
+- 2026-06-03：P1-C ATR trailing replay primitive 已离线落地。`core.replay_fill` 支持 `atr` + `trailing_activation_atr` + `trailing_stop_atr`，可表达 A/v11 ATR 激活/回撤式 trailing 出场；这只增强离线 fill kernel，没有改实盘 trailing 参数，也还未把 counterfactual/rollout review 全量切到策略专属 ATR 出场。
 
 ---
 ## 2026-05-29 全局运行自检与账户方向口径修复

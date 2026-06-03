@@ -35,6 +35,9 @@ class ReplayFillRequest:
     take_profit: float | None = None
     trailing_stop_pct: float | None = None
     trailing_activation_pct: float = 0.0
+    atr: float | None = None
+    trailing_stop_atr: float | None = None
+    trailing_activation_atr: float = 0.0
     fee_bps: float = 5.0
     slippage_bps: float = 0.0
     conservative_intrabar: bool = True
@@ -76,22 +79,37 @@ def _gross_pnl(*, side: str, entry_price: float, exit_price: float, quantity: fl
 
 
 def _trailing_exit_price(req: ReplayFillRequest, *, entry_price: float, best_price: float) -> float | None:
-    if req.trailing_stop_pct is None:
-        return None
-    trailing_pct = float(req.trailing_stop_pct or 0.0)
-    if trailing_pct <= 0:
-        return None
-    activation = float(req.trailing_activation_pct or 0.0)
     side = req.side.lower()
-    if side == "short":
-        favorable_pct = (float(entry_price) - float(best_price)) / float(entry_price) * 100
-        if favorable_pct < activation:
-            return None
-        return float(best_price) * (1 + trailing_pct / 100)
-    favorable_pct = (float(best_price) - float(entry_price)) / float(entry_price) * 100
-    if favorable_pct < activation:
+    candidates: list[float] = []
+
+    trailing_pct = float(req.trailing_stop_pct or 0.0) if req.trailing_stop_pct is not None else 0.0
+    if trailing_pct > 0:
+        activation = float(req.trailing_activation_pct or 0.0)
+        if side == "short":
+            favorable_pct = (float(entry_price) - float(best_price)) / float(entry_price) * 100
+            if favorable_pct >= activation:
+                candidates.append(float(best_price) * (1 + trailing_pct / 100))
+        else:
+            favorable_pct = (float(best_price) - float(entry_price)) / float(entry_price) * 100
+            if favorable_pct >= activation:
+                candidates.append(float(best_price) * (1 - trailing_pct / 100))
+
+    trailing_atr = float(req.trailing_stop_atr or 0.0) if req.trailing_stop_atr is not None else 0.0
+    if trailing_atr > 0:
+        atr = float(req.atr or 0.0)
+        activation_atr = float(req.trailing_activation_atr or 0.0)
+        if side == "short":
+            favorable_move = float(entry_price) - float(best_price)
+            if favorable_move >= atr * activation_atr:
+                candidates.append(float(best_price) + atr * trailing_atr)
+        else:
+            favorable_move = float(best_price) - float(entry_price)
+            if favorable_move >= atr * activation_atr:
+                candidates.append(float(best_price) - atr * trailing_atr)
+
+    if not candidates:
         return None
-    return float(best_price) * (1 - trailing_pct / 100)
+    return min(candidates) if side == "short" else max(candidates)
 
 
 def _bar_exit(req: ReplayFillRequest, bar: ReplayBar, trailing_price: float | None = None) -> tuple[str, float] | None:
@@ -131,6 +149,8 @@ def simulate_replay_fill(req: ReplayFillRequest, bars: Iterable[ReplayBar | dict
     side = str(req.side or "").lower()
     if side not in {"long", "short"}:
         raise ValueError("side must be long or short")
+    if req.trailing_stop_atr is not None and float(req.trailing_stop_atr or 0.0) > 0 and float(req.atr or 0.0) <= 0:
+        raise ValueError("atr must be positive when trailing_stop_atr is enabled")
 
     entry_px = _exit_price_with_slippage(price=req.entry_price, side=side, is_entry=True, slippage_bps=req.slippage_bps)
     exit_reason = "end_of_window"

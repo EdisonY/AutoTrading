@@ -43,8 +43,8 @@
 
 3. **P1-C 完整 replay/fill 引擎**
    - 目标：OPEN_SKIPPED 放行后的成交、持仓、出场、费用/滑点仿真统一到一个 replay/fill 引擎。
-   - 已完成：`core.replay_fill` 第一版 deterministic fill kernel，支持 long/short、SL/TP、fee、slippage、保守 intrabar stop/take 冲突处理、end-of-window exit，并有单元测试；2026-06-03 `counterfactual_open_skips.py` 已用该 kernel 计算 OPEN_SKIPPED 假设放行后的 fill/PnL，并把 replay_fill payload 写进结果；同日新增通用 percent trailing-stop activation/exit，支持 long/short 保守 intrabar；恢复仓 review 已补账户快照路径 MFE/MAE、MFE回撤、first-seen 和 sample count，作为 recovery-exit replay 的只读事实层。
-   - 未完成：A/v11 ATR pullback、策略专属 recovery exit、反向信号/同策略重开证据、长 Kline feature 窗口和更完整 replay/fill 输出。
+   - 已完成：`core.replay_fill` 第一版 deterministic fill kernel，支持 long/short、SL/TP、fee、slippage、保守 intrabar stop/take 冲突处理、end-of-window exit，并有单元测试；2026-06-03 `counterfactual_open_skips.py` 已用该 kernel 计算 OPEN_SKIPPED 假设放行后的 fill/PnL，并把 replay_fill payload 写进结果；同日新增通用 percent trailing-stop activation/exit，支持 long/short 保守 intrabar；恢复仓 review 已补账户快照路径 MFE/MAE、MFE回撤、first-seen 和 sample count，作为 recovery-exit replay 的只读事实层；2026-06-03 22:17 补充：fill kernel 已支持 ATR-based trailing activation/pullback（`atr`、`trailing_activation_atr`、`trailing_stop_atr`），可表达 A/v11 trailing-pullback 的核心出场形态。
+   - 未完成：counterfactual/rollout review 仍需显式接入 A/v11 timeframe 参数；策略专属 recovery exit、反向信号/同策略重开证据、长 Kline feature 窗口和更完整 replay/fill 输出仍未完成。
    - 验收：每个实盘 OPEN_SKIPPED 能回答“若放行，按同一出场规则会怎样”。
 
 4. **P1-D 灰度/回滚门禁增强**

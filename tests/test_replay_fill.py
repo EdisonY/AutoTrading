@@ -126,6 +126,68 @@ class ReplayFillTest(unittest.TestCase):
         self.assertAlmostEqual(result.exit_price, 96.96)
         self.assertAlmostEqual(result.net_pnl_usdt, 6.08)
 
+    def test_long_atr_trailing_stop_after_activation(self):
+        result = simulate_replay_fill(
+            ReplayFillRequest(
+                symbol="ABCUSDT",
+                side="long",
+                entry_price=100,
+                quantity=1,
+                atr=2,
+                trailing_stop_atr=1.0,
+                trailing_activation_atr=1.0,
+                fee_bps=0,
+            ),
+            [
+                {"ts": "t1", "open": 100, "high": 101, "low": 99.5, "close": 100.5},
+                {"ts": "t2", "open": 100.5, "high": 103, "low": 101.5, "close": 102.5},
+                {"ts": "t3", "open": 102.5, "high": 103.2, "low": 101.0, "close": 101.2},
+            ],
+        )
+
+        self.assertEqual(result.exit_reason, "trailing_stop")
+        self.assertEqual(result.exit_ts, "t3")
+        self.assertAlmostEqual(result.exit_price, 101.2)
+        self.assertAlmostEqual(result.net_pnl_usdt, 1.2)
+
+    def test_short_atr_trailing_stop_after_activation(self):
+        result = simulate_replay_fill(
+            ReplayFillRequest(
+                symbol="ABCUSDT",
+                side="short",
+                entry_price=100,
+                quantity=2,
+                atr=2,
+                trailing_stop_atr=0.8,
+                trailing_activation_atr=1.0,
+                fee_bps=0,
+            ),
+            [
+                {"ts": "t1", "open": 100, "high": 100.5, "low": 99, "close": 99.5},
+                {"ts": "t2", "open": 99.5, "high": 98.0, "low": 96, "close": 96.8},
+                {"ts": "t3", "open": 96.8, "high": 97.7, "low": 96.5, "close": 97.2},
+            ],
+        )
+
+        self.assertEqual(result.exit_reason, "trailing_stop")
+        self.assertEqual(result.exit_ts, "t2")
+        self.assertAlmostEqual(result.exit_price, 97.6)
+        self.assertAlmostEqual(result.net_pnl_usdt, 4.8)
+
+    def test_atr_trailing_requires_positive_atr(self):
+        with self.assertRaises(ValueError):
+            simulate_replay_fill(
+                ReplayFillRequest(
+                    symbol="ABCUSDT",
+                    side="long",
+                    entry_price=100,
+                    quantity=1,
+                    atr=0,
+                    trailing_stop_atr=1,
+                ),
+                [{"ts": "t1", "open": 100, "high": 102, "low": 99, "close": 101}],
+            )
+
     def test_rejects_invalid_input(self):
         with self.assertRaises(ValueError):
             simulate_replay_fill(ReplayFillRequest("ABCUSDT", "long", 10, 0), [])

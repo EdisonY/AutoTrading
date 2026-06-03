@@ -317,6 +317,8 @@ def priority_from(status: str) -> str:
 
 # Fee/slippage adjustment constants
 FEE_SLIPPAGE_ADJUSTMENT_PCT = 0.15  # 0.15% total cost per round-trip
+PAPER_COST_SENSITIVITY_PCTS = (0.10, 0.15, 0.25, 0.35)
+PAPER_CONSERVATIVE_COST_PCT = 0.25
 MIN_SAMPLE_TRADES = 30
 MIN_SAMPLE_FOR_P0 = 50
 MIN_SAMPLE_FOR_P1 = 30
@@ -343,6 +345,32 @@ def adjust_pnl_for_fees(pnl: float, sample_trades: int, notional_per_trade: floa
     total_notional = notional_per_trade * sample_trades
     fee_cost = total_notional * FEE_SLIPPAGE_ADJUSTMENT_PCT / 100
     return pnl - fee_cost
+
+
+def build_paper_cost_sensitivity(
+    realized_pnl: float,
+    closed_samples: int,
+    notional_per_trade: float = POST_APPROVAL_NOTIONAL_PER_TRADE,
+) -> list[dict[str, Any]]:
+    """Report-only fee/slippage stress test for post-approval closed trades."""
+    rows: list[dict[str, Any]] = []
+    for pct in PAPER_COST_SENSITIVITY_PCTS:
+        cost = closed_samples * notional_per_trade * pct / 100.0
+        pnl_after_cost = realized_pnl - cost
+        rows.append(
+            {
+                "cost_pct": pct,
+                "notional_per_trade_usdt": round(notional_per_trade, 4),
+                "estimated_cost_usdt": round(cost, 4),
+                "pnl_after_cost_usdt": round(pnl_after_cost, 4),
+                "pnl_negative": pnl_after_cost < 0,
+                "rollback_loss_hit": pnl_after_cost <= -POST_APPROVAL_LOSS_USDT,
+                "label": "base" if abs(pct - FEE_SLIPPAGE_ADJUSTMENT_PCT) < 1e-9 else (
+                    "conservative" if abs(pct - PAPER_CONSERVATIVE_COST_PCT) < 1e-9 else "stress"
+                ),
+            }
+        )
+    return rows
 
 
 def check_rollback_triggers(
@@ -599,7 +627,13 @@ def classify_window_quality(metrics: dict[str, Any]) -> dict[str, Any]:
     forced_rate = forced_closes / max(1, closed_total)
     open_failed_rate = open_failed / max(1, attempted_opens)
     cost = closed_total * POST_APPROVAL_NOTIONAL_PER_TRADE * FEE_SLIPPAGE_ADJUSTMENT_PCT / 100
-    pnl_after_cost = to_float(metrics.get("realized_pnl_usdt")) - cost
+    realized_pnl = to_float(metrics.get("realized_pnl_usdt"))
+    pnl_after_cost = realized_pnl - cost
+    cost_sensitivity = build_paper_cost_sensitivity(realized_pnl, closed_total)
+    conservative = next(
+        (row for row in cost_sensitivity if abs(to_float(row.get("cost_pct")) - PAPER_CONSERVATIVE_COST_PCT) < 1e-9),
+        {},
+    )
     reasons: list[str] = []
     if close_failed:
         reasons.append(f"close_failed={close_failed}")
@@ -617,6 +651,12 @@ def classify_window_quality(metrics: dict[str, Any]) -> dict[str, Any]:
         if open_failed_rate >= POST_APPROVAL_OPEN_FAILED_RATE:
             label = "bad"
             reasons.append(f"open_failed_rate={open_failed_rate:.1%}")
+        if conservative.get("rollback_loss_hit"):
+            label = "bad"
+            reasons.append(
+                f"conservative_cost_{PAPER_CONSERVATIVE_COST_PCT:.2f}%_pnl="
+                f"{to_float(conservative.get('pnl_after_cost_usdt')):.2f}"
+            )
     if not reasons:
         reasons.append("window_quality_ok")
     return {
@@ -627,6 +667,8 @@ def classify_window_quality(metrics: dict[str, Any]) -> dict[str, Any]:
         "open_failed_rate": round(open_failed_rate, 4),
         "estimated_cost_usdt": round(cost, 4),
         "realized_pnl_after_cost": round(pnl_after_cost, 4),
+        "paper_cost_sensitivity": cost_sensitivity,
+        "conservative_cost": conservative,
         "reasons": reasons[:4],
     }
 
@@ -1034,6 +1076,13 @@ def build_decision_packet(
     q24 = (windows.get("24h") or {}).get("quality") or {}
     q72 = (windows.get("72h") or {}).get("quality") or {}
     risks = list(blockers[:5])
+    for label, quality in (("24h", q24), ("72h", q72)):
+        conservative_cost = quality.get("conservative_cost") or {}
+        if conservative_cost.get("rollback_loss_hit"):
+            risks.append(
+                f"{label} paper_cost_{PAPER_CONSERVATIVE_COST_PCT:.2f}% "
+                f"pnl {to_float(conservative_cost.get('pnl_after_cost_usdt')):.2f}"
+            )
     if acc_risk.get("sizing_violation_count"):
         risks.append(f"账户尺寸违规 {acc_risk.get('sizing_violation_count')}")
     if acc_risk.get("risk_count"):
@@ -1075,6 +1124,13 @@ def build_decision_packet(
             "shadow_samples": to_int(latest.get("sample_trades")),
             "closed_24h": to_int(q24.get("closed_samples")),
             "closed_72h": to_int(q72.get("closed_samples")),
+        },
+        "paper_cost_sensitivity": {
+            "notional_per_trade_usdt": POST_APPROVAL_NOTIONAL_PER_TRADE,
+            "base_cost_pct": FEE_SLIPPAGE_ADJUSTMENT_PCT,
+            "conservative_cost_pct": PAPER_CONSERVATIVE_COST_PCT,
+            "window_24h": q24.get("paper_cost_sensitivity") or [],
+            "window_72h": q72.get("paper_cost_sensitivity") or [],
         },
         "rollback_path": rollback_steps,
         "operator_action": action,
@@ -1260,7 +1316,10 @@ def audit_promotion_gate_hardening(decisions: list[dict[str, Any]]) -> dict[str,
     required_rules = {
         "min_samples": f"P0>={MIN_SAMPLE_FOR_P0}, P1>={MIN_SAMPLE_FOR_P1}",
         "multi_window": "3d/7d/14d/30d experiment windows",
-        "fee_slippage": f"{FEE_SLIPPAGE_ADJUSTMENT_PCT}% round-trip cost adjustment",
+        "fee_slippage": (
+            f"{FEE_SLIPPAGE_ADJUSTMENT_PCT}% base round-trip cost adjustment; "
+            f"paper sensitivity {','.join(f'{pct:.2f}%' for pct in PAPER_COST_SENSITIVITY_PCTS)}"
+        ),
         "regime": "post-approval trend/range/high_volatility/low_liquidity label",
         "account_risk": "sizing, hard-stop risk, unrealized PnL",
         "rollback": "OPEN_FAILED, PF/PnL decay, hard-stop increase, close-failed, account loss",

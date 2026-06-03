@@ -56,6 +56,67 @@ class StrategyDecisionPacketTests(unittest.TestCase):
         self.assertIn("prepare_rollback_review_packet", packet["rollback_path"])
         self.assertEqual(packet["automation"], "disabled_report_only")
         self.assertEqual(packet["evidence_maturity"]["label"], "reviewable")
+        self.assertIn("paper_cost_sensitivity", packet)
+
+    def test_window_quality_includes_paper_cost_sensitivity(self):
+        quality = self.evolution.classify_window_quality(
+            {
+                "window_hours": 72,
+                "opens": 60,
+                "closes": 55,
+                "forced_closes": 0,
+                "open_failed": 0,
+                "close_failed": 0,
+                "realized_pnl_usdt": -25.0,
+            }
+        )
+
+        rows = quality["paper_cost_sensitivity"]
+        self.assertEqual([row["cost_pct"] for row in rows], [0.10, 0.15, 0.25, 0.35])
+        self.assertEqual(quality["conservative_cost"]["cost_pct"], 0.25)
+        self.assertTrue(quality["conservative_cost"]["rollback_loss_hit"])
+        self.assertEqual(quality["label"], "bad")
+        self.assertTrue(any("conservative_cost_0.25%" in reason for reason in quality["reasons"]))
+
+    def test_decision_packet_surfaces_conservative_cost_risk(self):
+        post_approval = {
+            "windows": {
+                "24h": {
+                    "quality": {
+                        "closed_samples": 55,
+                        "required_closed_samples": 50,
+                        "paper_cost_sensitivity": self.evolution.build_paper_cost_sensitivity(-25.0, 55),
+                        "conservative_cost": self.evolution.build_paper_cost_sensitivity(-25.0, 55)[2],
+                    }
+                },
+                "72h": {
+                    "quality": {
+                        "closed_samples": 55,
+                        "required_closed_samples": 50,
+                        "paper_cost_sensitivity": self.evolution.build_paper_cost_sensitivity(-10.0, 55),
+                        "conservative_cost": self.evolution.build_paper_cost_sensitivity(-10.0, 55)[2],
+                    }
+                },
+            }
+        }
+
+        packet = self.evolution.build_decision_packet(
+            {"proposal": "cost stress"},
+            {"shadow_pnl": 20, "original_pnl": 10, "sample_trades": 55},
+            "support",
+            {"pnl": 5},
+            {},
+            post_approval,
+            [],
+            "rollback_watch",
+            "investigate_live_degradation",
+            70,
+            40,
+        )
+
+        self.assertIn("24h paper_cost_0.25% pnl -80.00", packet["risk"]["items"])
+        self.assertEqual(packet["paper_cost_sensitivity"]["conservative_cost_pct"], 0.25)
+        self.assertEqual(len(packet["paper_cost_sensitivity"]["window_24h"]), 4)
 
     def test_rollback_review_keeps_decision_packet(self):
         decision = {

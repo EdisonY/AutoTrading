@@ -267,6 +267,8 @@ class ReplayFillTest(unittest.TestCase):
         self.assertAlmostEqual(result.gross_pnl_usdt, 4.0)
         self.assertAlmostEqual(result.depth_slippage_usdt, 2.0)
         self.assertAlmostEqual(result.slippage_usdt, 2.0)
+        self.assertEqual(result.order_book_available_quantity, 3)
+        self.assertEqual(result.order_book_fill_ratio, 1.0)
 
     def test_depth_order_book_entry_uses_bids_for_short(self):
         result = simulate_replay_fill(
@@ -288,6 +290,8 @@ class ReplayFillTest(unittest.TestCase):
         self.assertAlmostEqual(result.gross_pnl_usdt, 4.0)
         self.assertAlmostEqual(result.depth_slippage_usdt, 2.0)
         self.assertAlmostEqual(result.slippage_usdt, 2.0)
+        self.assertEqual(result.order_book_available_quantity, 3)
+        self.assertEqual(result.order_book_fill_ratio, 1.0)
 
     def test_depth_partial_fill_when_book_liquidity_is_thin(self):
         result = simulate_replay_fill(
@@ -308,6 +312,54 @@ class ReplayFillTest(unittest.TestCase):
         self.assertEqual(result.unfilled_quantity, 3)
         self.assertEqual(result.fill_ratio, 0.4)
         self.assertTrue(result.partial_fill)
+        self.assertEqual(result.order_book_available_quantity, 2)
+        self.assertEqual(result.order_book_fill_ratio, 0.4)
+
+    def test_depth_order_book_can_limit_levels(self):
+        result = simulate_replay_fill(
+            ReplayFillRequest(
+                symbol="ABCUSDT",
+                side="long",
+                entry_price=100,
+                quantity=4,
+                fee_bps=0,
+                entry_order_book={"asks": [["100", "2"], ["101", "2"]]},
+                entry_order_book_max_levels=1,
+            ),
+            [{"ts": "t1", "open": 100, "high": 101.5, "low": 99.5, "close": 101}],
+        )
+
+        self.assertEqual(result.entry_fill_source, "order_book")
+        self.assertEqual(result.order_book_levels_used, 1)
+        self.assertEqual(result.order_book_available_quantity, 2)
+        self.assertEqual(result.quantity, 2)
+        self.assertEqual(result.unfilled_quantity, 2)
+        self.assertEqual(result.fill_ratio, 0.5)
+        self.assertEqual(result.order_book_fill_ratio, 0.5)
+
+    def test_depth_order_book_can_discount_visible_liquidity(self):
+        result = simulate_replay_fill(
+            ReplayFillRequest(
+                symbol="ABCUSDT",
+                side="long",
+                entry_price=100,
+                quantity=4,
+                fee_bps=0,
+                entry_order_book={"asks": [["100", "2"], ["101", "2"]]},
+                entry_order_book_liquidity_factor=0.5,
+            ),
+            [{"ts": "t1", "open": 100, "high": 101.5, "low": 99.5, "close": 101}],
+        )
+
+        self.assertEqual(result.entry_fill_source, "order_book")
+        self.assertEqual(result.order_book_levels_used, 2)
+        self.assertEqual(result.order_book_available_quantity, 2)
+        self.assertAlmostEqual(result.entry_price, 100.5)
+        self.assertEqual(result.quantity, 2)
+        self.assertEqual(result.unfilled_quantity, 2)
+        self.assertEqual(result.fill_ratio, 0.5)
+        self.assertEqual(result.order_book_fill_ratio, 0.5)
+        self.assertAlmostEqual(result.depth_slippage_usdt, 1.0)
 
     def test_depth_partial_fill_can_be_rejected(self):
         with self.assertRaises(ValueError):
@@ -345,6 +397,30 @@ class ReplayFillTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             simulate_replay_fill(
                 ReplayFillRequest("ABCUSDT", "long", 10, 1, max_fill_quantity=-1),
+                [{"ts": "t1", "open": 10, "high": 11, "low": 9, "close": 10}],
+            )
+        with self.assertRaises(ValueError):
+            simulate_replay_fill(
+                ReplayFillRequest(
+                    "ABCUSDT",
+                    "long",
+                    10,
+                    1,
+                    entry_order_book={"asks": [["10", "1"]]},
+                    entry_order_book_max_levels=0,
+                ),
+                [{"ts": "t1", "open": 10, "high": 11, "low": 9, "close": 10}],
+            )
+        with self.assertRaises(ValueError):
+            simulate_replay_fill(
+                ReplayFillRequest(
+                    "ABCUSDT",
+                    "long",
+                    10,
+                    1,
+                    entry_order_book={"asks": [["10", "1"]]},
+                    entry_order_book_liquidity_factor=1.5,
+                ),
                 [{"ts": "t1", "open": 10, "high": 11, "low": 9, "close": 10}],
             )
 

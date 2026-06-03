@@ -44,6 +44,8 @@ class ReplayFillRequest:
     max_fill_notional_usdt: float | None = None
     allow_partial_fill: bool = True
     entry_order_book: dict[str, Any] | None = None
+    entry_order_book_max_levels: int | None = None
+    entry_order_book_liquidity_factor: float = 1.0
     conservative_intrabar: bool = True
 
 
@@ -61,6 +63,8 @@ class ReplayFillResult:
     fill_status: str
     entry_fill_source: str
     order_book_levels_used: int
+    order_book_available_quantity: float
+    order_book_fill_ratio: float
     exit_reason: str
     exit_ts: str
     gross_pnl_usdt: float
@@ -136,7 +140,18 @@ def _entry_book_levels(req: ReplayFillRequest, *, side: str) -> list[tuple[float
     key = "asks" if side == "long" else "bids"
     levels = [_book_level_price_qty(level) for level in (book.get(key) or [])]
     parsed = [level for level in levels if level is not None]
-    return sorted(parsed, key=lambda item: item[0], reverse=(side == "short"))
+    parsed = sorted(parsed, key=lambda item: item[0], reverse=(side == "short"))
+    max_levels = req.entry_order_book_max_levels
+    if max_levels is not None:
+        if int(max_levels) <= 0:
+            raise ValueError("entry_order_book_max_levels must be positive")
+        parsed = parsed[: int(max_levels)]
+    liquidity_factor = float(req.entry_order_book_liquidity_factor)
+    if liquidity_factor < 0 or liquidity_factor > 1:
+        raise ValueError("entry_order_book_liquidity_factor must be between 0 and 1")
+    if liquidity_factor != 1.0:
+        parsed = [(price, qty * liquidity_factor) for price, qty in parsed]
+    return [(price, qty) for price, qty in parsed if qty > 0]
 
 
 def _depth_entry_fill(
@@ -145,16 +160,17 @@ def _depth_entry_fill(
     side: str,
     target_quantity: float,
     reference_entry_price: float,
-) -> tuple[float, float, float, int, str]:
+) -> tuple[float, float, float, int, str, float, float]:
     levels = _entry_book_levels(req, side=side)
     if not levels:
         if isinstance(req.entry_order_book, dict):
             raise ValueError("order book has no fillable liquidity")
-        return reference_entry_price, target_quantity, 0.0, 0, "synthetic"
+        return reference_entry_price, target_quantity, 0.0, 0, "synthetic", 0.0, 0.0
     remaining = float(target_quantity)
     filled = 0.0
     notional = 0.0
     levels_used = 0
+    available_quantity = sum(qty for _price, qty in levels)
     for price, available_qty in levels:
         if remaining <= 0:
             break
@@ -172,7 +188,8 @@ def _depth_entry_fill(
         depth_cost = max(0.0, reference_entry_price - avg_price) * filled
     else:
         depth_cost = max(0.0, avg_price - reference_entry_price) * filled
-    return avg_price, filled, depth_cost, levels_used, "order_book"
+    book_fill_ratio = filled / target_quantity if target_quantity > 0 else 0.0
+    return avg_price, filled, depth_cost, levels_used, "order_book", available_quantity, book_fill_ratio
 
 
 def _trailing_exit_price(req: ReplayFillRequest, *, entry_price: float, best_price: float) -> float | None:
@@ -251,7 +268,7 @@ def simulate_replay_fill(req: ReplayFillRequest, bars: Iterable[ReplayBar | dict
 
     reference_entry_px = _exit_price_with_slippage(price=req.entry_price, side=side, is_entry=True, slippage_bps=req.slippage_bps)
     target_qty, _, _, _ = _effective_quantity(req, entry_price=reference_entry_px)
-    raw_entry_px, qty, depth_slippage, levels_used, fill_source = _depth_entry_fill(
+    raw_entry_px, qty, depth_slippage, levels_used, fill_source, book_available_qty, book_fill_ratio = _depth_entry_fill(
         req,
         side=side,
         target_quantity=target_qty,
@@ -299,6 +316,8 @@ def simulate_replay_fill(req: ReplayFillRequest, bars: Iterable[ReplayBar | dict
         fill_status=fill_status,
         entry_fill_source=fill_source,
         order_book_levels_used=levels_used,
+        order_book_available_quantity=round(book_available_qty, 10),
+        order_book_fill_ratio=round(book_fill_ratio, 8),
         exit_reason=exit_reason,
         exit_ts=exit_ts,
         gross_pnl_usdt=round(gross, 8),

@@ -359,6 +359,8 @@ class CounterfactualReplayFillTests(unittest.TestCase):
                     "partial_fill": True,
                     "entry_fill_source": "order_book",
                     "order_book_levels_used": 2,
+                    "order_book_available_quantity": 2.0,
+                    "order_book_fill_ratio": 0.5,
                     "depth_snapshot_source": "runtime/depth_cache/FILLUSDT_latest.json",
                     "depth_snapshot_age_seconds": 12.0,
                     "bars_held": 7,
@@ -391,6 +393,8 @@ class CounterfactualReplayFillTests(unittest.TestCase):
                     "partial_fill": False,
                     "entry_fill_source": "synthetic",
                     "order_book_levels_used": 0,
+                    "order_book_available_quantity": 0.0,
+                    "order_book_fill_ratio": 0.0,
                     "bars_held": 3,
                 },
             ),
@@ -404,6 +408,8 @@ class CounterfactualReplayFillTests(unittest.TestCase):
         self.assertAlmostEqual(summary["slippage_usdt"], 0.1)
         self.assertAlmostEqual(summary["depth_slippage_usdt"], 0.1)
         self.assertEqual(summary["order_book_fill_count"], 1)
+        self.assertAlmostEqual(summary["avg_order_book_available_quantity"], 2.0)
+        self.assertAlmostEqual(summary["avg_order_book_fill_ratio"], 0.5)
         self.assertEqual(summary["depth_snapshot_count"], 1)
         self.assertAlmostEqual(summary["avg_depth_snapshot_age_seconds"], 12.0)
         self.assertAlmostEqual(summary["net_pnl_usdt"], 0.8)
@@ -418,6 +424,8 @@ class CounterfactualReplayFillTests(unittest.TestCase):
         self.assertAlmostEqual(by_model["a_v11_atr_trailing"]["net_pnl_usdt"], 3.6)
         self.assertEqual(by_model["a_v11_atr_trailing"]["partial_fill_count"], 1)
         self.assertEqual(by_model["a_v11_atr_trailing"]["order_book_fill_count"], 1)
+        self.assertAlmostEqual(by_model["a_v11_atr_trailing"]["avg_order_book_available_quantity"], 2.0)
+        self.assertAlmostEqual(by_model["a_v11_atr_trailing"]["avg_order_book_fill_ratio"], 0.5)
         self.assertAlmostEqual(by_model["a_v11_atr_trailing"]["avg_fill_ratio"], 0.5)
         self.assertAlmostEqual(by_model["fixed_pct_barrier"]["net_pnl_usdt"], -2.8)
 

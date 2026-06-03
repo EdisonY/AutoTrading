@@ -2696,9 +2696,12 @@ def render_html(out_dir: Path) -> str:
     )
     cf_depth_note = (
         f"Depth cache: order-book fills {int(cf_fill.get('order_book_fill_count') or 0)}, "
+        f"OB fill {float(cf_fill.get('avg_order_book_fill_ratio') or 0):.3f}, "
         f"depth snapshots {int(cf_fill.get('depth_snapshot_count') or 0)}, "
         f"avg age {float(cf_fill.get('avg_depth_snapshot_age_seconds') or 0):.1f}s, "
-        f"max age {float(cf_depth.get('max_age_seconds') or 0):.0f}s。"
+        f"max age {float(cf_depth.get('max_age_seconds') or 0):.0f}s, "
+        f"max levels {h(cf_depth.get('max_levels') if cf_depth.get('max_levels') is not None else '-')}, "
+        f"visible liquidity {float(cf_depth.get('liquidity_factor') if cf_depth.get('liquidity_factor') is not None else 1):.2f}。"
         if cf_depth.get("enabled")
         else "Depth cache 未接入。"
     )
@@ -2739,13 +2742,14 @@ def render_html(out_dir: Path) -> str:
   <td>{float(r.get('depth_slippage_usdt') or 0):.2f}</td>
   <td class="num {'pos' if float(r.get('net_pnl_usdt') or 0) >= 0 else 'neg'}">{float(r.get('net_pnl_usdt') or 0):+.2f}</td>
   <td>{int(r.get('order_book_fill_count') or 0)}</td>
+  <td>{float(r.get('avg_order_book_fill_ratio') or 0):.3f}</td>
   <td>{int(r.get('partial_fill_count') or 0)}</td>
   <td>{float(r.get('avg_fill_ratio') or 0):.3f}</td>
   <td>{float(r.get('avg_bars_held') or 0):.2f}</td>
 </tr>
 """.strip()
         for r in (cf_fill.get("by_exit_model") or [])[:6]
-    ) or '<tr><td colspan="12">暂无 replay/fill 出场模型汇总</td></tr>'
+    ) or '<tr><td colspan="13">暂无 replay/fill 出场模型汇总</td></tr>'
     cf_exit_reasons = "；".join(
         f"{row.get('name')}={int(row.get('count') or 0)}"
         for row in (cf_fill.get("exit_reason_counts") or [])[:5]
@@ -3215,7 +3219,7 @@ th {{ background:#f1f5f9; color:#334155; }}
       <tbody>{counterfactual_rows}</tbody>
     </table>
     <table class="subtable">
-      <thead><tr><th>出场模型</th><th>样本</th><th>胜率</th><th>Gross</th><th>Fee</th><th>Slippage</th><th>Depth slip</th><th>Net</th><th>OB fills</th><th>Partial</th><th>Avg fill</th><th>Avg bars</th></tr></thead>
+      <thead><tr><th>出场模型</th><th>样本</th><th>胜率</th><th>Gross</th><th>Fee</th><th>Slippage</th><th>Depth slip</th><th>Net</th><th>OB fills</th><th>OB fill</th><th>Partial</th><th>Avg fill</th><th>Avg bars</th></tr></thead>
       <tbody>{counterfactual_fill_rows}</tbody>
     </table>
     <table class="subtable">

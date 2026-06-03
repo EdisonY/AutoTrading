@@ -337,6 +337,7 @@
 - 2026-06-03：P0-B 历史 same-input replay/live 结论层已离线落地。`replay_live_parity_audit.py` 现在输出 open/scan/close 三类 acceptance、readiness score、blocking flows、fresh_run_required 和下一步动作。旧历史行没有 exact case 仍算 coverage gap；最终仍需要 offline 成果部署后的 staged fresh-run 新数据来验收。
 - 2026-06-03：P1-C ATR trailing replay primitive 已离线落地。`core.replay_fill` 支持 `atr` + `trailing_activation_atr` + `trailing_stop_atr`，可表达 A/v11 ATR 激活/回撤式 trailing 出场；这只增强离线 fill kernel，没有改实盘 trailing 参数，也还未把 counterfactual/rollout review 全量切到策略专属 ATR 出场。
 - 2026-06-04：P1-E Kline 长历史补数计划骨架已离线落地。新增 `research_kline_backfill.py`：默认只生成缺口计划；可在 staged run 时用 `--submit` 把 `/fapi/v1/klines` 请求写入 central API queue；可用 `--ingest-done` 把 DONE 队列结果合并回 `research_store/klines` 与 `features`。Aliyun refresh/shadow、release/deploy、反向同步、live-context pull 和入口页已接入。当前没有真实提交队列、没有启动 executor、没有请求 Binance；最终还需 staged run 后把 `15m/30m/1h` 跑到 30天覆盖 `kline_acceptance=ok`。
+- 2026-06-04：P1-C depth-aware fill 继续收紧。`core.replay_fill` 支持 `entry_order_book_max_levels` 与 `entry_order_book_liquidity_factor`，OPEN_SKIPPED 反事实报告可显示 OB available quantity / fill ratio，并且入口页展示深度假设。它只消费本地/镜像 depth cache，不抓 Binance、不改实盘下单；后续还缺 depth snapshot producer/warehouse、queue priority/market impact 与自动治理规则。
 
 ---
 ## 2026-05-29 全局运行自检与账户方向口径修复

@@ -31,6 +31,7 @@ DEFAULT_APPROVED_AT = "2026-05-29T11:59:40+08:00"
 FEE_SLIPPAGE_PCT = 0.15
 NOTIONAL_PER_TRADE = 400.0
 ROLLBACK_REVIEW_LOSS_USDT = 80.0
+COST_SENSITIVITY_PCTS = (0.10, 0.15, 0.25)
 
 
 def parse_dt(value: Any) -> datetime | None:
@@ -84,6 +85,39 @@ def payload_text(payload: dict[str, Any], *keys: str) -> str:
         if value not in (None, ""):
             return str(value)
     return ""
+
+
+def classify_exit_model(reason: str) -> str:
+    text = str(reason or "").lower()
+    if "交易所止盈止损自动平仓" in text or "exchange_auto" in text or "auto_close" in text:
+        return "exchange_auto_close"
+    if "最大亏损" in text or "硬顶" in text or "max_loss" in text or "hard_stop" in text:
+        return "max_loss_guard"
+    if "盈利回撤保护" in text or "profit_retrace" in text or "profit protect" in text:
+        return "profit_retrace_guard"
+    if "震荡平仓" in text or "range_exit" in text:
+        return "range_exit"
+    if "浮动止损" in text or "trailing" in text:
+        return "atr_trailing_stop"
+    if "止盈" in text or "take_profit" in text or "take profit" in text:
+        return "take_profit"
+    return "other"
+
+
+def build_cost_sensitivity(realized_pnl: float, closed_samples: int) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for pct in COST_SENSITIVITY_PCTS:
+        cost = closed_samples * NOTIONAL_PER_TRADE * pct / 100.0
+        after_cost = realized_pnl - cost
+        rows.append(
+            {
+                "cost_pct": pct,
+                "estimated_cost_usdt": round(cost, 4),
+                "pnl_after_cost_usdt": round(after_cost, 4),
+                "rollback_review_loss_hit": after_cost <= -ROLLBACK_REVIEW_LOSS_USDT,
+            }
+        )
+    return rows
 
 
 def find_db(explicit: str = "") -> Path | None:
@@ -159,11 +193,15 @@ def summarize_window(rows: list[sqlite3.Row], start: datetime, end: datetime) ->
         "top_losers": [],
         "top_winners": [],
         "close_reasons": [],
+        "exit_models": [],
+        "cost_sensitivity": [],
         "side_pnl": {},
         "timeframe_pnl": {},
     }
     trades: list[dict[str, Any]] = []
     reason_counter: collections.Counter[str] = collections.Counter()
+    exit_model_counter: collections.Counter[str] = collections.Counter()
+    exit_model_pnl: collections.defaultdict[str, float] = collections.defaultdict(float)
     side_pnl: collections.defaultdict[str, float] = collections.defaultdict(float)
     tf_pnl: collections.defaultdict[str, float] = collections.defaultdict(float)
     for row in rows:
@@ -193,12 +231,15 @@ def summarize_window(rows: list[sqlite3.Row], start: datetime, end: datetime) ->
                 payload = {}
             pnl = payload_float(payload, "pnl_usd", "pnl_usdt", "realized_pnl_usdt", "pnl")
             reason = payload_text(payload, "reason", "close_reason") or str(row["reason"] or "-")
+            exit_model = classify_exit_model(reason)
             timeframe = payload_text(payload, "timeframe", "tf") or "-"
             side = str(row["side"] or payload_text(payload, "side") or "-").lower()
             metrics["realized_pnl_usdt"] += pnl
             if event_type == "FORCED_CLOSE":
                 metrics["forced_close_pnl_usdt"] += pnl
             reason_counter[reason] += 1
+            exit_model_counter[exit_model] += 1
+            exit_model_pnl[exit_model] += pnl
             side_pnl[side] += pnl
             tf_pnl[timeframe] += pnl
             trades.append(
@@ -208,22 +249,29 @@ def summarize_window(rows: list[sqlite3.Row], start: datetime, end: datetime) ->
                     "side": side,
                     "timeframe": timeframe,
                     "event_type": event_type,
+                    "exit_model": exit_model,
                     "reason": reason,
                     "pnl_usdt": round(pnl, 4),
                 }
             )
     closed = int(metrics["closes"]) + int(metrics["forced_closes"])
+    realized_pnl = float(metrics["realized_pnl_usdt"])
     cost = closed * NOTIONAL_PER_TRADE * FEE_SLIPPAGE_PCT / 100.0
     metrics["estimated_cost_usdt"] = round(cost, 4)
-    metrics["realized_pnl_usdt"] = round(float(metrics["realized_pnl_usdt"]), 4)
+    metrics["realized_pnl_usdt"] = round(realized_pnl, 4)
     metrics["forced_close_pnl_usdt"] = round(float(metrics["forced_close_pnl_usdt"]), 4)
-    metrics["pnl_after_cost_usdt"] = round(float(metrics["realized_pnl_usdt"]) - cost, 4)
+    metrics["pnl_after_cost_usdt"] = round(realized_pnl - cost, 4)
     metrics["closed_samples"] = closed
     metrics["forced_close_rate"] = round(float(metrics["forced_closes"]) / max(1, closed), 4)
     metrics["open_failed_rate"] = round(float(metrics["open_failed"]) / max(1, int(metrics["opens"]) + int(metrics["open_failed"])), 4)
     metrics["top_losers"] = sorted(trades, key=lambda item: float(item["pnl_usdt"]))[:8]
     metrics["top_winners"] = sorted(trades, key=lambda item: float(item["pnl_usdt"]), reverse=True)[:5]
     metrics["close_reasons"] = [{"reason": k, "count": v} for k, v in reason_counter.most_common(8)]
+    metrics["exit_models"] = [
+        {"model": k, "count": v, "pnl_usdt": round(exit_model_pnl[k], 4)}
+        for k, v in exit_model_counter.most_common(8)
+    ]
+    metrics["cost_sensitivity"] = build_cost_sensitivity(realized_pnl, closed)
     metrics["side_pnl"] = {k: round(v, 4) for k, v in sorted(side_pnl.items())}
     metrics["timeframe_pnl"] = {k: round(v, 4) for k, v in sorted(tf_pnl.items())}
     return metrics
@@ -270,6 +318,19 @@ def decision_packet(approval: dict[str, Any], windows: dict[str, dict[str, Any]]
         maturity = "insufficient_live_window"
 
     close_reasons = [str(item.get("reason") or "") for item in (three.get("close_reasons") or [])[:3]]
+    exit_models = [
+        "{model}({count}, {pnl:+.2f})".format(
+            model=item.get("model") or "other",
+            count=int(item.get("count") or 0),
+            pnl=float(item.get("pnl_usdt") or 0),
+        )
+        for item in (three.get("exit_models") or [])[:3]
+    ]
+    cost_sensitivity = three.get("cost_sensitivity") or []
+    conservative_cost = next(
+        (item for item in cost_sensitivity if abs(float(item.get("cost_pct") or 0) - 0.25) < 0.000001),
+        None,
+    )
     top_loser = (three.get("top_losers") or [{}])[0]
     risks = [
         f"72h after-cost pnl {float(three.get('pnl_after_cost_usdt') or 0):+.2f} USDT",
@@ -278,6 +339,14 @@ def decision_packet(approval: dict[str, Any], windows: dict[str, dict[str, Any]]
     ]
     if close_reasons:
         risks.append(f"top close reasons: {', '.join(close_reasons)}")
+    if exit_models:
+        risks.append(f"72h exit models: {', '.join(exit_models)}")
+    if conservative_cost:
+        risks.append(
+            "72h after-cost pnl at 0.25% cost {pnl:+.2f} USDT".format(
+                pnl=float(conservative_cost.get("pnl_after_cost_usdt") or 0)
+            )
+        )
     if top_loser.get("symbol"):
         risks.append(
             "top loser: {symbol} {side} {pnl:+.2f} USDT".format(
@@ -298,6 +367,8 @@ def decision_packet(approval: dict[str, Any], windows: dict[str, dict[str, Any]]
             "closed_72h": closed72,
             "closed_168h": closed168,
         },
+        "exit_model_summary_72h": three.get("exit_models") or [],
+        "cost_sensitivity_72h": cost_sensitivity,
         "rollback_path": [
             "keep automatic rollback disabled",
             "if operator approves, revert A/v11 trailing pullback parameter/release to previous stable version",
@@ -374,6 +445,35 @@ def render_md(payload: dict[str, Any]) -> str:
             f"{int(row.get('forced_closes') or 0)} | {int(row.get('open_failed') or 0)} | "
             f"{float(row.get('realized_pnl_usdt') or 0):+.2f} | {float(row.get('estimated_cost_usdt') or 0):.2f} | "
             f"{float(row.get('pnl_after_cost_usdt') or 0):+.2f} | {float(row.get('forced_close_rate') or 0):.1%} |"
+        )
+    lines.extend(
+        [
+            "",
+            "## 72h Exit Models",
+            "",
+            "| Exit model | Count | PnL |",
+            "| --- | ---: | ---: |",
+        ]
+    )
+    for item in ((payload.get("windows") or {}).get("72h") or {}).get("exit_models") or []:
+        lines.append(
+            f"| {item.get('model') or '-'} | {int(item.get('count') or 0)} | "
+            f"{float(item.get('pnl_usdt') or 0):+.2f} |"
+        )
+    lines.extend(
+        [
+            "",
+            "## 72h Cost Sensitivity",
+            "",
+            "| Cost pct | Cost | After cost | Rollback review hit |",
+            "| ---: | ---: | ---: | --- |",
+        ]
+    )
+    for item in ((payload.get("windows") or {}).get("72h") or {}).get("cost_sensitivity") or []:
+        lines.append(
+            f"| {float(item.get('cost_pct') or 0):.2f}% | {float(item.get('estimated_cost_usdt') or 0):.2f} | "
+            f"{float(item.get('pnl_after_cost_usdt') or 0):+.2f} | "
+            f"{'yes' if item.get('rollback_review_loss_hit') else 'no'} |"
         )
     lines.extend(["", "## Top Losers"])
     for item in ((payload.get("windows") or {}).get("72h") or {}).get("top_losers") or []:

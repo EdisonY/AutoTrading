@@ -48,6 +48,8 @@ DEPTH_BACKFILL_JSON = ROOT / "runtime" / "research_depth_backfill_latest.json"
 DEPTH_BACKFILL_MD = REPORTS_DIR / "research_depth_backfill_latest.md"
 RESEARCH_RETENTION_JSON = ROOT / "runtime" / "research_store_retention_latest.json"
 RESEARCH_RETENTION_MD = REPORTS_DIR / "research_store_retention_latest.md"
+RESEARCH_COMPACTION_JSON = ROOT / "runtime" / "research_store_compaction_latest.json"
+RESEARCH_COMPACTION_MD = REPORTS_DIR / "research_store_compaction_latest.md"
 REPLAY_FEATURE_JSON = ROOT / "runtime" / "replay_feature_dataset_latest.json"
 REPLAY_FEATURE_MD = REPORTS_DIR / "replay_feature_dataset_latest.md"
 REPLAY_GATE_JSON = ROOT / "runtime" / "replay_gate_audit_latest.json"
@@ -733,6 +735,34 @@ def research_retention_summary(path: Path | None) -> dict[str, Any]:
         "apply_enabled": bool(payload.get("apply_enabled")),
         "hot_days": int(payload.get("hot_days") or 0),
         "retain_days": int(payload.get("retain_days") or 0),
+        "summary": summary or empty["summary"],
+        "by_table": summary.get("by_table") if isinstance(summary.get("by_table"), list) else [],
+        "partitions": payload.get("partitions") if isinstance(payload.get("partitions"), list) else [],
+    }
+
+
+def research_compaction_summary(path: Path | None) -> dict[str, Any]:
+    empty = {
+        "available": False,
+        "path": RESEARCH_COMPACTION_MD,
+        "age": "无compaction计划",
+        "fresh": False,
+        "apply_enabled": False,
+        "summary": {"partitions": 0, "compact_candidates": 0, "apply_compacted": 0, "apply_skipped": 0},
+        "by_table": [],
+        "partitions": [],
+    }
+    payload = read_json(path) if path else None
+    if not isinstance(payload, dict):
+        return empty
+    generated_at = parse_dt(payload.get("generated_at"))
+    summary = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
+    return {
+        "available": True,
+        "path": RESEARCH_COMPACTION_MD,
+        "age": age_text(generated_at),
+        "fresh": bool(generated_at and (datetime.now(CST) - generated_at).total_seconds() < 4 * 3600),
+        "apply_enabled": bool(payload.get("apply_enabled")),
         "summary": summary or empty["summary"],
         "by_table": summary.get("by_table") if isinstance(summary.get("by_table"), list) else [],
         "partitions": payload.get("partitions") if isinstance(payload.get("partitions"), list) else [],
@@ -1691,6 +1721,8 @@ def function_status_cards(data: dict[str, Any]) -> list[dict[str, str]]:
     depth_backfill_cache = depth_backfill_ingest.get("depth_cache") or {}
     research_retention = data.get("research_retention") or {}
     research_retention_summary_data = research_retention.get("summary") or {}
+    research_compaction = data.get("research_compaction") or {}
+    research_compaction_summary_data = research_compaction.get("summary") or {}
     replay_feature = data.get("replay_feature") or {}
     replay_summary = replay_feature.get("summary") or {}
     replay_gate = data.get("replay_gate") or {}
@@ -1908,6 +1940,29 @@ def function_status_cards(data: dict[str, Any]) -> list[dict[str, str]]:
                 f"保留 {int(research_retention.get('retain_days') or 0)} 日；更新 {research_retention.get('age')}。默认只计划，apply 才移动到 archive。"
                 if research_retention.get("available")
                 else "研究仓分区 retention/归档计划尚未生成；旧分区可能持续堆积。"
+            ),
+        },
+        {
+            "level": (
+                "ok"
+                if research_compaction.get("fresh") and int(research_compaction_summary_data.get("compact_candidates") or 0) == 0
+                else "warn"
+                if research_compaction.get("available")
+                else "warn"
+            ),
+            "name": "研究仓compaction",
+            "value": (
+                f"{int(research_compaction_summary_data.get('compact_candidates') or 0)} 候选"
+                if research_compaction.get("available")
+                else "未生成"
+            ),
+            "body": (
+                f"分区 {int(research_compaction_summary_data.get('partitions') or 0)}；"
+                f"compacted {int(research_compaction_summary_data.get('apply_compacted') or 0)}；"
+                f"skipped {int(research_compaction_summary_data.get('apply_skipped') or 0)}；"
+                f"更新 {research_compaction.get('age')}。默认只计划，apply 会先备份再重写。"
+                if research_compaction.get("available")
+                else "研究仓 compaction 计划尚未生成；大分区是否需要重写压缩仍不可见。"
             ),
         },
         {
@@ -2544,6 +2599,8 @@ def build_data() -> dict[str, Any]:
     data["depth_backfill_html"] = DEPTH_BACKFILL_MD
     data["research_retention"] = research_retention_summary(RESEARCH_RETENTION_JSON)
     data["research_retention_html"] = RESEARCH_RETENTION_MD
+    data["research_compaction"] = research_compaction_summary(RESEARCH_COMPACTION_JSON)
+    data["research_compaction_html"] = RESEARCH_COMPACTION_MD
     data["replay_feature"] = replay_feature_summary(REPLAY_FEATURE_JSON)
     data["replay_feature_html"] = REPLAY_FEATURE_MD
     data["replay_gate"] = replay_gate_summary(REPLAY_GATE_JSON)
@@ -3085,6 +3142,39 @@ def render_html(out_dir: Path) -> str:
             if isinstance(row, dict) and row.get("status") == "archive_candidate"
         ][:12]
     ) or '<tr><td colspan="6">暂无 archive candidate</td></tr>'
+    research_compaction = data.get("research_compaction") or {}
+    research_compaction_summary_data = research_compaction.get("summary") or {}
+    research_compaction_table_rows = "".join(
+        f"""
+<tr>
+  <td>{h(r.get('table'))}</td>
+  <td>{int(r.get('partitions') or 0)}</td>
+  <td>{int(r.get('compact_candidate') or 0)}</td>
+  <td>{int(r.get('ok') or 0)}</td>
+  <td>{int(r.get('missing_data_file') or 0)}</td>
+  <td>{int(r.get('rows') or 0)}</td>
+  <td>{int(r.get('bytes') or 0)}</td>
+</tr>
+""".strip()
+        for r in (research_compaction.get("by_table") or [])
+    ) or '<tr><td colspan="7">暂无 compaction 表统计</td></tr>'
+    research_compaction_candidate_rows = "".join(
+        f"""
+<tr>
+  <td>{h(r.get('table'))}</td>
+  <td>{h(r.get('date'))}</td>
+  <td>{h(r.get('source_format'))}</td>
+  <td>{h(r.get('target_format'))}</td>
+  <td>{int(r.get('row_count') or 0)}</td>
+  <td>{int(r.get('size_bytes') or 0)}</td>
+  <td>{h(','.join(r.get('reasons') or []))}</td>
+</tr>
+""".strip()
+        for r in [
+            row for row in (research_compaction.get("partitions") or [])
+            if isinstance(row, dict) and row.get("status") == "compact_candidate"
+        ][:12]
+    ) or '<tr><td colspan="7">暂无 compaction candidate</td></tr>'
     replay_gate = data.get("replay_gate") or {}
     replay_gate_summary_data = replay_gate.get("summary") or {}
     replay_gate_rows = "".join(
@@ -3303,6 +3393,14 @@ def render_html(out_dir: Path) -> str:
             "看 research_store 哪些分区仍是热数据、哪些可归档。默认只出计划，apply 才移动到 archive。",
             data["research_retention_html"],
             "看retention计划",
+            "slate",
+        ),
+        route_card(
+            "大分区怎么压",
+            "compaction计划",
+            "看 research_store 哪些分区需要重写压缩。默认只出计划，apply 会先备份再重写。",
+            data["research_compaction_html"],
+            "看compaction计划",
             "slate",
         ),
         route_card(
@@ -3601,6 +3699,15 @@ th {{ background:#f1f5f9; color:#334155; }}
     <table class="subtable">
       <thead><tr><th>表</th><th>日期</th><th>Age days</th><th>Bytes</th><th>Rows</th><th>路径</th></tr></thead>
       <tbody>{research_retention_candidate_rows}</tbody>
+    </table>
+    <p class="note">研究仓 compaction：分区 {int(research_compaction_summary_data.get('partitions') or 0)}；compact candidates {int(research_compaction_summary_data.get('compact_candidates') or 0)}；compacted {int(research_compaction_summary_data.get('apply_compacted') or 0)}；skipped {int(research_compaction_summary_data.get('apply_skipped') or 0)}；更新 {h(research_compaction.get('age'))}。默认只计划，显式 apply 会先备份再重写分区。</p>
+    <table class="subtable">
+      <thead><tr><th>表</th><th>分区</th><th>Compact候选</th><th>OK</th><th>缺文件</th><th>Rows</th><th>Bytes</th></tr></thead>
+      <tbody>{research_compaction_table_rows}</tbody>
+    </table>
+    <table class="subtable">
+      <thead><tr><th>表</th><th>日期</th><th>Source</th><th>Target</th><th>Rows</th><th>Bytes</th><th>原因</th></tr></thead>
+      <tbody>{research_compaction_candidate_rows}</tbody>
     </table>
   </section>
 

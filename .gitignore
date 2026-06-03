@@ -45,6 +45,7 @@ research_memory/cases/
 research_memory/snapshots/
 research_store/
 research_store_archive/
+research_store_compaction_backup/
 
 # OS/editor noise
 .DS_Store

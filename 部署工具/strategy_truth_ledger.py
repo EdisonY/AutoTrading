@@ -78,6 +78,36 @@ def payload_text(payload: dict[str, Any], *keys: str) -> str:
     return ""
 
 
+def payload_value(payload: dict[str, Any], *keys: str) -> Any:
+    """Read top-level or one-level nested raw event/signal values."""
+    candidates = [payload]
+    for nested_key in ("raw", "raw_signal", "raw_event"):
+        nested = payload.get(nested_key)
+        if isinstance(nested, dict):
+            candidates.append(nested)
+            raw_nested = nested.get("raw")
+            if isinstance(raw_nested, dict):
+                candidates.append(raw_nested)
+    for source in candidates:
+        for key in keys:
+            if key in source:
+                return source.get(key)
+    return None
+
+
+def safe_bool(value: Any) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    if value in (None, ""):
+        return None
+    text = str(value).strip().lower()
+    if text in {"1", "true", "yes", "y"}:
+        return True
+    if text in {"0", "false", "no", "n"}:
+        return False
+    return None
+
+
 def load_open_events(con: sqlite3.Connection, days: int = 30) -> list[dict[str, Any]]:
     """Load OPEN events from the events table."""
     cutoff = (datetime.now(CST) - timedelta(days=days)).isoformat()
@@ -204,6 +234,127 @@ def load_snapshot_history(con: sqlite3.Connection, days: int = 30) -> list[dict[
                 }
             )
     return history
+
+
+def normalize_side(value: Any) -> str:
+    text = str(value or "").strip().lower()
+    if text in {"long", "buy"}:
+        return "long"
+    if text in {"short", "sell"}:
+        return "short"
+    return text
+
+
+def opposite_side(side: str) -> str:
+    return "short" if normalize_side(side) == "long" else "long" if normalize_side(side) == "short" else ""
+
+
+def load_recovery_signal_events(con: sqlite3.Connection, days: int = 30) -> list[dict[str, Any]]:
+    """Load read-only signal/reject evidence for recovery-position review."""
+    cutoff = (datetime.now(CST) - timedelta(days=days)).isoformat()
+    rows = con.execute(
+        """SELECT id, ts, strategy, symbol, event_type, side, score, stage, layer, reason, payload_json
+           FROM events
+           WHERE event_type IN ('SIGNAL', 'SIGNAL_ONLY', 'OPEN_SKIPPED')
+             AND ts >= ?
+           ORDER BY ts ASC, id ASC""",
+        (cutoff,),
+    ).fetchall()
+    events: list[dict[str, Any]] = []
+    for row in rows:
+        try:
+            payload = json.loads(row[10]) if row[10] else {}
+        except Exception:
+            payload = {}
+        side = normalize_side(
+            row[5]
+            or payload_value(payload, "trade_side", "side")
+            or payload_value(payload, "recommended_side", "signal_side")
+        )
+        if side not in {"long", "short"}:
+            continue
+        events.append(
+            {
+                "id": row[0],
+                "ts": row[1],
+                "strategy": row[2],
+                "symbol": row[3],
+                "event_type": row[4],
+                "side": side,
+                "score": safe_float(row[6], safe_float(payload_value(payload, "net_score", "score", "raw_score"))),
+                "timeframe": str(payload_value(payload, "timeframe", "tf") or ""),
+                "can_trade": safe_bool(payload_value(payload, "can_trade")),
+                "stage": row[7],
+                "layer": row[8],
+                "reason": row[9] or str(payload_value(payload, "reason", "skip_reason") or ""),
+            }
+        )
+    return events
+
+
+def compact_signal_event(event: dict[str, Any] | None) -> dict[str, Any]:
+    if not event:
+        return {}
+    return {
+        "ts": event.get("ts"),
+        "event_type": event.get("event_type"),
+        "side": event.get("side"),
+        "score": round(safe_float(event.get("score")), 2),
+        "timeframe": event.get("timeframe") or "",
+        "can_trade": event.get("can_trade"),
+        "stage": event.get("stage") or "",
+        "layer": event.get("layer") or "",
+        "reason": event.get("reason") or "",
+    }
+
+
+def attach_recovery_signal_evidence(
+    recovery: list[dict[str, Any]],
+    signal_events: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Attach same-strategy same/opposite signal facts to recovery positions."""
+    by_key: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for event in signal_events:
+        key = (str(event.get("strategy") or ""), str(event.get("symbol") or ""))
+        by_key.setdefault(key, []).append(event)
+
+    for pos in recovery:
+        strategy = str(pos.get("strategy") or "")
+        symbol = str(pos.get("symbol") or "")
+        side = normalize_side(pos.get("side"))
+        first_seen = parse_dt(pos.get("first_seen_ts") or pos.get("snapshot_ts"))
+        candidates = by_key.get((strategy, symbol), [])
+        if first_seen:
+            candidates = [event for event in candidates if (parse_dt(event.get("ts")) or first_seen) >= first_seen]
+        same = [event for event in candidates if normalize_side(event.get("side")) == side]
+        opposite = [event for event in candidates if normalize_side(event.get("side")) == opposite_side(side)]
+        same_open_like = [
+            event
+            for event in same
+            if event.get("event_type") == "OPEN_SKIPPED" or event.get("can_trade") is True
+        ]
+        opposite_open_like = [
+            event
+            for event in opposite
+            if event.get("event_type") == "OPEN_SKIPPED" or event.get("can_trade") is True
+        ]
+        pos["same_strategy_signal_count"] = len(same)
+        pos["opposite_signal_count"] = len(opposite)
+        pos["same_strategy_open_like_count"] = len(same_open_like)
+        pos["opposite_open_like_count"] = len(opposite_open_like)
+        pos["latest_same_strategy_signal"] = compact_signal_event(same[-1] if same else None)
+        pos["latest_opposite_signal"] = compact_signal_event(opposite[-1] if opposite else None)
+        if opposite_open_like:
+            pos["signal_shadow_action"] = "opposite_signal_review"
+        elif same_open_like:
+            pos["signal_shadow_action"] = "same_strategy_reopen_supported"
+        elif opposite:
+            pos["signal_shadow_action"] = "weak_opposite_signal_seen"
+        elif same:
+            pos["signal_shadow_action"] = "weak_same_strategy_signal_seen"
+        else:
+            pos["signal_shadow_action"] = "no_recent_same_strategy_signal"
+    return recovery
 
 
 def match_trades(
@@ -408,8 +559,10 @@ def evaluate_recovery_exit_policies(recovery: list[dict]) -> dict[str, Any]:
         else:
             policies["trailing_2pct"]["would_hold"] += 1
 
-        # Opposite signal (placeholder - would need strategy signal data)
-        policies["opposite_signal"]["would_hold"] += 1
+        if int(pos.get("opposite_open_like_count") or 0) > 0:
+            policies["opposite_signal"]["would_exit"] += 1
+        else:
+            policies["opposite_signal"]["would_hold"] += 1
 
     return policies
 
@@ -431,7 +584,11 @@ def review_recovery_positions(recovery: list[dict]) -> dict[str, Any]:
         oldest_age = max(oldest_age, age_hours)
         total_margin += margin
         total_upnl += upnl
-        if age_hours >= 24 or upnl_pct <= -5:
+        opposite_open_like = int(pos.get("opposite_open_like_count") or 0)
+        if opposite_open_like > 0:
+            risk = "review"
+            action = "opposite_signal_manual_review"
+        elif age_hours >= 24 or upnl_pct <= -5:
             risk = "review"
             action = "manual_review"
         elif age_hours >= 8 or upnl_pct <= -2:
@@ -461,6 +618,13 @@ def review_recovery_positions(recovery: list[dict]) -> dict[str, Any]:
                 "drawdown_from_mfe_pct_on_margin": round(safe_float(pos.get("drawdown_from_mfe_pct_on_margin")), 2),
                 "mfe_price_pct": round(safe_float(pos.get("mfe_price_pct")), 4),
                 "mae_price_pct": round(safe_float(pos.get("mae_price_pct")), 4),
+                "same_strategy_signal_count": int(pos.get("same_strategy_signal_count") or 0),
+                "opposite_signal_count": int(pos.get("opposite_signal_count") or 0),
+                "same_strategy_open_like_count": int(pos.get("same_strategy_open_like_count") or 0),
+                "opposite_open_like_count": opposite_open_like,
+                "latest_same_strategy_signal": pos.get("latest_same_strategy_signal") or {},
+                "latest_opposite_signal": pos.get("latest_opposite_signal") or {},
+                "signal_shadow_action": pos.get("signal_shadow_action") or "no_recent_same_strategy_signal",
                 "risk": risk,
                 "shadow_action": action,
                 "note": "只读审查；不自动平仓、不改变退出规则。",
@@ -476,10 +640,16 @@ def review_recovery_positions(recovery: list[dict]) -> dict[str, Any]:
     return {
         "count": len(recovery),
         "risk_counts": risk_counts,
+        "signal_counts": {
+            "same_strategy_signal_positions": sum(1 for pos in recovery if int(pos.get("same_strategy_signal_count") or 0) > 0),
+            "opposite_signal_positions": sum(1 for pos in recovery if int(pos.get("opposite_signal_count") or 0) > 0),
+            "same_strategy_reopen_supported": sum(1 for pos in recovery if int(pos.get("same_strategy_open_like_count") or 0) > 0),
+            "opposite_signal_review": sum(1 for pos in recovery if int(pos.get("opposite_open_like_count") or 0) > 0),
+        },
         "oldest_age_hours": round(oldest_age, 2),
         "total_margin_usdt": round(total_margin, 2),
         "total_unrealized_pnl_usdt": round(total_upnl, 2),
-        "path_metric_note": "report_only_snapshot_path_mfe_mae",
+        "path_metric_note": "report_only_snapshot_path_mfe_mae_and_signal_evidence",
         "positions": positions,
         "policy": "report_only_no_auto_exit",
     }
@@ -687,15 +857,20 @@ def write_markdown(output: dict, path: Path) -> None:
         f"未实现 PnL: {float(review.get('total_unrealized_pnl_usdt') or 0):+.2f} USDT"
     )
     risk_counts = review.get("risk_counts") or {}
+    signal_counts = review.get("signal_counts") or {}
     lines.append(
         f"- 风险分层: review={int(risk_counts.get('review') or 0)}, "
         f"watch={int(risk_counts.get('watch') or 0)}, none={int(risk_counts.get('none') or 0)}"
     )
+    lines.append(
+        f"- 信号证据: 同策略重开支持={int(signal_counts.get('same_strategy_reopen_supported') or 0)}, "
+        f"反向信号需复核={int(signal_counts.get('opposite_signal_review') or 0)}"
+    )
     positions = review.get("positions") or []
     if positions:
         lines.append("")
-        lines.append("| Strategy | Symbol | Side | Age h | Margin | UPNL | UPNL/Margin | MFE | MAE | MFE drawdown | Risk | Shadow action |")
-        lines.append("|------|------|------|------:|------:|------:|------------:|----:|----:|-------------:|------|------------|")
+        lines.append("| Strategy | Symbol | Side | Age h | Margin | UPNL | UPNL/Margin | MFE | MAE | MFE drawdown | Same re-open | Opposite signal | Signal action | Risk | Shadow action |")
+        lines.append("|------|------|------|------:|------:|------:|------------:|----:|----:|-------------:|------------:|---------------:|---------------|------|------------|")
         for pos in positions[:20]:
             lines.append(
                 f"| {pos.get('strategy')} | {pos.get('symbol')} | {pos.get('side')} | "
@@ -706,6 +881,9 @@ def write_markdown(output: dict, path: Path) -> None:
                 f"{float(pos.get('mfe_pct_on_margin') or 0):+.2f}% | "
                 f"{float(pos.get('mae_pct_on_margin') or 0):+.2f}% | "
                 f"{float(pos.get('drawdown_from_mfe_pct_on_margin') or 0):+.2f}% | "
+                f"{int(pos.get('same_strategy_open_like_count') or 0)} | "
+                f"{int(pos.get('opposite_open_like_count') or 0)} | "
+                f"{pos.get('signal_shadow_action')} | "
                 f"{pos.get('risk')} | {pos.get('shadow_action')} |"
             )
     else:
@@ -767,14 +945,17 @@ def main(argv: list[str] | None = None) -> int:
         close_events = load_close_events(con, days=args.days)
         snapshots = load_latest_snapshots(con)
         snapshot_history = load_snapshot_history(con, days=args.days)
+        signal_events = load_recovery_signal_events(con, days=args.days)
 
         print(f"  OPEN events: {len(open_events)}")
         print(f"  CLOSE events: {len(close_events)}")
+        print(f"  Signal/reject events: {len(signal_events)}")
         print(f"  Snapshots: {len(snapshots)} accounts")
 
         trades = match_trades(open_events, close_events)
         recovery = identify_recovery_positions(snapshots, open_events)
         recovery = enrich_recovery_path_metrics(recovery, snapshot_history)
+        recovery = attach_recovery_signal_evidence(recovery, signal_events)
 
         print(f"  Matched trades: {len(trades)}")
         print(f"  Recovery positions: {len(recovery)}")

@@ -94,7 +94,7 @@ class StrategyTruthLedgerRecoveryPathTests(unittest.TestCase):
         review = tool.review_recovery_positions(recovery)
         pos = review["positions"][0]
 
-        self.assertEqual(review["path_metric_note"], "report_only_snapshot_path_mfe_mae")
+        self.assertEqual(review["path_metric_note"], "report_only_snapshot_path_mfe_mae_and_signal_evidence")
         self.assertEqual(pos["first_seen_ts"], "2026-06-03T07:00:00+08:00")
         self.assertEqual(pos["path_samples"], 4)
         self.assertEqual(pos["mfe_pct_on_margin"], 8.0)
@@ -102,6 +102,92 @@ class StrategyTruthLedgerRecoveryPathTests(unittest.TestCase):
         self.assertEqual(pos["drawdown_from_mfe_pct_on_margin"], -3.0)
         self.assertEqual(pos["mfe_price_pct"], 1.5)
         self.assertEqual(pos["mae_price_pct"], -0.2)
+
+    def test_attach_recovery_signal_evidence_marks_reopen_and_opposite_review(self):
+        tool = load_tool()
+        recovery = [
+            {
+                "strategy": "B/v16",
+                "account": "acct-b",
+                "symbol": "ETHUSDT",
+                "side": "short",
+                "first_seen_ts": "2026-06-03T08:00:00+08:00",
+                "snapshot_ts": "2026-06-03T10:00:00+08:00",
+            }
+        ]
+        signal_events = [
+            {
+                "ts": "2026-06-03T07:30:00+08:00",
+                "strategy": "B/v16",
+                "symbol": "ETHUSDT",
+                "event_type": "SIGNAL",
+                "side": "long",
+                "score": 90,
+                "can_trade": True,
+            },
+            {
+                "ts": "2026-06-03T08:30:00+08:00",
+                "strategy": "B/v16",
+                "symbol": "ETHUSDT",
+                "event_type": "OPEN_SKIPPED",
+                "side": "short",
+                "score": -88,
+                "can_trade": None,
+                "reason": "same-symbol position",
+            },
+            {
+                "ts": "2026-06-03T09:00:00+08:00",
+                "strategy": "B/v16",
+                "symbol": "ETHUSDT",
+                "event_type": "SIGNAL",
+                "side": "long",
+                "score": 91,
+                "can_trade": True,
+                "reason": "opposite long signal",
+            },
+        ]
+
+        enriched = tool.attach_recovery_signal_evidence(recovery, signal_events)
+        pos = enriched[0]
+
+        self.assertEqual(pos["same_strategy_signal_count"], 1)
+        self.assertEqual(pos["same_strategy_open_like_count"], 1)
+        self.assertEqual(pos["opposite_signal_count"], 1)
+        self.assertEqual(pos["opposite_open_like_count"], 1)
+        self.assertEqual(pos["signal_shadow_action"], "opposite_signal_review")
+        self.assertEqual(pos["latest_same_strategy_signal"]["event_type"], "OPEN_SKIPPED")
+        self.assertEqual(pos["latest_opposite_signal"]["score"], 91)
+
+    def test_recovery_review_and_policy_use_signal_evidence_report_only(self):
+        tool = load_tool()
+        recovery = [
+            {
+                "strategy": "B/v16",
+                "account": "acct-b",
+                "symbol": "ETHUSDT",
+                "side": "short",
+                "margin": 100.0,
+                "unrealized_pnl": 3.0,
+                "snapshot_ts": "2026-06-03T10:00:00+08:00",
+                "same_strategy_signal_count": 1,
+                "same_strategy_open_like_count": 1,
+                "opposite_signal_count": 1,
+                "opposite_open_like_count": 1,
+                "signal_shadow_action": "opposite_signal_review",
+            }
+        ]
+
+        review = tool.review_recovery_positions(recovery)
+        policies = tool.evaluate_recovery_exit_policies(recovery)
+        pos = review["positions"][0]
+
+        self.assertEqual(review["signal_counts"]["same_strategy_reopen_supported"], 1)
+        self.assertEqual(review["signal_counts"]["opposite_signal_review"], 1)
+        self.assertEqual(pos["risk"], "review")
+        self.assertEqual(pos["shadow_action"], "opposite_signal_manual_review")
+        self.assertEqual(pos["signal_shadow_action"], "opposite_signal_review")
+        self.assertIn("不自动平仓", pos["note"])
+        self.assertEqual(policies["opposite_signal"]["would_exit"], 1)
 
 
 if __name__ == "__main__":

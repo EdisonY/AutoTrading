@@ -43,8 +43,8 @@
 
 3. **P1-C 完整 replay/fill 引擎**
    - 目标：OPEN_SKIPPED 放行后的成交、持仓、出场、费用/滑点仿真统一到一个 replay/fill 引擎。
-   - 已完成：`core.replay_fill` 第一版 deterministic fill kernel，支持 long/short、SL/TP、fee、slippage、保守 intrabar stop/take 冲突处理、end-of-window exit，并有单元测试；2026-06-03 `counterfactual_open_skips.py` 已用该 kernel 计算 OPEN_SKIPPED 假设放行后的 fill/PnL，并把 replay_fill payload 写进结果；同日新增通用 percent trailing-stop activation/exit，支持 long/short 保守 intrabar；恢复仓 review 已补账户快照路径 MFE/MAE、MFE回撤、first-seen 和 sample count，作为 recovery-exit replay 的只读事实层；2026-06-03 22:17 补充：fill kernel 已支持 ATR-based trailing activation/pullback（`atr`、`trailing_activation_atr`、`trailing_stop_atr`），可表达 A/v11 trailing-pullback 的核心出场形态；2026-06-03 22:29 补充：`counterfactual_open_skips.py` 已对带正 ATR 的 A/v11 15m/30m skipped rows 显式接入 approved ATR trailing 参数，15m 为 `1.0/1.0 ATR`，30m 为 `1.2/0.8 ATR`，并在 `replay_fill.exit_model` 标注 `a_v11_atr_trailing`。
-   - 未完成：A/v11 rollout review 已有真实 close exit-model attribution 和成本敏感度，但仍需完整历史 bar-by-bar fill comparison；策略专属 recovery exit、反向信号/同策略重开证据、长 Kline feature 窗口和更完整 replay/fill 输出仍未完成。
+   - 已完成：`core.replay_fill` 第一版 deterministic fill kernel，支持 long/short、SL/TP、fee、slippage、保守 intrabar stop/take 冲突处理、end-of-window exit，并有单元测试；2026-06-03 `counterfactual_open_skips.py` 已用该 kernel 计算 OPEN_SKIPPED 假设放行后的 fill/PnL，并把 replay_fill payload 写进结果；同日新增通用 percent trailing-stop activation/exit，支持 long/short 保守 intrabar；恢复仓 review 已补账户快照路径 MFE/MAE、MFE回撤、first-seen 和 sample count，作为 recovery-exit replay 的只读事实层；2026-06-03 22:17 补充：fill kernel 已支持 ATR-based trailing activation/pullback（`atr`、`trailing_activation_atr`、`trailing_stop_atr`），可表达 A/v11 trailing-pullback 的核心出场形态；2026-06-03 22:29 补充：`counterfactual_open_skips.py` 已对带正 ATR 的 A/v11 15m/30m skipped rows 显式接入 approved ATR trailing 参数，15m 为 `1.0/1.0 ATR`，30m 为 `1.2/0.8 ATR`，并在 `replay_fill.exit_model` 标注 `a_v11_atr_trailing`；2026-06-03 23:25 补充：recovery-position review 已读取 `SIGNAL` / `SIGNAL_ONLY` / `OPEN_SKIPPED` 作为同策略信号证据，标注同向重开支持与反向信号人工复核。
+   - 未完成：A/v11 rollout review 已有真实 close exit-model attribution 和成本敏感度，但仍需完整历史 bar-by-bar fill comparison；策略专属 recovery exit、长 Kline feature 窗口和更完整 replay/fill 输出仍未完成。
    - 验收：每个实盘 OPEN_SKIPPED 能回答“若放行，按同一出场规则会怎样”。
 
 4. **P1-D 灰度/回滚门禁增强**
@@ -62,7 +62,8 @@
    - 继续拆 `not_scanned`：未进 watchlist、scanner universe 不支持、cadence miss、mirror truncation，并接 full replay/fill outcome。
 
 2. **P2-B Recovery-position 策略**
-   - 已补 takeover 后账户快照路径 MFE/MAE、MFE回撤、first-seen 和 sample count（report-only）。仍需反向信号退出、同策略是否会重新开仓、自动 recovery-exit 规则证据。
+   - 已补 takeover 后账户快照路径 MFE/MAE、MFE回撤、first-seen 和 sample count（report-only）；已补同策略同币种信号证据，显示同向重开支持、反向 open-like 信号人工复核和最新 compact signal facts（report-only）。
+   - 未完成：自动 recovery-exit 规则仍需完整 replay/fill、长 Kline 窗口和治理门禁后才能考虑。
 
 3. **P2-C 已有候选继续观察**
    - A/v11 replacement-quality guarded small-live；B/v16 confirm-soft-pass shadow；C/v14 受控扩样漏斗/PF。

@@ -1076,22 +1076,58 @@ class ScannerV16:
                         decision_stage="score_gate",
                     )
                     continue
-                stage_ok, stage_reason = self._passes_small_live_stage_guard(sym, tf, sig, side, score)
-                if not stage_ok:
+                stage_gate = evaluate_b_v16_small_live_stage_guard(
+                    enabled=STAGE_GUARD_SMALL_LIVE_ENABLED,
+                    signal=sig,
+                    side=side,
+                    score=score,
+                    min_score=STAGE_GUARD_MIN_SCORE,
+                    reverse_pass_score=STAGE_GUARD_REVERSE_PASS_SCORE,
+                )
+                if not stage_gate.allowed:
                     scan_stats["stage_guard_fail"] += 1
                     log_event({
                         "time": str(datetime.now(CST)), "event": "OPEN_SKIPPED",
                         "symbol": sym, "side": side, "score": score,
                         "raw_score": raw_score, "timeframe": tf,
-                        "skip_reason": stage_reason,
+                        "skip_reason": stage_gate.reason,
                         "decision_stage": "small_live_stage_guard",
                         "filter_layer": "strategy",
                         "approved_candidate_id": "HYP-2026-05-22-B-v16-reverse_trade-stage-guard",
+                        "strategy_gate_case": strategy_gate_case(
+                            name="b_v16_small_live_stage_guard",
+                            gate="b_v16_small_live_stage_guard",
+                            inputs={
+                                "enabled": STAGE_GUARD_SMALL_LIVE_ENABLED,
+                                "signal": sig,
+                                "side": side,
+                                "score": score,
+                                "min_score": STAGE_GUARD_MIN_SCORE,
+                                "reverse_pass_score": STAGE_GUARD_REVERSE_PASS_SCORE,
+                            },
+                            decision=stage_gate,
+                            meta={"strategy": "B/v16", "timeframe": tf},
+                        ),
                         **sentinel_fields(sym),
                     })
                     continue
-                confirmed, confirm_reason = self._passes_15m_confirmation(sym, side, raw_score, open_positions)
-                if not confirmed:
+                confirm_signal = self.strategy_engine.analyze(sym, CONFIRM_TIMEFRAME)
+                confirmation_gate = evaluate_b_v16_confirmation_gate(
+                    side=side,
+                    raw_score=raw_score,
+                    confirm_signal=confirm_signal,
+                    open_positions=open_positions,
+                    max_active_new_positions=MAX_ACTIVE_NEW_POSITIONS,
+                    no_confirm_high_score_pass=NO_CONFIRM_HIGH_SCORE_PASS,
+                    confirm_opposite_reject_score=CONFIRM_OPPOSITE_REJECT_SCORE,
+                    opposite_high_score_pass=OPPOSITE_HIGH_SCORE_PASS,
+                    weak_confirm_pass_score=WEAK_CONFIRM_PASS_SCORE,
+                    confirm_min_score=CONFIRM_MIN_SCORE,
+                    confirm_bonus=CONFIRM_BONUS,
+                    confirm_strong_bonus=CONFIRM_STRONG_BONUS,
+                )
+                confirm_reason = confirmation_gate.reason
+                if not confirmation_gate.allowed:
                     scan_stats["confirm_fail"] += 1
                     log_event({
                         "time": str(datetime.now(CST)), "event": "OPEN_SKIPPED",
@@ -1100,10 +1136,47 @@ class ScannerV16:
                         "skip_reason": confirm_reason,
                         "decision_stage": "confirmation",
                         "filter_layer": "confirmation",
+                        "strategy_gate_case": strategy_gate_case(
+                            name="b_v16_confirmation",
+                            gate="b_v16_confirmation",
+                            inputs={
+                                "side": side,
+                                "raw_score": raw_score,
+                                "confirm_signal": confirm_signal,
+                                "open_positions": open_positions,
+                                "max_active_new_positions": MAX_ACTIVE_NEW_POSITIONS,
+                                "no_confirm_high_score_pass": NO_CONFIRM_HIGH_SCORE_PASS,
+                                "confirm_opposite_reject_score": CONFIRM_OPPOSITE_REJECT_SCORE,
+                                "opposite_high_score_pass": OPPOSITE_HIGH_SCORE_PASS,
+                                "weak_confirm_pass_score": WEAK_CONFIRM_PASS_SCORE,
+                                "confirm_min_score": CONFIRM_MIN_SCORE,
+                                "confirm_bonus": CONFIRM_BONUS,
+                                "confirm_strong_bonus": CONFIRM_STRONG_BONUS,
+                            },
+                            decision=confirmation_gate,
+                            meta={"strategy": "B/v16", "timeframe": tf},
+                        ),
                         **sentinel_fields(sym),
                     })
                     continue
-                if not self._passes_entry_threshold(tf, side, score, sym=sym, open_positions=open_positions, confirm_reason=confirm_reason):
+                threshold_gate = evaluate_b_v16_entry_threshold(
+                    timeframe=tf,
+                    side=side,
+                    score=score,
+                    symbol=sym,
+                    open_positions=open_positions,
+                    confirm_reason=confirm_reason,
+                    score_thresholds=SCORE_THRESHOLDS,
+                    score_min=SCORE_MIN,
+                    short_entry_penalty=SHORT_ENTRY_PENALTY,
+                    major_symbols=MAJOR_SYMBOLS,
+                    low_position_threshold_discount=LOW_POSITION_THRESHOLD_DISCOUNT,
+                    no_confirm_threshold_penalty=NO_CONFIRM_THRESHOLD_PENALTY,
+                    weak_opposite_confirm_penalty=WEAK_OPPOSITE_CONFIRM_PENALTY,
+                    confirm_bonus=CONFIRM_BONUS,
+                    confirm_strong_bonus=CONFIRM_STRONG_BONUS,
+                )
+                if not threshold_gate.allowed:
                     scan_stats["threshold_fail"] += 1
                     log_event({
                         "time": str(datetime.now(CST)), "event": "OPEN_SKIPPED",
@@ -1112,6 +1185,29 @@ class ScannerV16:
                         "skip_reason": f"阈值未达:{confirm_reason}",
                         "decision_stage": "threshold",
                         "filter_layer": "strategy",
+                        "strategy_gate_case": strategy_gate_case(
+                            name="b_v16_entry_threshold",
+                            gate="b_v16_entry_threshold",
+                            inputs={
+                                "timeframe": tf,
+                                "side": side,
+                                "score": score,
+                                "symbol": sym,
+                                "open_positions": open_positions,
+                                "confirm_reason": confirm_reason,
+                                "score_thresholds": SCORE_THRESHOLDS,
+                                "score_min": SCORE_MIN,
+                                "short_entry_penalty": SHORT_ENTRY_PENALTY,
+                                "major_symbols": MAJOR_SYMBOLS,
+                                "low_position_threshold_discount": LOW_POSITION_THRESHOLD_DISCOUNT,
+                                "no_confirm_threshold_penalty": NO_CONFIRM_THRESHOLD_PENALTY,
+                                "weak_opposite_confirm_penalty": WEAK_OPPOSITE_CONFIRM_PENALTY,
+                                "confirm_bonus": CONFIRM_BONUS,
+                                "confirm_strong_bonus": CONFIRM_STRONG_BONUS,
+                            },
+                            decision=threshold_gate,
+                            meta={"strategy": "B/v16", "timeframe": tf},
+                        ),
                         **sentinel_fields(sym),
                     })
                     continue

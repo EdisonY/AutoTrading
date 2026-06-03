@@ -77,6 +77,11 @@ GATE_EVALUATORS: dict[str, GateEvaluator] = {
 
 
 def _json_safe(value: Any) -> Any:
+    if hasattr(value, "item") and callable(value.item):
+        try:
+            return _json_safe(value.item())
+        except Exception:
+            pass
     if value is None or isinstance(value, (str, int, float, bool)):
         return value
     if isinstance(value, (datetime, date)):

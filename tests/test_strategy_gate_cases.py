@@ -3,7 +3,18 @@ import unittest
 from datetime import datetime
 
 from core.strategy_gate_cases import evaluate_strategy_gate_case, evaluate_strategy_gate_cases, strategy_gate_case
-from core.strategy_gates import evaluate_symbol_blacklist_gate
+from core.strategy_gates import evaluate_positive_quantity_gate, evaluate_symbol_blacklist_gate
+
+
+class _ScalarLike:
+    def __init__(self, value):
+        self._value = value
+
+    def item(self):
+        return self._value
+
+    def __float__(self):
+        return float(self._value)
 
 
 class StrategyGateCasesTest(unittest.TestCase):
@@ -169,6 +180,24 @@ class StrategyGateCasesTest(unittest.TestCase):
         self.assertEqual(case["meta"]["seen_at"], "2026-06-03T10:30:00")
         self.assertIsInstance(case["inputs"]["blacklisted_symbols"], list)
         self.assertIsInstance(case["meta"]["tags"], list)
+
+    def test_strategy_gate_case_normalizes_scalar_like_values(self):
+        decision = evaluate_positive_quantity_gate(quantity=_ScalarLike(2.5))
+
+        case = strategy_gate_case(
+            name="scalar-like-quantity",
+            gate="positive_quantity",
+            inputs={"quantity": _ScalarLike(2.5)},
+            decision=decision,
+            meta={"flag": _ScalarLike(True)},
+        )
+
+        json.dumps(case, ensure_ascii=False)
+        replayed = evaluate_strategy_gate_case(case)
+
+        self.assertTrue(replayed.allowed)
+        self.assertEqual(case["inputs"]["quantity"], 2.5)
+        self.assertIs(case["meta"]["flag"], True)
 
 
 if __name__ == "__main__":

@@ -78,6 +78,50 @@ class StrategyDecisionPacketTests(unittest.TestCase):
         self.assertEqual(quality["label"], "bad")
         self.assertTrue(any("conservative_cost_0.25%" in reason for reason in quality["reasons"]))
 
+    def test_window_quality_flags_mature_low_profit_factor(self):
+        profile = self.evolution.gate_profile_for(
+            "A/v11",
+            "trailing pullback",
+            "EXP-20260527-v11-trailing-pullback-1p0",
+        )
+        quality = self.evolution.classify_window_quality(
+            {
+                "window_hours": 72,
+                "opens": 70,
+                "closes": 65,
+                "forced_closes": 0,
+                "open_failed": 0,
+                "close_failed": 0,
+                "realized_pnl_usdt": 5.0,
+                "realized_profit_usdt": 45.0,
+                "realized_loss_usdt": 40.0,
+            },
+            profile,
+        )
+
+        self.assertEqual(quality["label"], "ok")
+        self.assertEqual(quality["profit_factor"]["status"], "ok")
+        self.assertAlmostEqual(quality["profit_factor"]["profit_factor"], 1.125)
+        self.assertEqual(quality["profit_factor"]["min_profit_factor"], 1.08)
+
+        weak = self.evolution.classify_window_quality(
+            {
+                "window_hours": 72,
+                "opens": 70,
+                "closes": 65,
+                "forced_closes": 0,
+                "open_failed": 0,
+                "close_failed": 0,
+                "realized_pnl_usdt": 2.0,
+                "realized_profit_usdt": 38.0,
+                "realized_loss_usdt": 36.0,
+            },
+            profile,
+        )
+        self.assertEqual(weak["label"], "bad")
+        self.assertEqual(weak["profit_factor"]["status"], "weak")
+        self.assertTrue(any("profit_factor=" in reason for reason in weak["reasons"]))
+
     def test_gate_profile_selects_strategy_change_thresholds(self):
         profile = self.evolution.gate_profile_for(
             "A/v11",
@@ -89,6 +133,7 @@ class StrategyDecisionPacketTests(unittest.TestCase):
         self.assertEqual(profile["p0_min_samples"], 80)
         self.assertEqual(profile["p1_min_samples"], 50)
         self.assertEqual(profile["post_approval_min_closed_by_hours"][72], 60)
+        self.assertEqual(profile["post_approval_min_profit_factor"], 1.08)
 
     def test_window_quality_uses_gate_profile_closed_threshold(self):
         profile = self.evolution.gate_profile_for(
@@ -296,6 +341,11 @@ class StrategyDecisionPacketTests(unittest.TestCase):
                         "required_closed_samples": 50,
                         "paper_cost_sensitivity": self.evolution.build_paper_cost_sensitivity(-25.0, 55),
                         "conservative_cost": self.evolution.build_paper_cost_sensitivity(-25.0, 55)[2],
+                        "profit_factor": {
+                            "status": "weak",
+                            "profit_factor": 0.92,
+                            "min_profit_factor": 1.05,
+                        },
                     }
                 },
                 "72h": {
@@ -324,8 +374,10 @@ class StrategyDecisionPacketTests(unittest.TestCase):
         )
 
         self.assertIn("24h paper_cost_0.25% pnl -80.00", packet["risk"]["items"])
+        self.assertIn("24h profit_factor 0.92 < 1.05", packet["risk"]["items"])
         self.assertEqual(packet["paper_cost_sensitivity"]["conservative_cost_pct"], 0.25)
         self.assertEqual(len(packet["paper_cost_sensitivity"]["window_24h"]), 4)
+        self.assertEqual(packet["window_profit_factor"]["window_24h"]["status"], "weak")
 
     def test_rollback_review_keeps_decision_packet(self):
         decision = {

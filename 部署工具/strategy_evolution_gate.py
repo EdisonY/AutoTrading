@@ -338,12 +338,14 @@ POST_APPROVAL_LOSS_USDT = 80
 POST_APPROVAL_FORCED_CLOSE_RATE = 0.12
 POST_APPROVAL_OPEN_FAILED_RATE = 0.08
 POST_APPROVAL_NOTIONAL_PER_TRADE = 400.0
+POST_APPROVAL_MIN_PROFIT_FACTOR = 1.05
 
 DEFAULT_GATE_PROFILE = {
     "profile_id": "default",
     "p0_min_samples": MIN_SAMPLE_FOR_P0,
     "p1_min_samples": MIN_SAMPLE_FOR_P1,
     "post_approval_min_closed_by_hours": POST_APPROVAL_MIN_CLOSED_BY_HOURS,
+    "post_approval_min_profit_factor": POST_APPROVAL_MIN_PROFIT_FACTOR,
     "regime_min_distinct": 2,
     "regime_min_score": 60,
 }
@@ -356,6 +358,7 @@ GATE_PROFILE_RULES = [
         "p0_min_samples": 100,
         "p1_min_samples": 60,
         "post_approval_min_closed_by_hours": {24: 30, 72: 70, 168: 140},
+        "post_approval_min_profit_factor": 1.10,
         "regime_min_distinct": 2,
         "regime_min_score": 70,
     },
@@ -366,6 +369,7 @@ GATE_PROFILE_RULES = [
         "p0_min_samples": 80,
         "p1_min_samples": 50,
         "post_approval_min_closed_by_hours": {24: 25, 72: 60, 168: 120},
+        "post_approval_min_profit_factor": 1.08,
         "regime_min_distinct": 2,
         "regime_min_score": 65,
     },
@@ -376,6 +380,7 @@ GATE_PROFILE_RULES = [
         "p0_min_samples": 70,
         "p1_min_samples": 40,
         "post_approval_min_closed_by_hours": {24: 25, 72: 60, 168: 120},
+        "post_approval_min_profit_factor": 1.05,
         "regime_min_distinct": 2,
         "regime_min_score": 65,
     },
@@ -386,6 +391,7 @@ GATE_PROFILE_RULES = [
         "p0_min_samples": 80,
         "p1_min_samples": 50,
         "post_approval_min_closed_by_hours": {24: 30, 72: 70, 168: 140},
+        "post_approval_min_profit_factor": 1.10,
         "regime_min_distinct": 2,
         "regime_min_score": 70,
     },
@@ -396,6 +402,7 @@ GATE_PROFILE_RULES = [
         "p0_min_samples": 90,
         "p1_min_samples": 50,
         "post_approval_min_closed_by_hours": {24: 30, 72: 70, 168: 140},
+        "post_approval_min_profit_factor": 1.08,
         "regime_min_distinct": 2,
         "regime_min_score": 65,
     },
@@ -448,6 +455,11 @@ def profile_required_closed(window_hours: int, gate_profile: dict[str, Any] | No
     )
 
 
+def profile_min_profit_factor(gate_profile: dict[str, Any] | None = None) -> float:
+    profile = gate_profile or DEFAULT_GATE_PROFILE
+    return to_float(profile.get("post_approval_min_profit_factor"), POST_APPROVAL_MIN_PROFIT_FACTOR)
+
+
 def adjust_pnl_for_fees(pnl: float, sample_trades: int, notional_per_trade: float = 400.0) -> float:
     """Adjust PnL by deducting estimated fee/slippage."""
     total_notional = notional_per_trade * sample_trades
@@ -479,6 +491,33 @@ def build_paper_cost_sensitivity(
             }
         )
     return rows
+
+
+def build_window_profit_factor(
+    realized_profit: float,
+    realized_loss: float,
+    min_profit_factor: float,
+) -> dict[str, Any]:
+    """Report-only realized PF for post-approval closed trades."""
+    profit = max(0.0, float(realized_profit or 0.0))
+    loss = max(0.0, float(realized_loss or 0.0))
+    if loss > 0:
+        pf_value: float | None = profit / loss
+        status = "ok" if pf_value >= min_profit_factor else "weak"
+    elif profit > 0:
+        pf_value = None
+        status = "lossless"
+    else:
+        pf_value = 0.0
+        status = "weak"
+    return {
+        "realized_profit_usdt": round(profit, 4),
+        "realized_loss_usdt": round(loss, 4),
+        "profit_factor": round(pf_value, 4) if pf_value is not None else None,
+        "min_profit_factor": round(float(min_profit_factor), 4),
+        "status": status,
+        "automation": "disabled_report_only",
+    }
 
 
 def check_rollback_triggers(
@@ -725,6 +764,7 @@ def classify_regime(metrics: dict[str, Any]) -> dict[str, Any]:
 def classify_window_quality(metrics: dict[str, Any], gate_profile: dict[str, Any] | None = None) -> dict[str, Any]:
     window_hours = to_int(metrics.get("window_hours"))
     required_closed = profile_required_closed(window_hours, gate_profile)
+    min_pf = profile_min_profit_factor(gate_profile)
     opens = to_int(metrics.get("opens"))
     closes = to_int(metrics.get("closes"))
     forced_closes = to_int(metrics.get("forced_closes"))
@@ -738,6 +778,14 @@ def classify_window_quality(metrics: dict[str, Any], gate_profile: dict[str, Any
     realized_pnl = to_float(metrics.get("realized_pnl_usdt"))
     pnl_after_cost = realized_pnl - cost
     cost_sensitivity = build_paper_cost_sensitivity(realized_pnl, closed_total)
+    realized_profit = to_float(metrics.get("realized_profit_usdt"))
+    realized_loss = to_float(metrics.get("realized_loss_usdt"))
+    if realized_profit <= 0 and realized_loss <= 0 and abs(realized_pnl) > 0:
+        if realized_pnl > 0:
+            realized_profit = realized_pnl
+        else:
+            realized_loss = abs(realized_pnl)
+    profit_factor = build_window_profit_factor(realized_profit, realized_loss, min_pf)
     conservative = next(
         (row for row in cost_sensitivity if abs(to_float(row.get("cost_pct")) - PAPER_CONSERVATIVE_COST_PCT) < 1e-9),
         {},
@@ -759,6 +807,11 @@ def classify_window_quality(metrics: dict[str, Any], gate_profile: dict[str, Any
         if open_failed_rate >= POST_APPROVAL_OPEN_FAILED_RATE:
             label = "bad"
             reasons.append(f"open_failed_rate={open_failed_rate:.1%}")
+        if profit_factor.get("status") == "weak":
+            label = "bad"
+            pf_value = profit_factor.get("profit_factor")
+            pf_text = "lossless" if pf_value is None else f"{to_float(pf_value):.2f}"
+            reasons.append(f"profit_factor={pf_text}<{min_pf:.2f}")
         if conservative.get("rollback_loss_hit"):
             label = "bad"
             reasons.append(
@@ -776,6 +829,7 @@ def classify_window_quality(metrics: dict[str, Any], gate_profile: dict[str, Any
         "open_failed_rate": round(open_failed_rate, 4),
         "estimated_cost_usdt": round(cost, 4),
         "realized_pnl_after_cost": round(pnl_after_cost, 4),
+        "profit_factor": profit_factor,
         "paper_cost_sensitivity": cost_sensitivity,
         "conservative_cost": conservative,
         "reasons": reasons[:4],
@@ -916,6 +970,8 @@ def summarize_post_approval_windows(
                     "resolved_close_failed_reasons": collections.Counter(),
                     "open_skipped": 0,
                     "realized_pnl_usdt": 0.0,
+                    "realized_profit_usdt": 0.0,
+                    "realized_loss_usdt": 0.0,
                     "latest_event_ts": "",
                     "event_count": 0,
                     "long_count": 0,
@@ -988,8 +1044,15 @@ def summarize_post_approval_windows(
                     elif event_type == "OPEN_SKIPPED":
                         metrics["open_skipped"] += 1
                     if event_type in {"CLOSE", "FORCED_CLOSE"}:
-                        metrics["realized_pnl_usdt"] += payload_float(payload, ("pnl_usd", "pnl_usdt", "realized_pnl_usdt", "pnl"))
+                        pnl = payload_float(payload, ("pnl_usd", "pnl_usdt", "realized_pnl_usdt", "pnl"))
+                        metrics["realized_pnl_usdt"] += pnl
+                        if pnl > 0:
+                            metrics["realized_profit_usdt"] += pnl
+                        elif pnl < 0:
+                            metrics["realized_loss_usdt"] += abs(pnl)
                 metrics["realized_pnl_usdt"] = round(float(metrics["realized_pnl_usdt"]), 4)
+                metrics["realized_profit_usdt"] = round(float(metrics["realized_profit_usdt"]), 4)
+                metrics["realized_loss_usdt"] = round(float(metrics["realized_loss_usdt"]), 4)
                 failed_counter = metrics.get("open_failed_reasons")
                 if isinstance(failed_counter, collections.Counter):
                     metrics["open_failed_reasons"] = [
@@ -1299,6 +1362,11 @@ def build_decision_packet(
                 f"{label} paper_cost_{PAPER_CONSERVATIVE_COST_PCT:.2f}% "
                 f"pnl {to_float(conservative_cost.get('pnl_after_cost_usdt')):.2f}"
             )
+        pf = quality.get("profit_factor") or {}
+        if pf.get("status") == "weak":
+            pf_value = pf.get("profit_factor")
+            pf_text = "none" if pf_value is None else f"{to_float(pf_value):.2f}"
+            risks.append(f"{label} profit_factor {pf_text} < {to_float(pf.get('min_profit_factor')):.2f}")
     if acc_risk.get("sizing_violation_count"):
         risks.append(f"账户尺寸违规 {acc_risk.get('sizing_violation_count')}")
     if acc_risk.get("risk_count"):
@@ -1348,11 +1416,16 @@ def build_decision_packet(
             "window_24h": q24.get("paper_cost_sensitivity") or [],
             "window_72h": q72.get("paper_cost_sensitivity") or [],
         },
+        "window_profit_factor": {
+            "window_24h": q24.get("profit_factor") or {},
+            "window_72h": q72.get("profit_factor") or {},
+        },
         "gate_profile": {
             "profile_id": profile.get("profile_id"),
             "p0_min_samples": to_int(profile.get("p0_min_samples"), MIN_SAMPLE_FOR_P0),
             "p1_min_samples": to_int(profile.get("p1_min_samples"), MIN_SAMPLE_FOR_P1),
             "post_approval_min_closed_by_hours": profile.get("post_approval_min_closed_by_hours") or {},
+            "post_approval_min_profit_factor": profile_min_profit_factor(profile),
         },
         "regime_robustness": robustness,
         "rollback_path": rollback_steps,
@@ -1549,7 +1622,7 @@ def audit_promotion_gate_hardening(decisions: list[dict[str, Any]]) -> dict[str,
         ),
         "regime": "post-approval regime labels plus report-only cross-regime robustness score",
         "account_risk": "sizing, hard-stop risk, unrealized PnL",
-        "rollback": "OPEN_FAILED, PF/PnL decay, hard-stop increase, close-failed, account loss",
+        "rollback": "OPEN_FAILED, mature-window PF/PnL/cost quality, hard-stop increase, close-failed, account loss",
         "manual_approval": "P0/P1 are review actions, not automatic rollout",
     }
     priority_items = [d for d in decisions if d.get("priority") in {"P0", "P1"}]

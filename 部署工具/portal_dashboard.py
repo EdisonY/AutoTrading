@@ -67,6 +67,40 @@ def h(value: Any) -> str:
     return html.escape(str(value if value is not None else ""))
 
 
+def pf_text(value: Any) -> str:
+    if value in (None, ""):
+        return "-"
+    try:
+        return f"{float(value):.2f}"
+    except Exception:
+        return str(value)
+
+
+def cost_sensitivity_row(rows: Any, pct: float) -> dict[str, Any]:
+    if not isinstance(rows, list):
+        return {}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        try:
+            if abs(float(row.get("cost_pct") or 0) - float(pct)) < 0.000001:
+                return row
+        except Exception:
+            continue
+    return {}
+
+
+def top_named_summary(rows: Any, name_key: str, *, include_pnl: bool = False) -> str:
+    if not isinstance(rows, list) or not rows:
+        return "-"
+    row = rows[0] if isinstance(rows[0], dict) else {}
+    name = row.get(name_key) or row.get("name") or row.get("reason") or "-"
+    count = int(row.get("count") or 0)
+    if include_pnl:
+        return f"{name}({count}, {float(row.get('pnl_usdt') or 0):+.2f})"
+    return f"{name}({count})"
+
+
 def read_json(path: Path) -> Any:
     if not path.exists():
         return None
@@ -1602,6 +1636,10 @@ def function_status_cards(data: dict[str, Any]) -> list[dict[str, str]]:
     b_v16_rollout = data.get("b_v16_rollout") or {}
     b_v16_rollout_decision = b_v16_rollout.get("decision") or {}
     b_v16_rollout_72h = (b_v16_rollout.get("windows") or {}).get("72h") or {}
+    b_v16_cost025 = cost_sensitivity_row(b_v16_rollout_72h.get("cost_sensitivity"), 0.25)
+    b_v16_cost025_text = f"{float(b_v16_cost025.get('pnl_after_cost_usdt') or 0):+.2f}" if b_v16_cost025 else "-"
+    b_v16_exit_top = top_named_summary(b_v16_rollout_72h.get("exit_models"), "model", include_pnl=True)
+    b_v16_open_fail_top = top_named_summary(b_v16_rollout_72h.get("open_failed_reasons"), "reason")
     sentinel_quality = data.get("sentinel_quality") or {}
     sentinel_coverage = sentinel_quality.get("coverage") or {}
     sentinel_watchlist = sentinel_quality.get("watchlist_history") or {}
@@ -1910,6 +1948,9 @@ def function_status_cards(data: dict[str, Any]) -> list[dict[str, str]]:
             "body": (
                 f"72h closed {int(b_v16_rollout_72h.get('closed_samples') or 0)}; "
                 f"after-cost PnL {float(b_v16_rollout_72h.get('pnl_after_cost_usdt') or 0):+.2f}; "
+                f"PF {pf_text(b_v16_rollout_72h.get('profit_factor'))}; "
+                f"exit {b_v16_exit_top}; open-fail {b_v16_open_fail_top}; "
+                f"0.25% cost PnL {b_v16_cost025_text}; "
                 f"updated {b_v16_rollout.get('age')}."
                 if b_v16_rollout.get("available")
                 else "B/v16 full-live rollout review missing from report chain."
@@ -2956,11 +2997,15 @@ def render_html(out_dir: Path) -> str:
   <td class="num {'pos' if float(row.get('realized_pnl_usdt') or 0) >= 0 else 'neg'}">{float(row.get('realized_pnl_usdt') or 0):+.2f}</td>
   <td>{float(row.get('estimated_cost_usdt') or 0):.2f}</td>
   <td class="num {'pos' if float(row.get('pnl_after_cost_usdt') or 0) >= 0 else 'neg'}">{float(row.get('pnl_after_cost_usdt') or 0):+.2f}</td>
+  <td>{h(pf_text(row.get('profit_factor')))}</td>
   <td>{float(row.get('forced_close_rate') or 0):.1%}</td>
+  <td>{h(top_named_summary(row.get('exit_models'), 'model', include_pnl=True))}</td>
+  <td>{h(top_named_summary(row.get('open_failed_reasons'), 'reason'))}</td>
+  <td class="num {'pos' if float(cost_sensitivity_row(row.get('cost_sensitivity'), 0.25).get('pnl_after_cost_usdt') or 0) >= 0 else 'neg'}">{float(cost_sensitivity_row(row.get('cost_sensitivity'), 0.25).get('pnl_after_cost_usdt') or 0):+.2f}</td>
 </tr>
 """.strip()
         for name, row in b_v16_rollout_windows.items()
-    ) or '<tr><td colspan="9">No B/v16 rollout review</td></tr>'
+    ) or '<tr><td colspan="13">No B/v16 rollout review</td></tr>'
 
     evolution = data.get("strategy_evolution") or {}
     evolution_counts = evolution.get("counts") or {}
@@ -3255,9 +3300,9 @@ th {{ background:#f1f5f9; color:#334155; }}
 
   <section class="section panel">
     <h2>B/v16 full-live rollout review</h2>
-    <p class="note">Read-only review for approved ATR stop bands + score cap 85 after 24h/72h/168h live windows; current result {h(b_v16_rollout_decision.get('priority', '-'))}/{h(b_v16_rollout_decision.get('status', '-'))}, updated {h(b_v16_rollout.get('age'))}. No automatic rollback and no live parameter change.</p>
+    <p class="note">Read-only review for approved ATR stop bands + score cap 85 after 24h/72h/168h live windows; current result {h(b_v16_rollout_decision.get('priority', '-'))}/{h(b_v16_rollout_decision.get('status', '-'))}, updated {h(b_v16_rollout.get('age'))}. Detail includes profit factor, exit-model attribution, open-failure reasons, and 0.25% cost stress. No automatic rollback and no live parameter change.</p>
     <table>
-      <thead><tr><th>Window</th><th>Opens</th><th>Closed</th><th>Forced</th><th>Open failed</th><th>Realized PnL</th><th>Cost</th><th>After cost</th><th>Forced rate</th></tr></thead>
+      <thead><tr><th>Window</th><th>Opens</th><th>Closed</th><th>Forced</th><th>Open failed</th><th>Realized PnL</th><th>Cost</th><th>After cost</th><th>PF</th><th>Forced rate</th><th>Main exit</th><th>Main open fail</th><th>0.25% cost PnL</th></tr></thead>
       <tbody>{b_v16_rollout_rows}</tbody>
     </table>
   </section>

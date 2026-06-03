@@ -39,6 +39,7 @@
 
 2. **P1-B B/v16 full-live 候选质量决策**
    - 当前问题：ATR stop bands 与 overheat cap 85 已 full-live，但 24h after-cost PnL 和 forced-close rate 承压。
+   - 已完成：`b_v16_rollout_review.py` 已输出 24h/72h/168h report-only windows、cost-adjusted PnL、failure/forced-close pressure、top losers/winners、decision packet 和 portal visibility；2026-06-04 补充：review 已新增 realized profit/loss、profit factor、exit-model attribution（`forced_or_hard_stop`、`atr_stop_band`、`exchange_auto_close`、`take_profit`、`signal_exit`、`other`）、open-failure attribution（min-notional、position-side mismatch、margin、timeout/unknown、exchange-rule preflight、account-state、quantity/lot-size 等）以及 `0.10%/0.15%/0.25%/0.35%` cost sensitivity；portal 已显示 72h PF、主 exit model、主 open-fail reason、0.25% cost-stress PnL。自动回滚仍关闭。
    - 验收：拆 hard-stop/forced-close/open-fail/high-vol regime 贡献，形成继续观察、收窄或准备回滚建议；没有成熟窗口和账户风险证据不自动回滚。
 
 3. **P1-C 完整 replay/fill 引擎**
@@ -683,6 +684,7 @@ Phase 9   实盘过渡验证                ← 8完成后
 - [x] P0-B B/C open-success chain parity: B/v16 successful opens now persist confirmation -> threshold -> execution exact cases, and C/v14 successful opens now persist confirmation -> tail_guard -> execution exact cases.
 - [x] P0-B A/v11 open-success chain parity: A/v11 successful Hanmuxia opens now persist entry/pool/safety/risk/sizing/execution exact chains; VPB opens preserve VPB semantics and carry only shared context; replacement-success opens append release cases.
 - [x] P1-B B/v16 full-live rollout review: read-only 24h/72h/168h windows, cost-adjusted PnL, failure/forced-close pressure, decision packet, portal section, Aliyun refresh, reverse sync, and live-context pull. No automatic rollback or parameter change.
+- [x] P1-B/P1-D B/v16 rollout attribution: 72h windows now include realized profit/loss, profit factor, exit-model attribution, open-failure reason attribution, and `0.10%/0.15%/0.25%/0.35%` cost sensitivity; portal shows PF/main exit/main open-fail/0.25% cost-stress PnL. No automatic rollback or parameter change.
 - [x] P1-C A/v11 ATR trailing counterfactual fill: `counterfactual_open_skips.py` now applies A/v11 approved ATR trailing parameters when skipped rows include positive ATR and 15m/30m timeframe; non-A/B/C rows without usable A/v11 ATR keep fixed percent barrier fallback.
 - [x] P1-A/P1-C/P1-D A/v11 rollout-review exit model and cost sensitivity: real close rows are grouped by exit model and 72h decision packets include cost sensitivity at `0.10%/0.15%/0.25%`. No automatic rollback or parameter change.
 - [x] P1-D evolution-gate paper cost sensitivity: `strategy_evolution_gate.py` post-approval quality and decision packets now include `0.10%/0.15%/0.25%/0.35%` report-only cost/slippage sensitivity; conservative `0.25%` can flag mature windows for manual rollback review. No automatic rollback or parameter change.
@@ -697,4 +699,4 @@ Phase 9   实盘过渡验证                ← 8完成后
 - [x] P1-C rollout/recovery local depth-cache entry fills: A/v11 rollout replay and recovery-position replay can consume optional local/mirrored `runtime/depth_cache` snapshots through `core.replay_depth_cache`, reporting order-book fill count/source/age and depth slippage. Missing depth keeps synthetic entry; no Binance API call or live order behavior change.
 - [ ] Remaining P0-B: final staged fresh-run must generate new post-instrumentation rows to prove exact coverage/pass rate; old rows without exact cases remain coverage gaps, not accepted parity.
 - [ ] Remaining P1-C/P1-E: true staged Kline backfill to 30+ day acceptance, staged depth sampling coverage, post-ingest rollout/recovery replay review on real long-history/depth partitions, and a real queue-priority/market-impact engine beyond current static assumptions.
-- [ ] Remaining P1-B/P1-D: wait for enough post-refresh samples, then review full paper fill/slippage simulation, window PF thresholds, and rollback-plan governance before any manual parameter decision.
+- [ ] Remaining P1-B/P1-D: wait for enough post-refresh samples, then review full paper fill/slippage simulation, mature PF/cost/failure evidence, and rollback-plan governance before any manual continue/narrow/rollback decision.

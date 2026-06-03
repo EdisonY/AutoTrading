@@ -165,6 +165,47 @@ def load_latest_snapshots(con: sqlite3.Connection) -> list[dict[str, Any]]:
     return list(by_account.values())
 
 
+def load_snapshot_history(con: sqlite3.Connection, days: int = 30) -> list[dict[str, Any]]:
+    """Load account snapshot position history for read-only recovery-path review."""
+    cutoff = (datetime.now(CST) - timedelta(days=days)).isoformat()
+    rows = con.execute(
+        """SELECT ts, account, payload_json
+           FROM account_snapshots
+           WHERE ts >= ?
+           ORDER BY ts ASC, id ASC""",
+        (cutoff,),
+    ).fetchall()
+    history: list[dict[str, Any]] = []
+    for ts, account, payload_json in rows:
+        try:
+            payload = json.loads(payload_json) if payload_json else {}
+        except Exception:
+            payload = {}
+        positions = payload.get("positions") if isinstance(payload.get("positions"), list) else []
+        for pos in positions:
+            margin = safe_float(pos.get("margin"))
+            upnl = safe_float(pos.get("upnl"))
+            entry = safe_float(pos.get("entry"))
+            mark = safe_float(pos.get("mark"))
+            side = str(pos.get("side") or "").lower()
+            directional_return = 0.0
+            if entry > 0 and mark > 0:
+                directional_return = (entry - mark) / entry * 100 if side == "short" else (mark - entry) / entry * 100
+            history.append(
+                {
+                    "ts": ts,
+                    "account": account,
+                    "symbol": str(pos.get("symbol") or ""),
+                    "side": side,
+                    "margin": margin,
+                    "unrealized_pnl": upnl,
+                    "unrealized_pnl_pct_on_margin": upnl / margin * 100 if margin > 0 else 0.0,
+                    "directional_return_pct": directional_return,
+                }
+            )
+    return history
+
+
 def match_trades(
     open_events: list[dict],
     close_events: list[dict],
@@ -286,6 +327,50 @@ def identify_recovery_positions(
     return recovery
 
 
+def enrich_recovery_path_metrics(
+    recovery: list[dict[str, Any]],
+    snapshot_history: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Attach first-seen, MFE/MAE, and drawdown facts to recovery positions."""
+    by_key: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
+    for row in snapshot_history:
+        key = (
+            str(row.get("account") or ""),
+            str(row.get("symbol") or ""),
+            str(row.get("side") or "").lower(),
+        )
+        by_key.setdefault(key, []).append(row)
+
+    for pos in recovery:
+        key = (
+            str(pos.get("account") or ""),
+            str(pos.get("symbol") or ""),
+            str(pos.get("side") or "").lower(),
+        )
+        rows = by_key.get(key, [])
+        pct_values = [safe_float(row.get("unrealized_pnl_pct_on_margin")) for row in rows]
+        return_values = [safe_float(row.get("directional_return_pct")) for row in rows]
+        margin = safe_float(pos.get("margin"))
+        current_pct = safe_float(pos.get("unrealized_pnl")) / margin * 100 if margin > 0 else 0.0
+        if pct_values:
+            mfe_pct = max(pct_values)
+            mae_pct = min(pct_values)
+            pos["first_seen_ts"] = rows[0].get("ts")
+            pos["path_samples"] = len(rows)
+            pos["mfe_pct_on_margin"] = round(mfe_pct, 2)
+            pos["mae_pct_on_margin"] = round(mae_pct, 2)
+            pos["drawdown_from_mfe_pct_on_margin"] = round(current_pct - mfe_pct, 2)
+        else:
+            pos["first_seen_ts"] = pos.get("snapshot_ts")
+            pos["path_samples"] = 0
+            pos["mfe_pct_on_margin"] = 0.0
+            pos["mae_pct_on_margin"] = 0.0
+            pos["drawdown_from_mfe_pct_on_margin"] = 0.0
+        pos["mfe_price_pct"] = round(max(return_values), 4) if return_values else 0.0
+        pos["mae_price_pct"] = round(min(return_values), 4) if return_values else 0.0
+    return recovery
+
+
 def evaluate_recovery_exit_policies(recovery: list[dict]) -> dict[str, Any]:
     """Shadow-test candidate exit policies for recovery positions."""
     now = datetime.now(CST)
@@ -369,6 +454,13 @@ def review_recovery_positions(recovery: list[dict]) -> dict[str, Any]:
                 "margin_usdt": round(margin, 2),
                 "unrealized_pnl_usdt": round(upnl, 2),
                 "unrealized_pnl_pct_on_margin": round(upnl_pct, 2),
+                "first_seen_ts": pos.get("first_seen_ts"),
+                "path_samples": int(pos.get("path_samples") or 0),
+                "mfe_pct_on_margin": round(safe_float(pos.get("mfe_pct_on_margin")), 2),
+                "mae_pct_on_margin": round(safe_float(pos.get("mae_pct_on_margin")), 2),
+                "drawdown_from_mfe_pct_on_margin": round(safe_float(pos.get("drawdown_from_mfe_pct_on_margin")), 2),
+                "mfe_price_pct": round(safe_float(pos.get("mfe_price_pct")), 4),
+                "mae_price_pct": round(safe_float(pos.get("mae_price_pct")), 4),
                 "risk": risk,
                 "shadow_action": action,
                 "note": "只读审查；不自动平仓、不改变退出规则。",
@@ -387,6 +479,7 @@ def review_recovery_positions(recovery: list[dict]) -> dict[str, Any]:
         "oldest_age_hours": round(oldest_age, 2),
         "total_margin_usdt": round(total_margin, 2),
         "total_unrealized_pnl_usdt": round(total_upnl, 2),
+        "path_metric_note": "report_only_snapshot_path_mfe_mae",
         "positions": positions,
         "policy": "report_only_no_auto_exit",
     }
@@ -601,8 +694,8 @@ def write_markdown(output: dict, path: Path) -> None:
     positions = review.get("positions") or []
     if positions:
         lines.append("")
-        lines.append("| 策略 | 币种 | 方向 | 年龄h | 保证金 | 浮盈 | 浮盈/保证金 | 风险 | Shadow动作 |")
-        lines.append("|------|------|------|------:|------:|------:|------------:|------|------------|")
+        lines.append("| Strategy | Symbol | Side | Age h | Margin | UPNL | UPNL/Margin | MFE | MAE | MFE drawdown | Risk | Shadow action |")
+        lines.append("|------|------|------|------:|------:|------:|------------:|----:|----:|-------------:|------|------------|")
         for pos in positions[:20]:
             lines.append(
                 f"| {pos.get('strategy')} | {pos.get('symbol')} | {pos.get('side')} | "
@@ -610,6 +703,9 @@ def write_markdown(output: dict, path: Path) -> None:
                 f"{float(pos.get('margin_usdt') or 0):.2f} | "
                 f"{float(pos.get('unrealized_pnl_usdt') or 0):+.2f} | "
                 f"{float(pos.get('unrealized_pnl_pct_on_margin') or 0):+.2f}% | "
+                f"{float(pos.get('mfe_pct_on_margin') or 0):+.2f}% | "
+                f"{float(pos.get('mae_pct_on_margin') or 0):+.2f}% | "
+                f"{float(pos.get('drawdown_from_mfe_pct_on_margin') or 0):+.2f}% | "
                 f"{pos.get('risk')} | {pos.get('shadow_action')} |"
             )
     else:
@@ -670,6 +766,7 @@ def main(argv: list[str] | None = None) -> int:
         open_events = load_open_events(con, days=args.days)
         close_events = load_close_events(con, days=args.days)
         snapshots = load_latest_snapshots(con)
+        snapshot_history = load_snapshot_history(con, days=args.days)
 
         print(f"  OPEN events: {len(open_events)}")
         print(f"  CLOSE events: {len(close_events)}")
@@ -677,6 +774,7 @@ def main(argv: list[str] | None = None) -> int:
 
         trades = match_trades(open_events, close_events)
         recovery = identify_recovery_positions(snapshots, open_events)
+        recovery = enrich_recovery_path_metrics(recovery, snapshot_history)
 
         print(f"  Matched trades: {len(trades)}")
         print(f"  Recovery positions: {len(recovery)}")

@@ -33,8 +33,8 @@
 
 3. **P1-C 完整 replay/fill 引擎**
    - 目标：OPEN_SKIPPED 放行后的成交、持仓、出场、费用/滑点仿真统一到一个 replay/fill 引擎。
-   - 已完成：`core.replay_fill` 第一版 deterministic fill kernel，支持 long/short、SL/TP、fee、slippage、保守 intrabar stop/take 冲突处理、end-of-window exit，并有单元测试；2026-06-03 `counterfactual_open_skips.py` 已用该 kernel 计算 OPEN_SKIPPED 假设放行后的 fill/PnL，并把 replay_fill payload 写进结果；同日新增通用 percent trailing-stop activation/exit，支持 long/short 保守 intrabar。
-   - 未完成：A/v11 ATR pullback、策略专属 recovery exit、长 Kline feature 窗口和更完整 portal/report 输出。
+   - 已完成：`core.replay_fill` 第一版 deterministic fill kernel，支持 long/short、SL/TP、fee、slippage、保守 intrabar stop/take 冲突处理、end-of-window exit，并有单元测试；2026-06-03 `counterfactual_open_skips.py` 已用该 kernel 计算 OPEN_SKIPPED 假设放行后的 fill/PnL，并把 replay_fill payload 写进结果；同日新增通用 percent trailing-stop activation/exit，支持 long/short 保守 intrabar；恢复仓 review 已补账户快照路径 MFE/MAE、MFE回撤、first-seen 和 sample count，作为 recovery-exit replay 的只读事实层。
+   - 未完成：A/v11 ATR pullback、策略专属 recovery exit、反向信号/同策略重开证据、长 Kline feature 窗口和更完整 replay/fill 输出。
    - 验收：每个实盘 OPEN_SKIPPED 能回答“若放行，按同一出场规则会怎样”。
 
 4. **P1-D 灰度/回滚门禁增强**
@@ -52,7 +52,7 @@
    - 继续拆 `not_scanned`：未进 watchlist、scanner universe 不支持、cadence miss、mirror truncation，并接 full replay/fill outcome。
 
 2. **P2-B Recovery-position 策略**
-   - 补 takeover 后 MFE/MAE、反向信号退出、同策略是否会重新开仓、自动 recovery-exit 规则证据。
+   - 已补 takeover 后账户快照路径 MFE/MAE、MFE回撤、first-seen 和 sample count（report-only）。仍需反向信号退出、同策略是否会重新开仓、自动 recovery-exit 规则证据。
 
 3. **P2-C 已有候选继续观察**
    - A/v11 replacement-quality guarded small-live；B/v16 confirm-soft-pass shadow；C/v14 受控扩样漏斗/PF。
@@ -527,7 +527,8 @@
 - [x] 新增恢复仓独立审查首版：
   - 持仓年龄、当前PnL、保证金PnL%、风险分层、shadow动作
   - 入口页显示恢复仓审查摘要和明细；当前为只读，不自动平仓
-- [ ] 补充接管后 MFE/MAE、平仓原因归因、策略是否会开同样仓位
+- [x] 补充接管后账户快照路径 MFE/MAE、MFE回撤、first-seen 和 sample count（只读事实层）
+- [ ] 补充平仓原因归因、反向信号证据、策略是否会开同样仓位
 
 **候选退出策略（shadow测试）**：
 - [x] 时间退出：4h/8h/24h 首版只读计数

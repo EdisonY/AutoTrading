@@ -1,5 +1,6 @@
 # MEMORY.md - 长期记忆
 
+- 2026-06-03: Phase 7/P2-B recovery-position path review advanced. `strategy_truth_ledger.py` now derives report-only first-seen, path sample count, MFE/MAE on margin, drawdown from MFE, and price-direction MFE/MAE from account snapshot history; the truth ledger and portal show MFE/MAE/MFE回撤. This is evidence only: no auto exit, no order path change, and opposite-signal/same-strategy re-open/replay-fill recovery policies remain open.
 - 2026-06-03: P1-B B/v16 full-live rollout review added. `b_v16_rollout_review.py` is read-only and mirrors A/v11 review: approved ATR stop bands + score cap 85, 24h/72h/168h windows, cost-adjusted PnL, forced/open-failure pressure, top losers/winners, decision packet, rollback path, and `disabled_report_only`. Portal, Aliyun refresh, reverse sync, and live-context pull now include B/v16 artifacts. No automatic rollback, narrowing, or live parameter change.
 
 

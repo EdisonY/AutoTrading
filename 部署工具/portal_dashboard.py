@@ -46,6 +46,8 @@ REPLAY_FEATURE_JSON = ROOT / "runtime" / "replay_feature_dataset_latest.json"
 REPLAY_FEATURE_MD = REPORTS_DIR / "replay_feature_dataset_latest.md"
 REPLAY_GATE_JSON = ROOT / "runtime" / "replay_gate_audit_latest.json"
 REPLAY_GATE_MD = REPORTS_DIR / "replay_gate_audit_latest.md"
+REPLAY_PARITY_JSON = ROOT / "runtime" / "replay_live_parity_latest.json"
+REPLAY_PARITY_MD = REPORTS_DIR / "replay_live_parity_latest.md"
 ROLLBACK_WATCH_JSON = ROOT / "runtime" / "rollback_watch_review_latest.json"
 ROLLBACK_WATCH_MD = REPORTS_DIR / "rollback_watch_review_latest.md"
 A_V11_ROLLOUT_JSON = ROOT / "runtime" / "a_v11_rollout_review_latest.json"
@@ -643,6 +645,45 @@ def replay_gate_summary(path: Path | None) -> dict[str, Any]:
         "days": int(payload.get("days") or 0),
         "summary": summary,
         "strategies": strategies,
+    }
+
+
+def replay_parity_summary(path: Path | None) -> dict[str, Any]:
+    empty = {
+        "available": False,
+        "path": REPLAY_PARITY_MD,
+        "age": "No replay/live parity audit",
+        "fresh": False,
+        "days": 0,
+        "summary": {
+            "open_flow_rows": 0,
+            "gate_cases": 0,
+            "exact_case_coverage_pct": 0,
+            "observed_gate_coverage_pct": 0,
+            "pass_rate_pct": 0,
+            "mismatched": 0,
+            "errors": 0,
+            "status": "missing",
+        },
+        "strategies": [],
+        "mismatch_examples": [],
+        "error_examples": [],
+    }
+    payload = read_json(path) if path else None
+    if not isinstance(payload, dict):
+        return empty
+    generated_at = parse_dt(payload.get("generated_at"))
+    summary = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
+    return {
+        "available": True,
+        "path": REPLAY_PARITY_MD,
+        "age": age_text(generated_at),
+        "fresh": bool(generated_at and (datetime.now(CST) - generated_at).total_seconds() < 4 * 3600),
+        "days": int(payload.get("days") or 0),
+        "summary": summary,
+        "strategies": payload.get("strategies") if isinstance(payload.get("strategies"), list) else [],
+        "mismatch_examples": payload.get("mismatch_examples") if isinstance(payload.get("mismatch_examples"), list) else [],
+        "error_examples": payload.get("error_examples") if isinstance(payload.get("error_examples"), list) else [],
     }
 
 
@@ -1469,6 +1510,8 @@ def function_status_cards(data: dict[str, Any]) -> list[dict[str, str]]:
     replay_summary = replay_feature.get("summary") or {}
     replay_gate = data.get("replay_gate") or {}
     replay_gate_summary_data = replay_gate.get("summary") or {}
+    replay_parity = data.get("replay_parity") or {}
+    replay_parity_summary_data = replay_parity.get("summary") or {}
     rollback_watch = data.get("rollback_watch") or {}
     rollback_watch_summary_data = rollback_watch.get("summary") or {}
     a_v11_rollout = data.get("a_v11_rollout") or {}
@@ -1657,6 +1700,32 @@ def function_status_cards(data: dict[str, Any]) -> list[dict[str, str]]:
                 f"updated {replay_gate.get('age')}."
                 if replay_gate.get("available")
                 else "Live events have not been audited through core.replay yet."
+            ),
+        },
+        {
+            "level": (
+                "bad"
+                if int(replay_parity_summary_data.get("mismatched") or 0) or int(replay_parity_summary_data.get("errors") or 0)
+                else "ok"
+                if replay_parity.get("fresh") and int(replay_parity_summary_data.get("gate_cases") or 0) > 0
+                else "warn"
+            ),
+            "name": "Replay/live parity",
+            "value": (
+                f"{float(replay_parity_summary_data.get('pass_rate_pct') or 0):.1f}%"
+                if replay_parity.get("available") and int(replay_parity_summary_data.get("gate_cases") or 0) > 0
+                else "case gap"
+                if replay_parity.get("available")
+                else "not built"
+            ),
+            "body": (
+                f"exact cases {int(replay_parity_summary_data.get('gate_cases') or 0)}; "
+                f"coverage {float(replay_parity_summary_data.get('exact_case_coverage_pct') or 0):.1f}%; "
+                f"mismatch {int(replay_parity_summary_data.get('mismatched') or 0)}; "
+                f"errors {int(replay_parity_summary_data.get('errors') or 0)}; "
+                f"updated {replay_parity.get('age')}."
+                if replay_parity.get("available")
+                else "Exact same-input gate-case audit missing; replay/live parity cannot be claimed."
             ),
         },
         {
@@ -1960,6 +2029,8 @@ def build_executive_summary(data: dict[str, Any]) -> dict[str, Any]:
     rollback_brief = rollback_watch_brief(evolution)
     replay_gate = data.get("replay_gate") or {}
     replay_gate_summary_data = replay_gate.get("summary") or {}
+    replay_parity = data.get("replay_parity") or {}
+    replay_parity_summary_data = replay_parity.get("summary") or {}
     a_v11_rollout = data.get("a_v11_rollout") or {}
     a_v11_rollout_decision = a_v11_rollout.get("decision") or {}
     a_v11_rollout_72h = (a_v11_rollout.get("windows") or {}).get("72h") or {}
@@ -2061,6 +2132,15 @@ def build_executive_summary(data: dict[str, Any]) -> dict[str, Any]:
             if replay_gate.get("available")
             else "Replay门控：尚无审计输出；统一 replay/live 同路径仍不能验收。"
         ),
+        (
+            f"Replay/live 同输入：exact gate cases {int(replay_parity_summary_data.get('gate_cases') or 0)}，"
+            f"pass {float(replay_parity_summary_data.get('pass_rate_pct') or 0):.1f}%，"
+            f"mismatch {int(replay_parity_summary_data.get('mismatched') or 0)}，"
+            f"coverage {float(replay_parity_summary_data.get('exact_case_coverage_pct') or 0):.1f}%；"
+            "这是 P0-B 是否能声称同路径的硬审计。"
+            if replay_parity.get("available")
+            else "Replay/live 同输入：尚无 exact gate-case 审计；不能声称同路径完成。"
+        ),
         f"环境：已放开候选 24h regime {regime_summary.get('counts') or {}}，quality {regime_summary.get('quality_counts') or {}}，OPEN_FAILED {int(regime_summary.get('open_failed_24h') or 0)}，CLOSE_FAILED {int(regime_summary.get('close_failed_24h') or 0)}。",
         (
             f"扩样成熟度：已放开 {int(expansion.get('approved_count') or 0)} 个，"
@@ -2092,6 +2172,11 @@ def build_executive_summary(data: dict[str, Any]) -> dict[str, Any]:
         next_actions.append("继续按当前受控扩样收集24h/72h样本，不新增风险放宽。")
     if replay_gate.get("available") and float(replay_gate_summary_data.get("gate_coverage_pct") or 0) < 90:
         next_actions.append("优先补齐OPEN_SKIPPED/OPEN_FAILED的stage/layer，保证replay能解释live否决。")
+    if replay_parity.get("available"):
+        if int(replay_parity_summary_data.get("mismatched") or 0) or int(replay_parity_summary_data.get("errors") or 0):
+            next_actions.append("先修 replay/live exact gate-case mismatch，再扩大同路径验收范围。")
+        elif int(replay_parity_summary_data.get("gate_cases") or 0) == 0:
+            next_actions.append("给 live scanner 持久化 strategy_gate_case，补足同输入 parity 样本。")
     next_actions.append("下一阶段优先建设统一replay和Parquet/DuckDB研究仓，而不是继续手调阈值。")
 
     return {
@@ -2175,6 +2260,8 @@ def build_data() -> dict[str, Any]:
     data["replay_feature_html"] = REPLAY_FEATURE_MD
     data["replay_gate"] = replay_gate_summary(REPLAY_GATE_JSON)
     data["replay_gate_html"] = REPLAY_GATE_MD
+    data["replay_parity"] = replay_parity_summary(REPLAY_PARITY_JSON)
+    data["replay_parity_html"] = REPLAY_PARITY_MD
     data["rollback_watch"] = rollback_watch_summary(ROLLBACK_WATCH_JSON)
     data["rollback_watch_html"] = ROLLBACK_WATCH_MD
     data["a_v11_rollout"] = a_v11_rollout_summary(A_V11_ROLLOUT_JSON)
@@ -2610,6 +2697,25 @@ def render_html(out_dir: Path) -> str:
 """.strip()
         for r in (replay_gate.get("strategies") or [])
     ) or '<tr><td colspan="9">暂无 replay gate 审计</td></tr>'
+    replay_parity = data.get("replay_parity") or {}
+    replay_parity_summary_data = replay_parity.get("summary") or {}
+    replay_parity_rows = "".join(
+        f"""
+<tr>
+  <td>{h(r.get('strategy'))}</td>
+  <td>{int(r.get('open_flow_rows') or 0)}</td>
+  <td>{int(r.get('rows_with_exact_cases') or 0)}</td>
+  <td>{int(r.get('missing_case_rows') or 0)}</td>
+  <td>{int(r.get('gate_cases') or 0)}</td>
+  <td>{int(r.get('passed') or 0)}</td>
+  <td>{int(r.get('mismatched') or 0)}</td>
+  <td>{int(r.get('errors') or 0)}</td>
+  <td>{float(r.get('pass_rate_pct') or 0):.1f}%</td>
+  <td>{h(', '.join(f"{g.get('name')}:{g.get('count')}" for g in (r.get('top_gates') or [])[:5]) or '-')}</td>
+</tr>
+""".strip()
+        for r in (replay_parity.get("strategies") or [])
+    ) or '<tr><td colspan="10">暂无 replay/live 同输入审计</td></tr>'
 
     a_v11_rollout = data.get("a_v11_rollout") or {}
     a_v11_rollout_decision = a_v11_rollout.get("decision") or {}
@@ -3009,6 +3115,16 @@ th {{ background:#f1f5f9; color:#334155; }}
     <table>
       <thead><tr><th>策略</th><th>开仓流</th><th>OPEN</th><th>SIGNAL</th><th>否决</th><th>失败</th><th>未知门控</th><th>覆盖率</th><th>主要 gate</th></tr></thead>
       <tbody>{replay_gate_rows}</tbody>
+    </table>
+  </section>
+
+  <section class="section panel">
+    <h2>Replay/live 同输入审计</h2>
+    <p class="note">Exact parity 只使用事件 payload 里持久化的 `strategy_gate_case(s)`。没有 exact case 的 live 行计为缺口，不从 stage/layer 反推，避免把观测归因误当同输入一致。</p>
+    <p class="note">窗口 {int(replay_parity.get('days') or 0)} 日；open-flow {int(replay_parity_summary_data.get('open_flow_rows') or 0)} 条；exact rows {int(replay_parity_summary_data.get('rows_with_exact_cases') or 0)}；cases {int(replay_parity_summary_data.get('gate_cases') or 0)}；pass {float(replay_parity_summary_data.get('pass_rate_pct') or 0):.1f}%；mismatch {int(replay_parity_summary_data.get('mismatched') or 0)}；errors {int(replay_parity_summary_data.get('errors') or 0)}；exact覆盖 {float(replay_parity_summary_data.get('exact_case_coverage_pct') or 0):.1f}%；observed覆盖 {float(replay_parity_summary_data.get('observed_gate_coverage_pct') or 0):.1f}%；更新 {h(replay_parity.get('age'))}。</p>
+    <table>
+      <thead><tr><th>策略</th><th>开仓流</th><th>Exact rows</th><th>缺 case</th><th>Cases</th><th>Pass</th><th>Mismatch</th><th>Errors</th><th>Pass rate</th><th>主要 exact gate</th></tr></thead>
+      <tbody>{replay_parity_rows}</tbody>
     </table>
   </section>
 

@@ -303,6 +303,7 @@
 - 2026-06-03：离线优先继续推进 P0-B/P1-C/P1-D，仍不启动任何 Binance-facing/test 服务。`core.strategy_gate_cases` 已扩到更多现有 pure gates，提升 replay/live same-input case 覆盖面；`counterfactual_open_skips.py` 已接 `core.replay_fill`，OPEN_SKIPPED 假设放行 PnL 由共享 fill kernel 计算；`strategy_evolution_gate.py` 已为每条决策生成 `decision_packet`（改动、预期优势、风险、证据成熟度、回滚路径、operator action、automation=disabled_report_only），`rollback_watch_review.py` 会渲染 P0/P1 rollback-watch packet。自动升级/自动回滚仍关闭。P0-A 仍需最终 staged fresh-run 才能验收。
 - 2026-06-03：`core.replay_fill` 继续补 P1-C，新增通用 trailing-stop primitive：`trailing_stop_pct` / `trailing_activation_pct` 支持 long/short，保守 intrabar 下 stop/trailing/take 冲突按保护优先。它仍不是 A/v11 ATR pullback 完整复刻，也不是 recovery-position replay；后续报告可在此基础上接策略专属出场。
 - 2026-06-03：P1-A A/v11 trailing-pullback review 已补专用 `decision_packet`。`a_v11_rollout_review.py` JSON/MD 现在直接展示变更、已选 live 参数、审批依据、风险证据、样本成熟度、回滚路径和 `disabled_report_only`。这只加强 operator review，不自动改参数、不回滚。
+- 2026-06-03：P0-B exact replay/live parity audit 已落地。新增 `replay_live_parity_audit.py`，只把事件 payload 中 serialized `strategy_gate_case(s)` 送入 `core.strategy_gate_cases`，输出 exact case 覆盖率、pass/mismatch/error，并在入口页、Aliyun refresh/shadow、反向同步和 live-context pull 中展示。缺 case 行现在明确算 coverage gap，不再用 observed gate 归因冒充同输入一致；后续要让 live scanners 持久化更多 exact case。
 
 ---
 ## 2026-05-29 全局运行自检与账户方向口径修复

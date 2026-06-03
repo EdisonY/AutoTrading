@@ -32,6 +32,7 @@ $PYTHON research_kline_features.py --cache-dir $REMOTE_DIR/server_logs_tencent/r
 $PYTHON research_store_query.py --store $REMOTE_DIR/research_store --runtime-dir $REMOTE_DIR/runtime --reports-dir $REMOTE_DIR/reports --days $REFRESH_DAYS --format parquet || echo "[WARN] research store query failed"
 $PYTHON replay_feature_dataset.py --store $REMOTE_DIR/research_store --out-dir $REMOTE_DIR/research_store --runtime-dir $REMOTE_DIR/runtime --reports-dir $REMOTE_DIR/reports --days $REFRESH_DAYS --format parquet || echo "[WARN] replay feature dataset failed"
 $PYTHON replay_gate_audit.py --db $REMOTE_DIR/server_logs_tencent/runtime/event_store.sqlite3 --runtime-dir $REMOTE_DIR/runtime --reports-dir $REMOTE_DIR/reports --days $REFRESH_DAYS || echo "[WARN] replay gate audit failed"
+$PYTHON replay_live_parity_audit.py --db $REMOTE_DIR/server_logs_tencent/runtime/event_store.sqlite3 --runtime-dir $REMOTE_DIR/runtime --reports-dir $REMOTE_DIR/reports --days $REFRESH_DAYS || echo "[WARN] replay/live parity audit failed"
 $PYTHON a_v11_rollout_review.py --db $REMOTE_DIR/server_logs_tencent/runtime/event_store.sqlite3 --runtime-dir $REMOTE_DIR/runtime --reports-dir $REMOTE_DIR/reports || echo "[WARN] A/v11 rollout review failed"
 $PYTHON b_v16_rollout_review.py --db $REMOTE_DIR/server_logs_tencent/runtime/event_store.sqlite3 --runtime-dir $REMOTE_DIR/runtime --reports-dir $REMOTE_DIR/reports || echo "[WARN] B/v16 rollout review failed"
 

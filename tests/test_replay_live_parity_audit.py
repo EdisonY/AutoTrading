@@ -178,6 +178,47 @@ class ReplayLiveParityAuditTests(unittest.TestCase):
         self.assertEqual(summary["status"], "bad")
         self.assertEqual(payload["mismatch_examples"][0]["gate"], "positive_quantity")
 
+    def test_strategy_gate_cases_list_counts_multiple_cases_on_one_row(self):
+        tmp, db_path = self.make_db(
+            [
+                {
+                    "payload": {
+                        "strategy_gate_cases": [
+                            {
+                                "name": "qty-positive",
+                                "gate": "positive_quantity",
+                                "inputs": {"quantity": 1.25},
+                                "expected_allowed": True,
+                                "expected_reason": "quantity_positive",
+                            },
+                            {
+                                "name": "score-too-hot",
+                                "gate": "score_max",
+                                "inputs": {"score": 91, "score_max": 85},
+                                "expected_allowed": False,
+                                "expected_reason": "评分91超过85",
+                            },
+                        ]
+                    }
+                }
+            ]
+        )
+        self.addCleanup(tmp.cleanup)
+
+        payload = self.tool.build_payload(db_path, days=1, limit=100)
+        summary = payload["summary"]
+
+        self.assertEqual(summary["open_flow_rows"], 1)
+        self.assertEqual(summary["rows_with_exact_cases"], 1)
+        self.assertEqual(summary["missing_case_rows"], 0)
+        self.assertEqual(summary["gate_cases"], 2)
+        self.assertEqual(summary["passed"], 2)
+        self.assertEqual(summary["mismatched"], 0)
+        self.assertEqual(summary["status"], "ok")
+        top_gates = {item["name"]: item["count"] for item in payload["strategies"][0]["top_gates"]}
+        self.assertEqual(top_gates["positive_quantity"], 1)
+        self.assertEqual(top_gates["score_max"], 1)
+
     def test_missing_case_rows_are_visible_gaps(self):
         tmp, db_path = self.make_db([{"payload": {"raw": {"reason": "no exact case"}}}])
         self.addCleanup(tmp.cleanup)

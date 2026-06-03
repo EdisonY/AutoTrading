@@ -1874,6 +1874,21 @@ class Scanner:
                     confirm_min_score=CONFIRM_MIN_SCORE,
                 )
                 confirm_reason = confirmation_gate.reason
+                confirmation_gate_case = strategy_gate_case(
+                    name="c_v14_confirmation",
+                    gate="c_v14_confirmation",
+                    inputs={
+                        "side": side,
+                        "entry_score": abs_score,
+                        "confirm_signal": confirm_signal,
+                        "confirm_timeframe": CONFIRM_TIMEFRAME,
+                        "no_confirm_high_score_pass": NO_CONFIRM_HIGH_SCORE_PASS,
+                        "weak_confirm_min_score": WEAK_CONFIRM_MIN_SCORE,
+                        "confirm_min_score": CONFIRM_MIN_SCORE,
+                    },
+                    decision=confirmation_gate,
+                    meta={"strategy": "C/v14", "timeframe": tf, "chain_step": "confirmation"},
+                )
                 if not confirmation_gate.allowed:
                     logger.info(f"  ⏭️ [{tf}] {sym} {side} {confirm_reason}")
                     log_event({
@@ -1883,21 +1898,7 @@ class Scanner:
                         "decision_stage": "confirmation",
                         "filter_layer": "confirmation",
                         "sample_expansion_policy": SAMPLE_EXPANSION_POLICY,
-                        "strategy_gate_case": strategy_gate_case(
-                            name="c_v14_confirmation",
-                            gate="c_v14_confirmation",
-                            inputs={
-                                "side": side,
-                                "entry_score": abs_score,
-                                "confirm_signal": confirm_signal,
-                                "confirm_timeframe": CONFIRM_TIMEFRAME,
-                                "no_confirm_high_score_pass": NO_CONFIRM_HIGH_SCORE_PASS,
-                                "weak_confirm_min_score": WEAK_CONFIRM_MIN_SCORE,
-                                "confirm_min_score": CONFIRM_MIN_SCORE,
-                            },
-                            decision=confirmation_gate,
-                            meta={"strategy": "C/v14", "timeframe": tf},
-                        ),
+                        "strategy_gate_case": confirmation_gate_case,
                         **sentinel_fields(sym),
                     })
                     continue
@@ -1914,6 +1915,21 @@ class Scanner:
                 tail_reason = tail_gate.reason
                 if not tail_gate.allowed:
                     logger.info(f"  skip [{tf}] {sym} {side} {tail_reason}")
+                    tail_gate_case = strategy_gate_case(
+                        name="c_v14_tail_guard",
+                        gate="c_v14_tail_guard",
+                        inputs={
+                            "signal": sig,
+                            "side": side,
+                            "tail_guard_min_score": TAIL_GUARD_MIN_SCORE,
+                            "tail_guard_long_bb_pos": TAIL_GUARD_LONG_BB_POS,
+                            "tail_guard_short_bb_pos": TAIL_GUARD_SHORT_BB_POS,
+                            "tail_guard_min_vol_ratio": TAIL_GUARD_MIN_VOL_RATIO,
+                            "tail_guard_max_atr_pct": TAIL_GUARD_MAX_ATR_PCT,
+                        },
+                        decision=tail_gate,
+                        meta={"strategy": "C/v14", "timeframe": tf, "chain_step": "tail_guard"},
+                    )
                     log_event({
                         "time": now_str, "event": "OPEN_SKIPPED", "symbol": sym,
                         "side": side, "score": abs_score, "timeframe": tf,
@@ -1929,21 +1945,7 @@ class Scanner:
                         "vol_ratio": sig.get("vol_ratio"),
                         "mfi": sig.get("mfi"),
                         "st_flipped": sig.get("st_flipped"),
-                        "strategy_gate_case": strategy_gate_case(
-                            name="c_v14_tail_guard",
-                            gate="c_v14_tail_guard",
-                            inputs={
-                                "signal": sig,
-                                "side": side,
-                                "tail_guard_min_score": TAIL_GUARD_MIN_SCORE,
-                                "tail_guard_long_bb_pos": TAIL_GUARD_LONG_BB_POS,
-                                "tail_guard_short_bb_pos": TAIL_GUARD_SHORT_BB_POS,
-                                "tail_guard_min_vol_ratio": TAIL_GUARD_MIN_VOL_RATIO,
-                                "tail_guard_max_atr_pct": TAIL_GUARD_MAX_ATR_PCT,
-                            },
-                            decision=tail_gate,
-                            meta={"strategy": "C/v14", "timeframe": tf},
-                        ),
+                        "strategy_gate_cases": [confirmation_gate_case, tail_gate_case],
                         **sentinel_fields(sym),
                     })
                     continue

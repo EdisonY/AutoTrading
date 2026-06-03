@@ -1134,6 +1134,26 @@ class ScannerV16:
                     confirm_strong_bonus=CONFIRM_STRONG_BONUS,
                 )
                 confirm_reason = confirmation_gate.reason
+                confirmation_gate_case = strategy_gate_case(
+                    name="b_v16_confirmation",
+                    gate="b_v16_confirmation",
+                    inputs={
+                        "side": side,
+                        "raw_score": raw_score,
+                        "confirm_signal": confirm_signal,
+                        "open_positions": open_positions,
+                        "max_active_new_positions": MAX_ACTIVE_NEW_POSITIONS,
+                        "no_confirm_high_score_pass": NO_CONFIRM_HIGH_SCORE_PASS,
+                        "confirm_opposite_reject_score": CONFIRM_OPPOSITE_REJECT_SCORE,
+                        "opposite_high_score_pass": OPPOSITE_HIGH_SCORE_PASS,
+                        "weak_confirm_pass_score": WEAK_CONFIRM_PASS_SCORE,
+                        "confirm_min_score": CONFIRM_MIN_SCORE,
+                        "confirm_bonus": CONFIRM_BONUS,
+                        "confirm_strong_bonus": CONFIRM_STRONG_BONUS,
+                    },
+                    decision=confirmation_gate,
+                    meta={"strategy": "B/v16", "timeframe": tf, "chain_step": "confirmation"},
+                )
                 if not confirmation_gate.allowed:
                     scan_stats["confirm_fail"] += 1
                     log_event({
@@ -1143,26 +1163,7 @@ class ScannerV16:
                         "skip_reason": confirm_reason,
                         "decision_stage": "confirmation",
                         "filter_layer": "confirmation",
-                        "strategy_gate_case": strategy_gate_case(
-                            name="b_v16_confirmation",
-                            gate="b_v16_confirmation",
-                            inputs={
-                                "side": side,
-                                "raw_score": raw_score,
-                                "confirm_signal": confirm_signal,
-                                "open_positions": open_positions,
-                                "max_active_new_positions": MAX_ACTIVE_NEW_POSITIONS,
-                                "no_confirm_high_score_pass": NO_CONFIRM_HIGH_SCORE_PASS,
-                                "confirm_opposite_reject_score": CONFIRM_OPPOSITE_REJECT_SCORE,
-                                "opposite_high_score_pass": OPPOSITE_HIGH_SCORE_PASS,
-                                "weak_confirm_pass_score": WEAK_CONFIRM_PASS_SCORE,
-                                "confirm_min_score": CONFIRM_MIN_SCORE,
-                                "confirm_bonus": CONFIRM_BONUS,
-                                "confirm_strong_bonus": CONFIRM_STRONG_BONUS,
-                            },
-                            decision=confirmation_gate,
-                            meta={"strategy": "B/v16", "timeframe": tf},
-                        ),
+                        "strategy_gate_case": confirmation_gate_case,
                         **sentinel_fields(sym),
                     })
                     continue
@@ -1185,6 +1186,29 @@ class ScannerV16:
                 )
                 if not threshold_gate.allowed:
                     scan_stats["threshold_fail"] += 1
+                    threshold_gate_case = strategy_gate_case(
+                        name="b_v16_entry_threshold",
+                        gate="b_v16_entry_threshold",
+                        inputs={
+                            "timeframe": tf,
+                            "side": side,
+                            "score": score,
+                            "symbol": sym,
+                            "open_positions": open_positions,
+                            "confirm_reason": confirm_reason,
+                            "score_thresholds": SCORE_THRESHOLDS,
+                            "score_min": SCORE_MIN,
+                            "short_entry_penalty": SHORT_ENTRY_PENALTY,
+                            "major_symbols": MAJOR_SYMBOLS,
+                            "low_position_threshold_discount": LOW_POSITION_THRESHOLD_DISCOUNT,
+                            "no_confirm_threshold_penalty": NO_CONFIRM_THRESHOLD_PENALTY,
+                            "weak_opposite_confirm_penalty": WEAK_OPPOSITE_CONFIRM_PENALTY,
+                            "confirm_bonus": CONFIRM_BONUS,
+                            "confirm_strong_bonus": CONFIRM_STRONG_BONUS,
+                        },
+                        decision=threshold_gate,
+                        meta={"strategy": "B/v16", "timeframe": tf, "chain_step": "entry_threshold"},
+                    )
                     log_event({
                         "time": str(datetime.now(CST)), "event": "OPEN_SKIPPED",
                         "symbol": sym, "side": side, "score": score,
@@ -1192,29 +1216,7 @@ class ScannerV16:
                         "skip_reason": f"阈值未达:{confirm_reason}",
                         "decision_stage": "threshold",
                         "filter_layer": "strategy",
-                        "strategy_gate_case": strategy_gate_case(
-                            name="b_v16_entry_threshold",
-                            gate="b_v16_entry_threshold",
-                            inputs={
-                                "timeframe": tf,
-                                "side": side,
-                                "score": score,
-                                "symbol": sym,
-                                "open_positions": open_positions,
-                                "confirm_reason": confirm_reason,
-                                "score_thresholds": SCORE_THRESHOLDS,
-                                "score_min": SCORE_MIN,
-                                "short_entry_penalty": SHORT_ENTRY_PENALTY,
-                                "major_symbols": MAJOR_SYMBOLS,
-                                "low_position_threshold_discount": LOW_POSITION_THRESHOLD_DISCOUNT,
-                                "no_confirm_threshold_penalty": NO_CONFIRM_THRESHOLD_PENALTY,
-                                "weak_opposite_confirm_penalty": WEAK_OPPOSITE_CONFIRM_PENALTY,
-                                "confirm_bonus": CONFIRM_BONUS,
-                                "confirm_strong_bonus": CONFIRM_STRONG_BONUS,
-                            },
-                            decision=threshold_gate,
-                            meta={"strategy": "B/v16", "timeframe": tf},
-                        ),
+                        "strategy_gate_cases": [confirmation_gate_case, threshold_gate_case],
                         **sentinel_fields(sym),
                     })
                     continue

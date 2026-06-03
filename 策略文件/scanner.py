@@ -2813,12 +2813,46 @@ class Scanner:
                 exchange_qty = float(exec_result.quantity or exchange_qty)
                 actual_margin_usdt = exchange_qty * price / self.leverage
                 if not min_notional_adjustment and not min_margin_usdt <= actual_margin_usdt <= max_margin_usdt:
+                    confirmed_sizing_gate = evaluate_a_v11_margin_sizing_gate(
+                        quantity=exchange_qty,
+                        price=price,
+                        risk_usdt=risk_usdt,
+                        leverage=self.leverage,
+                        order_margin_tolerance_pct=ORDER_MARGIN_TOLERANCE_PCT,
+                        min_notional_floor=min_notional_floor,
+                    )
+                    confirmed_sizing_case = strategy_gate_case(
+                        name="a_v11_post_open_margin_sizing",
+                        gate="a_v11_margin_sizing",
+                        inputs={
+                            "quantity": exchange_qty,
+                            "price": price,
+                            "risk_usdt": risk_usdt,
+                            "leverage": self.leverage,
+                            "order_margin_tolerance_pct": ORDER_MARGIN_TOLERANCE_PCT,
+                            "min_notional_floor": min_notional_floor,
+                        },
+                        decision=confirmed_sizing_gate,
+                        meta={
+                            "strategy": "A/v11",
+                            "timeframe": tf,
+                            "chain_step": "post_open_sizing_confirm",
+                            "planned_quantity": planned_exchange_qty,
+                            "confirmed_quantity": exchange_qty,
+                        },
+                    )
                     close_exec = self.execution.close_position(CloseRequest(
                         symbol=inst_id,
                         side=side,
                         quantity=exchange_qty,
                         cancel_open_orders=True,
                     ))
+                    close_execution_case = _execution_result_case(
+                        "a_v11_post_open_sizing_close_execution_result",
+                        close_exec,
+                        timeframe=tf,
+                        phase="post_open_sizing_confirm",
+                    )
                     log_event({
                         "time": now_str,
                         "event": "OPEN_SIZING_MISMATCH_CLOSED" if close_exec.success else "OPEN_SIZING_MISMATCH_FAILED",
@@ -2838,14 +2872,8 @@ class Scanner:
                         "close_failure_reason": close_exec.reason,
                         "decision_stage": "post_open_sizing_confirm",
                         "filter_layer": "execution",
-                        **({} if close_exec.success else {
-                            "strategy_gate_case": _execution_result_case(
-                                "a_v11_post_open_sizing_close_execution_result",
-                                close_exec,
-                                timeframe=tf,
-                                phase="post_open_sizing_confirm",
-                            ),
-                        }),
+                        "strategy_gate_case": close_execution_case,
+                        "strategy_gate_cases": [confirmed_sizing_case, close_execution_case],
                         **sentinel_fields(inst_id),
                     })
                     now_dt = datetime.now(CST)

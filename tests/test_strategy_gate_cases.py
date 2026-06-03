@@ -65,6 +65,17 @@ class _OpenExecution:
         return self.result
 
 
+class _OpenThenCloseExecution(_OpenExecution):
+    def __init__(self, open_result, close_result, quantity=4.0):
+        super().__init__(open_result, quantity=quantity)
+        self.close_result = close_result
+        self.close_requests = []
+
+    def close_position(self, req):
+        self.close_requests.append(req)
+        return self.close_result
+
+
 class _TradableClient:
     def is_tradable(self, symbol):
         return {"tradable": True, "reason": ""}
@@ -502,6 +513,85 @@ class StrategyGateCasesTest(unittest.TestCase):
         self.assertEqual([row["passed"] for row in evaluate_strategy_gate_cases(cases)], [True] * len(cases))
         self.assertEqual(scanner.execution.open_requests[0].quantity, 4.0)
         self.assertIn(("OPENUSDT", "long"), scanner.positions["15m"])
+
+    def test_a_v11_post_open_sizing_cleanup_cases_replay(self):
+        scanner = self._scanner_without_runtime()
+        scanner.leverage = 4
+        scanner.max_positions = 2
+        scanner.risk_engine = RiskEngine(RiskLimits(
+            max_total_positions=30,
+            max_positions_per_side=15,
+            min_available_balance_pct=0.25,
+            min_available_balance_usdt=300,
+        ))
+        scanner.client = _TradableClient()
+        scanner.execution = _OpenThenCloseExecution(
+            ExecutionResult(True, "open", "BIGQTYUSDT", "long", quantity=6.0, order_id="open-big", raw={"orderId": "open-big"}),
+            ExecutionResult(True, "close", "BIGQTYUSDT", "long", quantity=6.0, order_id="close-big", raw={"orderId": "close-big"}),
+            quantity=4.0,
+        )
+
+        sig = {
+            "symbol": "BIGQTYUSDT",
+            "timeframe": "15m",
+            "trade_side": "long",
+            "net_score": 120,
+            "price": 100,
+            "atr": 2,
+            "sl_long": 95,
+            "tp_long": 115,
+            "sl_short": 105,
+            "tp_short": 85,
+            "reasons_long": ["test"],
+            "reasons_short": [],
+            "divergence_primary": {"description": "test"},
+            "st_direction": 1,
+            "st_flipped": False,
+        }
+        events = []
+        cached_state = SimpleNamespace(
+            positions=[],
+            balance={"totalWalletBalance": "5000", "availableBalance": "4500"},
+        )
+        original_log_event = scanner_module.log_event
+        original_load_cached = scanner_module.load_cached_account_state
+        original_logger_disabled = scanner_module.logger.disabled
+        scanner_module.log_event = events.append
+        scanner_module.load_cached_account_state = lambda root, strategy: cached_state
+        scanner_module.logger.disabled = True
+        try:
+            scanner._open_position(
+                sig,
+                "2026-06-03 22:10:00",
+                resonance=False,
+                force_replacement=False,
+                open_chain_cases=[
+                    scanner._entry_threshold_case(sig),
+                    *scanner._open_pool_capacity_cases(
+                        scanner._replacement_orchestration_cases(
+                            sig,
+                            resonance=False,
+                            timeframe_full=False,
+                            tf="15m",
+                        )[2],
+                        timeframe_full=False,
+                    ),
+                ],
+            )
+        finally:
+            scanner_module.log_event = original_log_event
+            scanner_module.load_cached_account_state = original_load_cached
+            scanner_module.logger.disabled = original_logger_disabled
+
+        self.assertEqual(events[0]["event"], "OPEN_SIZING_MISMATCH_CLOSED")
+        self.assertEqual(scanner.execution.open_requests[0].quantity, 4.0)
+        self.assertEqual(scanner.execution.close_requests[0].quantity, 6.0)
+        cases = events[0]["strategy_gate_cases"]
+        self.assertEqual([case["gate"] for case in cases], ["a_v11_margin_sizing", "execution_result"])
+        results = evaluate_strategy_gate_cases(cases)
+        self.assertEqual([row["passed"] for row in results], [True, True])
+        self.assertEqual([row["reason"] for row in results], ["margin_sizing_out_of_tolerance", "execution_success"])
+        self.assertEqual(events[0]["strategy_gate_case"]["gate"], "execution_result")
 
     def test_b_v16_successful_open_chain_cases_replay(self):
         scanner = scanner_v16_module.ScannerV16.__new__(scanner_v16_module.ScannerV16)

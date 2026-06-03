@@ -28,6 +28,7 @@ $PYTHON sentinel_quality_review.py --db $REMOTE_DIR/server_logs_tencent/runtime/
 echo "--- Step 1.7: Research store export/query ---"
 $PYTHON research_store_export.py --db $REMOTE_DIR/server_logs_tencent/runtime/event_store.sqlite3 --out-dir $REMOTE_DIR/research_store --days 3 --format parquet || true
 $PYTHON research_kline_features.py --cache-dir $REMOTE_DIR/server_logs_tencent/runtime/kline_cache --out-dir $REMOTE_DIR/research_store --days 3 --format parquet || true
+$PYTHON research_kline_backfill.py --store $REMOTE_DIR/research_store --queue-db $REMOTE_DIR/runtime/binance_api_queue.sqlite3 --runtime-dir $REMOTE_DIR/runtime --reports-dir $REMOTE_DIR/reports --target-days 30 --format parquet || true
 $PYTHON research_store_query.py --store $REMOTE_DIR/research_store --runtime-dir $REMOTE_DIR/runtime --reports-dir $REMOTE_DIR/reports --days 3 --format parquet || true
 $PYTHON replay_feature_dataset.py --store $REMOTE_DIR/research_store --out-dir $REMOTE_DIR/research_store --runtime-dir $REMOTE_DIR/runtime --reports-dir $REMOTE_DIR/reports --days 3 --format parquet || true
 $PYTHON replay_gate_audit.py --db $REMOTE_DIR/server_logs_tencent/runtime/event_store.sqlite3 --runtime-dir $REMOTE_DIR/runtime --reports-dir $REMOTE_DIR/reports --days 3 || true

@@ -54,8 +54,8 @@
 
 5. **P1-E 长历史 K线/研究仓增强**
    - 当前问题：已有近期 `klines/features`，但不是长历史 K线仓。
-   - 已完成：2026-06-04 `research_kline_features.py` 已从“只导出本轮 cache”升级为默认合并已有 research_store `klines` 分区与新同步 cache 行，按 `(symbol, interval, open_time_ms)` 去重，并从合并后的时间序列重建 `features`；manifest 记录 cache/existing/merged 行数和覆盖范围。重复离线刷新现在可自然累计更长 K线历史，不调用 Binance、不增加 SQLite 压力。2026-06-04 `research_store_query.py` 又补了 30 天 Kline 覆盖验收：默认要求 `15m/30m/1h` 关键周期各自达到 `30` 天，输出 `kline_acceptance` 的 `ok/coverage_gap/no_klines`、缺失周期和不足周期；入口页研究仓卡片和 K线表直接显示该状态。
-   - 未完成：仍缺真正 30+ 天历史 K线 backfill source、长历史 depth 仓、分区 retention/压缩策略，以及在真实 post-refresh research-store 数据上跑出 `kline_acceptance=ok`。
+   - 已完成：2026-06-04 `research_kline_features.py` 已从“只导出本轮 cache”升级为默认合并已有 research_store `klines` 分区与新同步 cache 行，按 `(symbol, interval, open_time_ms)` 去重，并从合并后的时间序列重建 `features`；manifest 记录 cache/existing/merged 行数和覆盖范围。重复离线刷新现在可自然累计更长 K线历史，不调用 Binance、不增加 SQLite 压力。2026-06-04 `research_store_query.py` 又补了 30 天 Kline 覆盖验收：默认要求 `15m/30m/1h` 关键周期各自达到 `30` 天，输出 `kline_acceptance` 的 `ok/coverage_gap/no_klines`、缺失周期和不足周期；入口页研究仓卡片和 K线表直接显示该状态。2026-06-04 `research_kline_backfill.py` 已补 queue-safe backfill planner：默认 plan-only，可从 `events` / `sentinel_scans` 在 K线为空时选 symbol，可用 `--submit` 写入 central API queue，可用 `--ingest-done` 合并 DONE Kline 响应回 `klines/features`；Aliyun refresh/shadow、release/deploy、反向同步、live-context pull 和入口页已接入。
+   - 未完成：仍未真实执行 `--submit` / queue executor / `--ingest-done` 的 staged backfill，因此还没有在真实 post-refresh research-store 数据上跑出 `kline_acceptance=ok`；长历史 depth 仓、分区 retention/压缩策略仍未完成。
    - 验收：30 天以上策略漏斗、replay feature、sentinel outcome 查询秒级可用，并不依赖 SQLite 长期膨胀。
 
 ### Long-term P2 - P0/P1 闭环后推进

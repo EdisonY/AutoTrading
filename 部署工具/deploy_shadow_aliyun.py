@@ -45,6 +45,7 @@ UPLOADS = [
     (ROOT / "部署工具" / "decision_attention.py", f"{REMOTE_DIR}/decision_attention.py"),
     (ROOT / "部署工具" / "research_memory_builder.py", f"{REMOTE_DIR}/research_memory_builder.py"),
     (ROOT / "部署工具" / "research_kline_features.py", f"{REMOTE_DIR}/research_kline_features.py"),
+    (ROOT / "部署工具" / "research_kline_backfill.py", f"{REMOTE_DIR}/research_kline_backfill.py"),
     (ROOT / "部署工具" / "replay_feature_dataset.py", f"{REMOTE_DIR}/replay_feature_dataset.py"),
     (ROOT / "部署工具" / "research_store_export.py", f"{REMOTE_DIR}/research_store_export.py"),
     (ROOT / "部署工具" / "research_store_query.py", f"{REMOTE_DIR}/research_store_query.py"),

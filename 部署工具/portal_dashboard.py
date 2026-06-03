@@ -42,6 +42,8 @@ STRATEGY_TRUTH_JSON = ROOT / "runtime" / "strategy_truth_latest.json"
 STRATEGY_TRUTH_MD = REPORTS_DIR / "strategy_truth_latest.md"
 RESEARCH_STORE_JSON = ROOT / "runtime" / "research_store_summary_latest.json"
 RESEARCH_STORE_MD = REPORTS_DIR / "research_store_summary_latest.md"
+KLINE_BACKFILL_JSON = ROOT / "runtime" / "research_kline_backfill_latest.json"
+KLINE_BACKFILL_MD = REPORTS_DIR / "research_kline_backfill_latest.md"
 REPLAY_FEATURE_JSON = ROOT / "runtime" / "replay_feature_dataset_latest.json"
 REPLAY_FEATURE_MD = REPORTS_DIR / "replay_feature_dataset_latest.md"
 REPLAY_GATE_JSON = ROOT / "runtime" / "replay_gate_audit_latest.json"
@@ -606,6 +608,34 @@ def research_store_summary(path: Path | None) -> dict[str, Any]:
         "feature_coverage": payload.get("feature_coverage") if isinstance(payload.get("feature_coverage"), list) else [],
         "totals": totals,
         "top_skip": skip_layers[0] if skip_layers else {},
+    }
+
+
+def kline_backfill_summary(path: Path | None) -> dict[str, Any]:
+    empty = {
+        "available": False,
+        "path": KLINE_BACKFILL_MD,
+        "age": "无补数计划",
+        "fresh": False,
+        "plan": {"summary": {"requests": 0, "status": "missing"}},
+        "submit": {},
+        "ingest": {},
+    }
+    payload = read_json(path) if path else None
+    if not isinstance(payload, dict):
+        return empty
+    generated_at = parse_dt(payload.get("generated_at"))
+    plan = payload.get("plan") if isinstance(payload.get("plan"), dict) else {}
+    submit = payload.get("submit") if isinstance(payload.get("submit"), dict) else {}
+    ingest = payload.get("ingest") if isinstance(payload.get("ingest"), dict) else {}
+    return {
+        "available": True,
+        "path": KLINE_BACKFILL_MD,
+        "age": age_text(generated_at),
+        "fresh": bool(generated_at and (datetime.now(CST) - generated_at).total_seconds() < 4 * 3600),
+        "plan": plan,
+        "submit": submit,
+        "ingest": ingest,
     }
 
 
@@ -1517,6 +1547,10 @@ def function_status_cards(data: dict[str, Any]) -> list[dict[str, str]]:
     counterfactual = data.get("counterfactual") or {}
     research_store = data.get("research_store") or {}
     kline_acceptance = research_store.get("kline_acceptance") or {}
+    kline_backfill = data.get("kline_backfill") or {}
+    kline_backfill_plan = (kline_backfill.get("plan") or {}).get("summary") or {}
+    kline_backfill_submit = kline_backfill.get("submit") or {}
+    kline_backfill_ingest = kline_backfill.get("ingest") or {}
     replay_feature = data.get("replay_feature") or {}
     replay_summary = replay_feature.get("summary") or {}
     replay_gate = data.get("replay_gate") or {}
@@ -1673,6 +1707,21 @@ def function_status_cards(data: dict[str, Any]) -> list[dict[str, str]]:
                 f"特征周期 {len(research_store.get('feature_coverage') or [])}。"
                 if research_store.get("available")
                 else "Parquet/DuckDB 样本漏斗尚未生成，进化判断只能看 SQLite/报表口径。"
+            ),
+        },
+        {
+            "level": "ok" if kline_backfill.get("fresh") and int(kline_backfill_plan.get("requests") or 0) == 0 else "warn",
+            "name": "K线补数计划",
+            "value": (
+                f"{int(kline_backfill_plan.get('requests') or 0)} 请求"
+                if kline_backfill.get("available")
+                else "未生成"
+            ),
+            "body": (
+                f"状态 {kline_backfill_plan.get('status', '-')}; submitted {int(kline_backfill_submit.get('submitted') or 0)}; "
+                f"ingested rows {int(kline_backfill_ingest.get('backfill_rows') or 0)}; 更新 {kline_backfill.get('age')}。默认只生成计划，不直接请求 Binance。"
+                if kline_backfill.get("available")
+                else "K线长历史补数计划尚未生成；30日覆盖缺口只能先从现有 research_store 判断。"
             ),
         },
         {
@@ -2270,6 +2319,8 @@ def build_data() -> dict[str, Any]:
     data["sentinel_quality_html"] = SENTINEL_QUALITY_MD
     data["research_store"] = research_store_summary(RESEARCH_STORE_JSON)
     data["research_store_html"] = RESEARCH_STORE_MD
+    data["kline_backfill"] = kline_backfill_summary(KLINE_BACKFILL_JSON)
+    data["kline_backfill_html"] = KLINE_BACKFILL_MD
     data["replay_feature"] = replay_feature_summary(REPLAY_FEATURE_JSON)
     data["replay_feature_html"] = REPLAY_FEATURE_MD
     data["replay_gate"] = replay_gate_summary(REPLAY_GATE_JSON)
@@ -2915,6 +2966,14 @@ def render_html(out_dir: Path) -> str:
             data["research_store_html"],
             "看研究仓摘要",
             "blue",
+        ),
+        route_card(
+            "长K线怎么补",
+            "补数计划",
+            "看 15m/30m/1h 长历史缺口需要哪些 queued Kline 请求。默认只出计划，不直接打 Binance。",
+            data["kline_backfill_html"],
+            "看补数计划",
+            "slate",
         ),
         route_card(
             "是否有更优方案",

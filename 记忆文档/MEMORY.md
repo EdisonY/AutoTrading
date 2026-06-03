@@ -45,6 +45,7 @@
 - 当前判断：fail-closed 队列避免了冷却期间继续入队，但 public producer 不能在 cooldown 内继续跑，否则 journal 会持续出现 blocked-by-cooldown 噪声，且 fresh-run 不能算 clean。cooldown 过期后，market-data-cache 单独运行 5+ 分钟 clean，新增 ticker 请求均为 `200`。为避免 60s executor 被多个 15s producer 堆爆，下一步把 market-data-cache 和 sentinel 施工期 systemd interval 统一放慢到 `300s`，再按 cache -> sentinel -> A -> B -> C 继续。
 - 用户随后要求不要继续边测边改，先离线把优化目标尽量落地后再启动服务器验收。已在 `10:57 CST` 停止所有 Binance-facing/test 服务：API queue、A/B/C user-stream、market-data-cache、sentinel、A/B/C scanners、account-state、account-snapshot、system-alerts、data-maintenance 均 inactive。后续先离线推进 P0/P1，最终再统一 staged fresh-run。
 - P0-A 离线加固继续：`queued_api_request()` 现在有 pending backlog fail-closed。默认 public pending 上限 `3`、signed `20`、其他 `10`，达到上限直接返回 `queue_status=backlog` 且不插入新 request，避免多 public producer 堆积、超时取消和晚到重放。
+- P0-A final fresh-run 还新增 A/B/C scanner universe env 限制，默认不变。最终测试可先设小值：A `SCANNER_A_TOP_SYMBOLS`/`SCANNER_A_SPIKE_SYMBOLS`/`SCANNER_A_SENTINEL_LIMIT`，B `SCANNER_B_TOP_SYMBOLS`/`SCANNER_B_SENTINEL_LIMIT`，C `SCANNER_C_TOP_SYMBOLS`/`SCANNER_C_SENTINEL_LIMIT`，避免一启动就恢复 Top100 Kline 压力。
 - 冷却期间继续 P0-B：新增 shared `evaluate_execution_result_gate()`，A/v11、B/v16、C/v14 的 execution preflight-vs-failure 分支已接入同一纯 gate；不改事件 payload、阈值、仓位、杠杆、止损、下单或冷却分钟。已通过 no-restart disk deploy 上传到腾讯：`20260603-101942-strategy-a-7885a45`、`20260603-102046-strategy-b-7885a45`、`20260603-102149-strategy-c-7885a45`。
 
 ## 2026-06-02 N6 watchlist 历史持久化

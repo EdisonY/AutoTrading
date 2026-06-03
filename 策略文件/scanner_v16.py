@@ -61,6 +61,13 @@ def console_log_level() -> int:
     return getattr(logging, name.strip().upper(), logging.INFO)
 
 
+def env_int(name: str, default: int) -> int:
+    try:
+        return max(1, int(os.environ.get(name, str(default))))
+    except Exception:
+        return int(default)
+
+
 logging.basicConfig(level=console_log_level(), format="%(asctime)s [%(levelname)s] %(message)s", datefmt="%H:%M:%S")
 logger = logging.getLogger("scanner_v16")
 
@@ -955,7 +962,9 @@ class ScannerV16:
         return decision.allowed, decision.reason
 
     def scan(self):
-        symbols = merge_sentinel_symbols(fetch_top_symbols(50))
+        top_limit = env_int("SCANNER_B_TOP_SYMBOLS", 50)
+        sentinel_limit = env_int("SCANNER_B_SENTINEL_LIMIT", 30)
+        symbols = merge_sentinel_symbols(fetch_top_symbols(top_limit), limit=sentinel_limit)
         logger.info(f"v16扫描 {len(symbols)} 币 × {len(ENTRY_TIMEFRAMES)} 入场周期...")
         open_positions = self._total_exchange_positions()
         scan_stats = {

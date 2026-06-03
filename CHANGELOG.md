@@ -2,6 +2,14 @@
 
 This is the durable reason-and-outcome ledger for every material design, code, configuration, deployment, rollback, optimization, or live operational change.
 
+## 2026-06-03 11:15 CST - Add offline scanner universe limits for final fresh-run
+- Trigger / reason: Continue offline-first P0-A work. The next server fresh-run should not require A/B/C to immediately scan their full Top100/Top50 universes; small-universe verification is needed to validate the queue/user-stream/account-state chain before full public Kline pressure returns.
+- Completed: Added environment-controlled scanner universe limits with unchanged defaults. A/v11 now supports `SCANNER_A_TOP_SYMBOLS`, `SCANNER_A_SPIKE_SYMBOLS`, and `SCANNER_A_SENTINEL_LIMIT`; B/v16 supports `SCANNER_B_TOP_SYMBOLS` and `SCANNER_B_SENTINEL_LIMIT`; C/v14 supports `SCANNER_C_TOP_SYMBOLS` and `SCANNER_C_SENTINEL_LIMIT`. Defaults remain A top/spike `100` + sentinel `40`, B top `50` + sentinel `30`, C top `100` + sentinel `40`, so normal behavior is unchanged unless the final staged fresh-run sets env overrides.
+- Not completed / remaining: No server unit has been changed to set small-universe env values yet. Services remain stopped. Final fresh-run should choose explicit small values first, then expand.
+- Verification: Local `py_compile` passed for A/B/C scanners.
+- Live impact / deployment: None. Offline code only; no server test or restart.
+- Files / release / commit: `策略文件/scanner.py`, `策略文件/scanner_v16.py`, `策略文件/scanner_v14.py`, `CHANGELOG.md`, `PROJECT_STATE.md`, `记忆文档/MEMORY.md`, `记忆文档/FUTURE_EXECUTION_PLAN.md`.
+
 ## 2026-06-03 11:05 CST - Add API queue pending-backlog fail-closed guard
 - Trigger / reason: User redirected the work to offline-first construction before further server fresh-runs. The latest staged run showed the 60s queue executor can be overloaded by multiple public producers, producing queued/deferred buildup, timeout cancellations, and late replay risk.
 - Completed: Added `BinanceApiQueue.pending_count()` and a queue-client pending backlog precheck. `queued_api_request()` now checks active cooldown first, then checks per-scope pending count before inserting a new request. Defaults are conservative but adjustable: public max pending `3`, signed max pending `20`, other scope max pending `10`, with per-scope env overrides and per-call `max_pending_requests`. When the limit is reached the client returns `queue_status=backlog` without inserting another row.

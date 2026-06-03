@@ -92,6 +92,13 @@ def console_log_level() -> int:
     return getattr(logging, name.strip().upper(), logging.INFO)
 
 
+def env_int(name: str, default: int) -> int:
+    try:
+        return max(1, int(os.environ.get(name, str(default))))
+    except Exception:
+        return int(default)
+
+
 logging.basicConfig(
     level=console_log_level(),
     format="%(asctime)s [%(levelname)s] %(message)s",
@@ -1602,7 +1609,9 @@ class Scanner:
 
         # 2. 获取扫描列表
         try:
-            symbols = merge_sentinel_symbols(fetch_top_symbols(100))
+            top_limit = env_int("SCANNER_C_TOP_SYMBOLS", 100)
+            sentinel_limit = env_int("SCANNER_C_SENTINEL_LIMIT", 40)
+            symbols = merge_sentinel_symbols(fetch_top_symbols(top_limit), limit=sentinel_limit)
         except Exception as e:
             logger.error(f"获取扫描列表失败: {e}")
             return

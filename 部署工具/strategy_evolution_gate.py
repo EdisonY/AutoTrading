@@ -339,6 +339,114 @@ POST_APPROVAL_FORCED_CLOSE_RATE = 0.12
 POST_APPROVAL_OPEN_FAILED_RATE = 0.08
 POST_APPROVAL_NOTIONAL_PER_TRADE = 400.0
 
+DEFAULT_GATE_PROFILE = {
+    "profile_id": "default",
+    "p0_min_samples": MIN_SAMPLE_FOR_P0,
+    "p1_min_samples": MIN_SAMPLE_FOR_P1,
+    "post_approval_min_closed_by_hours": POST_APPROVAL_MIN_CLOSED_BY_HOURS,
+    "regime_min_distinct": 2,
+    "regime_min_score": 60,
+}
+
+GATE_PROFILE_RULES = [
+    {
+        "profile_id": "a_v11_replacement",
+        "strategy": "A/v11",
+        "keywords": ("replacement", "replace", "evict"),
+        "p0_min_samples": 100,
+        "p1_min_samples": 60,
+        "post_approval_min_closed_by_hours": {24: 30, 72: 70, 168: 140},
+        "regime_min_distinct": 2,
+        "regime_min_score": 70,
+    },
+    {
+        "profile_id": "a_v11_trailing",
+        "strategy": "A/v11",
+        "keywords": ("trailing", "pullback", "trail"),
+        "p0_min_samples": 80,
+        "p1_min_samples": 50,
+        "post_approval_min_closed_by_hours": {24: 25, 72: 60, 168: 120},
+        "regime_min_distinct": 2,
+        "regime_min_score": 65,
+    },
+    {
+        "profile_id": "b_v16_exit_risk",
+        "strategy": "B/v16",
+        "keywords": ("atr", "stop", "overheat", "cap", "sample_expansion"),
+        "p0_min_samples": 70,
+        "p1_min_samples": 40,
+        "post_approval_min_closed_by_hours": {24: 25, 72: 60, 168: 120},
+        "regime_min_distinct": 2,
+        "regime_min_score": 65,
+    },
+    {
+        "profile_id": "confirmation_policy",
+        "strategy": "",
+        "keywords": ("confirmation", "confirm", "soft-pass", "soft_pass"),
+        "p0_min_samples": 80,
+        "p1_min_samples": 50,
+        "post_approval_min_closed_by_hours": {24: 30, 72: 70, 168: 140},
+        "regime_min_distinct": 2,
+        "regime_min_score": 70,
+    },
+    {
+        "profile_id": "c_v14_sample_expansion",
+        "strategy": "C/v14",
+        "keywords": ("threshold", "tail", "filter", "sample", "expansion"),
+        "p0_min_samples": 90,
+        "p1_min_samples": 50,
+        "post_approval_min_closed_by_hours": {24: 30, 72: 70, 168: 140},
+        "regime_min_distinct": 2,
+        "regime_min_score": 65,
+    },
+]
+
+
+def gate_profile_for(strategy: Any = "", change_type: Any = "", candidate_id: Any = "") -> dict[str, Any]:
+    """Return report-only promotion thresholds for a strategy/change family."""
+    text = " ".join(str(v or "").lower() for v in (change_type, candidate_id))
+    base = {
+        **DEFAULT_GATE_PROFILE,
+        "post_approval_min_closed_by_hours": dict(DEFAULT_GATE_PROFILE["post_approval_min_closed_by_hours"]),
+    }
+    for rule in GATE_PROFILE_RULES:
+        rule_strategy = str(rule.get("strategy") or "")
+        if rule_strategy and rule_strategy != str(strategy or ""):
+            continue
+        if not any(keyword in text for keyword in rule.get("keywords") or ()):
+            continue
+        merged = {**base, **rule}
+        merged["post_approval_min_closed_by_hours"] = dict(rule.get("post_approval_min_closed_by_hours") or base["post_approval_min_closed_by_hours"])
+        merged.pop("keywords", None)
+        merged.pop("strategy", None)
+        return merged
+    return base
+
+
+def gate_profile_for_record(record: dict[str, Any], latest: dict[str, Any] | None = None) -> dict[str, Any]:
+    latest = latest or {}
+    strategy = record.get("strategy") or record.get("base_strategy") or latest.get("base_strategy") or latest.get("strategy") or ""
+    change_type = record.get("change_type") or latest.get("change_type") or record.get("proposal") or ""
+    candidate_id = (
+        record.get("candidate_id")
+        or record.get("experiment_id")
+        or latest.get("candidate_id")
+        or latest.get("experiment_id")
+        or record.get("family_id")
+        or latest.get("family_id")
+        or ""
+    )
+    return gate_profile_for(strategy, change_type, candidate_id)
+
+
+def profile_required_closed(window_hours: int, gate_profile: dict[str, Any] | None = None) -> int:
+    profile = gate_profile or DEFAULT_GATE_PROFILE
+    by_hours = profile.get("post_approval_min_closed_by_hours") or POST_APPROVAL_MIN_CLOSED_BY_HOURS
+    return to_int(
+        by_hours.get(window_hours) if isinstance(by_hours, dict) else None,
+        to_int(by_hours.get(str(window_hours)) if isinstance(by_hours, dict) else None, POST_APPROVAL_MIN_CLOSED),
+    )
+
 
 def adjust_pnl_for_fees(pnl: float, sample_trades: int, notional_per_trade: float = 400.0) -> float:
     """Adjust PnL by deducting estimated fee/slippage."""
@@ -614,9 +722,9 @@ def classify_regime(metrics: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def classify_window_quality(metrics: dict[str, Any]) -> dict[str, Any]:
+def classify_window_quality(metrics: dict[str, Any], gate_profile: dict[str, Any] | None = None) -> dict[str, Any]:
     window_hours = to_int(metrics.get("window_hours"))
-    required_closed = POST_APPROVAL_MIN_CLOSED_BY_HOURS.get(window_hours, POST_APPROVAL_MIN_CLOSED)
+    required_closed = profile_required_closed(window_hours, gate_profile)
     opens = to_int(metrics.get("opens"))
     closes = to_int(metrics.get("closes"))
     forced_closes = to_int(metrics.get("forced_closes"))
@@ -661,6 +769,7 @@ def classify_window_quality(metrics: dict[str, Any]) -> dict[str, Any]:
         reasons.append("window_quality_ok")
     return {
         "label": label,
+        "gate_profile_id": (gate_profile or DEFAULT_GATE_PROFILE).get("profile_id"),
         "closed_samples": closed_total,
         "required_closed_samples": required_closed,
         "forced_close_rate": round(forced_rate, 4),
@@ -670,6 +779,79 @@ def classify_window_quality(metrics: dict[str, Any]) -> dict[str, Any]:
         "paper_cost_sensitivity": cost_sensitivity,
         "conservative_cost": conservative,
         "reasons": reasons[:4],
+    }
+
+
+def score_regime_robustness(
+    post_approval: dict[str, Any] | None,
+    gate_profile: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Report-only cross-regime robustness score for post-approval windows."""
+    profile = gate_profile or DEFAULT_GATE_PROFILE
+    windows = (post_approval or {}).get("windows") or {}
+    labels: list[str] = []
+    quality_labels: list[str] = []
+    mature_windows = 0
+    ready_windows = 0
+    for metrics in windows.values():
+        if not isinstance(metrics, dict):
+            continue
+        label = str((metrics.get("regime") or {}).get("label") or "")
+        if label:
+            labels.append(label)
+        quality = metrics.get("quality") or {}
+        q_label = str(quality.get("label") or "")
+        if q_label:
+            quality_labels.append(q_label)
+        if metrics.get("status") == "ready":
+            ready_windows += 1
+        required = to_int(quality.get("required_closed_samples"))
+        closed = to_int(quality.get("closed_samples"))
+        if required and closed >= required:
+            mature_windows += 1
+
+    distinct_regimes = len(set(labels))
+    bad_windows = sum(1 for label in quality_labels if label == "bad")
+    maturing_windows = sum(1 for label in quality_labels if label == "maturing")
+    score = 0
+    score += min(45, distinct_regimes * 22)
+    score += min(25, ready_windows * 8)
+    score += min(30, mature_windows * 10)
+    score -= bad_windows * 25
+    score -= maturing_windows * 4
+    score = max(0, min(100, score))
+
+    required_distinct = to_int(profile.get("regime_min_distinct"), 2)
+    required_score = to_int(profile.get("regime_min_score"), 60)
+    reasons: list[str] = []
+    if not windows:
+        status = "missing"
+        reasons.append("missing_post_approval_windows")
+    elif distinct_regimes < required_distinct:
+        status = "single_regime"
+        reasons.append(f"distinct_regimes={distinct_regimes}/{required_distinct}")
+    elif score < required_score:
+        status = "weak"
+        reasons.append(f"score={score}/{required_score}")
+    else:
+        status = "ok"
+        reasons.append("regime_robustness_ok")
+    if bad_windows:
+        reasons.append(f"bad_windows={bad_windows}")
+    if maturing_windows:
+        reasons.append(f"maturing_windows={maturing_windows}")
+    return {
+        "status": status,
+        "score": score,
+        "required_score": required_score,
+        "distinct_regimes": distinct_regimes,
+        "required_distinct_regimes": required_distinct,
+        "regime_counts": dict(collections.Counter(labels)),
+        "quality_counts": dict(collections.Counter(quality_labels)),
+        "ready_windows": ready_windows,
+        "mature_windows": mature_windows,
+        "reasons": reasons[:5],
+        "automation": "disabled_report_only",
     }
 
 
@@ -692,6 +874,11 @@ def summarize_post_approval_windows(
         cache: dict[str, list[sqlite3.Row]] = {}
         for candidate_id, approval in approvals.items():
             strategy = str(approval.get("base_strategy") or approval.get("strategy") or "")
+            gate_profile = gate_profile_for(
+                strategy,
+                approval.get("change_type") or approval.get("manual_action") or json.dumps(approval.get("selected_live_parameter") or {}, ensure_ascii=False),
+                candidate_id,
+            )
             approved_at = parse_date(approval.get("approved_at") or approval.get("applied_at"))
             if not strategy or not approved_at:
                 continue
@@ -828,13 +1015,15 @@ def summarize_post_approval_windows(
                         for reason, count in resolved_close_counter.most_common(5)
                     ]
                 metrics["regime"] = classify_regime(metrics)
-                metrics["quality"] = classify_window_quality(metrics)
+                metrics["quality"] = classify_window_quality(metrics, gate_profile)
                 for key in ("abs_change_sum", "abs_velocity_sum", "quote_volume_sum"):
                     metrics.pop(key, None)
                 windows[f"{hours}h"] = metrics
             out[candidate_id] = {
                 "approved_at": approved_at.isoformat(timespec="seconds"),
                 "strategy": strategy,
+                "gate_profile": gate_profile,
+                "regime_robustness": score_regime_robustness({"windows": windows}, gate_profile),
                 "windows": windows,
             }
     finally:
@@ -920,6 +1109,20 @@ def post_approval_sample_blockers(post_approval: dict[str, Any] | None) -> list[
     return blockers
 
 
+def post_approval_regime_blockers(
+    post_approval: dict[str, Any] | None,
+    gate_profile: dict[str, Any] | None = None,
+) -> list[str]:
+    if not post_approval:
+        return []
+    robustness = score_regime_robustness(post_approval, gate_profile)
+    status = str(robustness.get("status") or "")
+    if status in {"", "ok"}:
+        return []
+    reason = "; ".join(str(x) for x in (robustness.get("reasons") or [])[:2]) or status
+    return [f"regime robustness {status}: {reason}"]
+
+
 def classify_decision(
     candidate: dict[str, Any],
     results: list[dict[str, Any]],
@@ -928,12 +1131,17 @@ def classify_decision(
     account_risk: dict[str, Any],
     full_live_approval: dict[str, Any] | None = None,
     post_approval: dict[str, Any] | None = None,
+    gate_profile: dict[str, Any] | None = None,
 ) -> tuple[str, str, list[str]]:
     blockers: list[str] = []
     win = window_status(results)
     latest = results[-1] if results else {}
     exp_status, exp_notes = experiment_verdict(latest) if latest else ("missing", ["无影子实验结果"])
     promotion_status = str((review or {}).get("promotion_status") or latest.get("promotion_status") or candidate.get("status") or "")
+    profile = gate_profile or gate_profile_for_record(candidate, latest)
+    profile_id = str(profile.get("profile_id") or "default")
+    p0_min = to_int(profile.get("p0_min_samples"), MIN_SAMPLE_FOR_P0)
+    p1_min = to_int(profile.get("p1_min_samples"), MIN_SAMPLE_FOR_P1)
 
     if full_live_approval:
         rollback_priority, rollback_triggers = rollback_watch_verdict(results, account_risk, post_approval)
@@ -942,9 +1150,11 @@ def classify_decision(
         if rollback_priority == "P1":
             return "rollback_watch", "investigate_live_degradation", rollback_triggers
         sample = to_int(latest.get("sample_trades")) if latest else 0
-        if sample < MIN_SAMPLE_TRADES:
-            blockers.append(f"全量放开后样本继续收集中 {sample}/{MIN_SAMPLE_TRADES}")
+        full_live_min = max(MIN_SAMPLE_TRADES, p1_min)
+        if sample < full_live_min:
+            blockers.append(f"全量放开后样本继续收集中 {sample}/{full_live_min}(profile={profile_id})")
         blockers.extend(post_approval_sample_blockers(post_approval))
+        blockers.extend(post_approval_regime_blockers(post_approval, profile))
         return "full_live_monitoring", "keep_full_live_monitoring", blockers
 
     # Rollback triggers
@@ -968,20 +1178,23 @@ def classify_decision(
     pass_14 = win["14d"]["status"] == "pass"
     pass_30 = win["30d"]["status"] == "pass"
     pass_7 = win["7d"]["status"] == "pass"
+    p0_sample_blocker = ""
 
     # P0: strong multi-window evidence + enough samples + fee-adjusted positive
     if pass_14 and pass_30 and cf_status in {"support", "neutral"} and not blockers:
-        if sample >= MIN_SAMPLE_FOR_P0 and adjusted_shadow > 0:
+        if sample >= p0_min and adjusted_shadow > 0:
             return "verified_upgrade_ready", "review_for_expansion", blockers
-        elif sample < MIN_SAMPLE_FOR_P0:
-            blockers.append(f"P0需要≥{MIN_SAMPLE_FOR_P0}样本，当前{sample}")
+        elif sample < p0_min:
+            p0_sample_blocker = f"P0需要≥{p0_min}样本(profile={profile_id})，当前{sample}"
 
     # P1: promising for decision-maker review
     if pass_7 and pass_14 and cf_status != "oppose" and not blockers:
-        if sample >= MIN_SAMPLE_FOR_P1:
+        if sample >= p1_min:
             return "ready_for_review", "review_for_small_live", blockers
         else:
-            blockers.append(f"P1需要≥{MIN_SAMPLE_FOR_P1}样本，当前{sample}")
+            blockers.append(f"P1需要≥{p1_min}样本(profile={profile_id})，当前{sample}")
+    if p0_sample_blocker:
+        blockers.append(p0_sample_blocker)
 
     if "approved_for_small_live" in promotion_status:
         blockers.extend(exp_notes[:2])
@@ -1071,10 +1284,13 @@ def build_decision_packet(
     action: str,
     evidence: int,
     risk: int,
+    gate_profile: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     windows = (post_approval or {}).get("windows") or {}
     q24 = (windows.get("24h") or {}).get("quality") or {}
     q72 = (windows.get("72h") or {}).get("quality") or {}
+    profile = gate_profile or gate_profile_for_record(candidate, latest)
+    robustness = score_regime_robustness(post_approval, profile)
     risks = list(blockers[:5])
     for label, quality in (("24h", q24), ("72h", q72)):
         conservative_cost = quality.get("conservative_cost") or {}
@@ -1132,6 +1348,13 @@ def build_decision_packet(
             "window_24h": q24.get("paper_cost_sensitivity") or [],
             "window_72h": q72.get("paper_cost_sensitivity") or [],
         },
+        "gate_profile": {
+            "profile_id": profile.get("profile_id"),
+            "p0_min_samples": to_int(profile.get("p0_min_samples"), MIN_SAMPLE_FOR_P0),
+            "p1_min_samples": to_int(profile.get("p1_min_samples"), MIN_SAMPLE_FOR_P1),
+            "post_approval_min_closed_by_hours": profile.get("post_approval_min_closed_by_hours") or {},
+        },
+        "regime_robustness": robustness,
         "rollback_path": rollback_steps,
         "operator_action": action,
         "automation": "disabled_report_only",
@@ -1196,9 +1419,10 @@ def build_decisions(
         acc_risk = account_by_strategy.get(strategy, {})
         full_live_approval = full_live_approvals.get(key)
         post_approval = post_approval_windows.get(key)
-        status, action, blockers = classify_decision(candidate, results, review, cf_status, acc_risk, full_live_approval, post_approval)
         win = window_status(results)
         latest = results[-1] if results else {}
+        gate_profile = gate_profile_for_record(candidate, latest)
+        status, action, blockers = classify_decision(candidate, results, review, cf_status, acc_risk, full_live_approval, post_approval, gate_profile)
         ev_score = evidence_score(results, cf_status, win)
         rk_score = risk_score(results, cf_status, acc_risk, win)
         decision_packet = build_decision_packet(
@@ -1213,6 +1437,7 @@ def build_decisions(
             action,
             ev_score,
             rk_score,
+            gate_profile,
         )
         decisions.append(
             {
@@ -1226,6 +1451,8 @@ def build_decisions(
                 "recommended_action": action,
                 "evidence_score": ev_score,
                 "risk_score": rk_score,
+                "gate_profile": gate_profile,
+                "regime_robustness": score_regime_robustness(post_approval, gate_profile),
                 "windows": win,
                 "latest_experiment": {
                     "experiment_id": latest.get("experiment_id"),
@@ -1314,13 +1541,13 @@ def summarize_expansion_readiness(decisions: list[dict[str, Any]]) -> dict[str, 
 def audit_promotion_gate_hardening(decisions: list[dict[str, Any]]) -> dict[str, Any]:
     """Summarize Phase 8 gate coverage without changing gate decisions."""
     required_rules = {
-        "min_samples": f"P0>={MIN_SAMPLE_FOR_P0}, P1>={MIN_SAMPLE_FOR_P1}",
+        "min_samples": "profile-aware P0/P1 thresholds by strategy/change type",
         "multi_window": "3d/7d/14d/30d experiment windows",
         "fee_slippage": (
             f"{FEE_SLIPPAGE_ADJUSTMENT_PCT}% base round-trip cost adjustment; "
             f"paper sensitivity {','.join(f'{pct:.2f}%' for pct in PAPER_COST_SENSITIVITY_PCTS)}"
         ),
-        "regime": "post-approval trend/range/high_volatility/low_liquidity label",
+        "regime": "post-approval regime labels plus report-only cross-regime robustness score",
         "account_risk": "sizing, hard-stop risk, unrealized PnL",
         "rollback": "OPEN_FAILED, PF/PnL decay, hard-stop increase, close-failed, account loss",
         "manual_approval": "P0/P1 are review actions, not automatic rollout",
@@ -1328,9 +1555,13 @@ def audit_promotion_gate_hardening(decisions: list[dict[str, Any]]) -> dict[str,
     priority_items = [d for d in decisions if d.get("priority") in {"P0", "P1"}]
     full_live_items = [d for d in decisions if d.get("approved_full_live")]
     gaps: list[str] = []
+    profile_counts: collections.Counter[str] = collections.Counter()
     for d in priority_items:
         cid = str(d.get("candidate_id") or "")
         status = str(d.get("status") or "")
+        profile = d.get("gate_profile") or ((d.get("decision_packet") or {}).get("gate_profile") or DEFAULT_GATE_PROFILE)
+        profile_id = str(profile.get("profile_id") or "default")
+        profile_counts[profile_id] += 1
         if status in {"rollback_required", "rollback_watch"}:
             if not d.get("blockers"):
                 gaps.append(f"{cid}: rollback item missing trigger evidence")
@@ -1339,10 +1570,12 @@ def audit_promotion_gate_hardening(decisions: list[dict[str, Any]]) -> dict[str,
             continue
         latest = d.get("latest_experiment") or {}
         sample = to_int(latest.get("sample_trades"))
-        if d.get("priority") == "P0" and sample < MIN_SAMPLE_FOR_P0:
-            gaps.append(f"{cid}: P0 sample {sample}/{MIN_SAMPLE_FOR_P0}")
-        if d.get("priority") == "P1" and sample < MIN_SAMPLE_FOR_P1:
-            gaps.append(f"{cid}: P1 sample {sample}/{MIN_SAMPLE_FOR_P1}")
+        p0_min = to_int(profile.get("p0_min_samples"), MIN_SAMPLE_FOR_P0)
+        p1_min = to_int(profile.get("p1_min_samples"), MIN_SAMPLE_FOR_P1)
+        if d.get("priority") == "P0" and sample < p0_min:
+            gaps.append(f"{cid}: P0 sample {sample}/{p0_min} profile={profile_id}")
+        if d.get("priority") == "P1" and sample < p1_min:
+            gaps.append(f"{cid}: P1 sample {sample}/{p1_min} profile={profile_id}")
         windows = d.get("windows") or {}
         missing = [label for label in ("3d", "7d", "14d", "30d") if not windows.get(label) or windows.get(label, {}).get("status") == "insufficient"]
         if missing:
@@ -1353,10 +1586,18 @@ def audit_promotion_gate_hardening(decisions: list[dict[str, Any]]) -> dict[str,
             gaps.append(f"{cid}: missing explicit blockers/action rationale")
     post_approval_gaps: list[str] = []
     regimes: collections.Counter[str] = collections.Counter()
+    regime_robustness_statuses: collections.Counter[str] = collections.Counter()
+    regime_robustness_gaps: list[str] = []
     rollback_ready = 0
     for d in full_live_items:
         cid = str(d.get("candidate_id") or "")
         windows = (d.get("post_approval_live") or {}).get("windows") or {}
+        robustness = d.get("regime_robustness") or ((d.get("decision_packet") or {}).get("regime_robustness") or {})
+        robustness_status = str(robustness.get("status") or "missing")
+        regime_robustness_statuses[robustness_status] += 1
+        if robustness_status in {"missing", "single_regime", "weak"}:
+            reason = "; ".join(str(x) for x in (robustness.get("reasons") or [])[:2]) or robustness_status
+            regime_robustness_gaps.append(f"{cid}: regime robustness {robustness_status}: {reason}")
         for label in ("24h", "72h", "168h"):
             metrics = windows.get(label) or {}
             if not metrics:
@@ -1377,6 +1618,9 @@ def audit_promotion_gate_hardening(decisions: list[dict[str, Any]]) -> dict[str,
         "post_approval_window_gaps": post_approval_gaps[:12],
         "post_approval_ready_windows": rollback_ready,
         "regime_counts": dict(regimes),
+        "profile_counts": dict(profile_counts),
+        "regime_robustness_status_counts": dict(regime_robustness_statuses),
+        "regime_robustness_gaps": regime_robustness_gaps[:12],
         "auto_rollout_enabled": False,
         "note": "Phase 8 audit is report-only; it hardens evidence visibility but does not auto-upgrade or auto-rollback.",
     }

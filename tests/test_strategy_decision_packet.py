@@ -78,6 +78,215 @@ class StrategyDecisionPacketTests(unittest.TestCase):
         self.assertEqual(quality["label"], "bad")
         self.assertTrue(any("conservative_cost_0.25%" in reason for reason in quality["reasons"]))
 
+    def test_gate_profile_selects_strategy_change_thresholds(self):
+        profile = self.evolution.gate_profile_for(
+            "A/v11",
+            "trailing pullback",
+            "EXP-20260527-v11-trailing-pullback-1p0",
+        )
+
+        self.assertEqual(profile["profile_id"], "a_v11_trailing")
+        self.assertEqual(profile["p0_min_samples"], 80)
+        self.assertEqual(profile["p1_min_samples"], 50)
+        self.assertEqual(profile["post_approval_min_closed_by_hours"][72], 60)
+
+    def test_window_quality_uses_gate_profile_closed_threshold(self):
+        profile = self.evolution.gate_profile_for(
+            "A/v11",
+            "trailing pullback",
+            "EXP-20260527-v11-trailing-pullback-1p0",
+        )
+        quality = self.evolution.classify_window_quality(
+            {
+                "window_hours": 72,
+                "opens": 60,
+                "closes": 55,
+                "forced_closes": 0,
+                "open_failed": 0,
+                "close_failed": 0,
+                "realized_pnl_usdt": 90.0,
+            },
+            profile,
+        )
+
+        self.assertEqual(quality["gate_profile_id"], "a_v11_trailing")
+        self.assertEqual(quality["required_closed_samples"], 60)
+        self.assertEqual(quality["label"], "maturing")
+
+    def test_classify_decision_uses_profile_sample_thresholds(self):
+        profile = self.evolution.gate_profile_for(
+            "A/v11",
+            "trailing pullback",
+            "EXP-20260527-v11-trailing-pullback-1p0",
+        )
+        status, action, blockers = self.evolution.classify_decision(
+            {
+                "candidate_id": "EXP-20260527-v11-trailing-pullback-1p0",
+                "strategy": "A/v11",
+                "change_type": "trailing pullback",
+            },
+            [
+                {
+                    "sample_window": "2026-05-01 ~ 2026-05-30",
+                    "sample_trades": 55,
+                    "original_pnl": 0,
+                    "shadow_pnl": 100,
+                    "promotion_status": "approved_candidate",
+                    "change_type": "trailing pullback",
+                }
+            ],
+            {},
+            "support",
+            {},
+            None,
+            None,
+            profile,
+        )
+
+        self.assertEqual(status, "ready_for_review")
+        self.assertEqual(action, "review_for_small_live")
+        self.assertEqual(blockers, [])
+
+    def test_regime_robustness_scores_single_and_multiple_regimes(self):
+        profile = self.evolution.gate_profile_for(
+            "A/v11",
+            "trailing pullback",
+            "EXP-20260527-v11-trailing-pullback-1p0",
+        )
+        single = {
+            "windows": {
+                "24h": {
+                    "status": "ready",
+                    "regime": {"label": "range"},
+                    "quality": {"label": "ok", "closed_samples": 30, "required_closed_samples": 25},
+                },
+                "72h": {
+                    "status": "ready",
+                    "regime": {"label": "range"},
+                    "quality": {"label": "ok", "closed_samples": 65, "required_closed_samples": 60},
+                },
+                "168h": {
+                    "status": "ready",
+                    "regime": {"label": "range"},
+                    "quality": {"label": "ok", "closed_samples": 125, "required_closed_samples": 120},
+                },
+            }
+        }
+        mixed = {
+            "windows": {
+                "24h": {
+                    "status": "ready",
+                    "regime": {"label": "range"},
+                    "quality": {"label": "ok", "closed_samples": 30, "required_closed_samples": 25},
+                },
+                "72h": {
+                    "status": "ready",
+                    "regime": {"label": "trend"},
+                    "quality": {"label": "ok", "closed_samples": 65, "required_closed_samples": 60},
+                },
+                "168h": {
+                    "status": "ready",
+                    "regime": {"label": "high_volatility"},
+                    "quality": {"label": "ok", "closed_samples": 125, "required_closed_samples": 120},
+                },
+            }
+        }
+
+        self.assertEqual(self.evolution.score_regime_robustness(single, profile)["status"], "single_regime")
+        self.assertEqual(self.evolution.score_regime_robustness(mixed, profile)["status"], "ok")
+
+    def test_decision_packet_surfaces_gate_profile_and_regime_robustness(self):
+        post_approval = {
+            "windows": {
+                "24h": {
+                    "status": "ready",
+                    "regime": {"label": "range"},
+                    "quality": {"closed_samples": 30, "required_closed_samples": 25, "label": "ok"},
+                },
+                "72h": {
+                    "status": "ready",
+                    "regime": {"label": "trend"},
+                    "quality": {"closed_samples": 65, "required_closed_samples": 60, "label": "ok"},
+                },
+                "168h": {
+                    "status": "ready",
+                    "regime": {"label": "high_volatility"},
+                    "quality": {"closed_samples": 125, "required_closed_samples": 120, "label": "ok"},
+                },
+            }
+        }
+        packet = self.evolution.build_decision_packet(
+            {
+                "proposal": "trailing pullback",
+                "strategy": "A/v11",
+                "change_type": "trailing pullback",
+                "candidate_id": "EXP-20260527-v11-trailing-pullback-1p0",
+            },
+            {"shadow_pnl": 140, "original_pnl": 20, "sample_trades": 80, "change_type": "trailing pullback"},
+            "support",
+            {"pnl": 33.5},
+            {},
+            post_approval,
+            [],
+            "full_live_monitoring",
+            "keep_full_live_monitoring",
+            88,
+            20,
+        )
+
+        self.assertEqual(packet["gate_profile"]["profile_id"], "a_v11_trailing")
+        self.assertEqual(packet["gate_profile"]["p0_min_samples"], 80)
+        self.assertEqual(packet["regime_robustness"]["status"], "ok")
+        self.assertEqual(packet["regime_robustness"]["automation"], "disabled_report_only")
+
+    def test_gate_hardening_audit_uses_profile_and_regime_gaps(self):
+        audit = self.evolution.audit_promotion_gate_hardening(
+            [
+                {
+                    "candidate_id": "EXP-A",
+                    "priority": "P1",
+                    "status": "ready_for_review",
+                    "latest_experiment": {"sample_trades": 45},
+                    "gate_profile": {
+                        "profile_id": "a_v11_trailing",
+                        "p0_min_samples": 80,
+                        "p1_min_samples": 50,
+                    },
+                    "windows": {
+                        "3d": {"status": "pass"},
+                        "7d": {"status": "pass"},
+                        "14d": {"status": "pass"},
+                        "30d": {"status": "pass"},
+                    },
+                    "account_risk": {"open_positions": 1},
+                    "blockers": [],
+                },
+                {
+                    "candidate_id": "EXP-B",
+                    "priority": "P2",
+                    "status": "full_live_monitoring",
+                    "approved_full_live": True,
+                    "regime_robustness": {
+                        "status": "single_regime",
+                        "reasons": ["distinct_regimes=1/2"],
+                    },
+                    "post_approval_live": {
+                        "windows": {
+                            "24h": {
+                                "regime": {"label": "range"},
+                                "quality": {"closed_samples": 10, "required_closed_samples": 20},
+                            }
+                        }
+                    },
+                },
+            ]
+        )
+
+        self.assertIn("EXP-A: P1 sample 45/50 profile=a_v11_trailing", audit["priority_gate_gaps"])
+        self.assertEqual(audit["profile_counts"]["a_v11_trailing"], 1)
+        self.assertEqual(audit["regime_robustness_status_counts"]["single_regime"], 1)
+        self.assertTrue(any("EXP-B: regime robustness single_regime" in gap for gap in audit["regime_robustness_gaps"]))
+
     def test_decision_packet_surfaces_conservative_cost_risk(self):
         post_approval = {
             "windows": {

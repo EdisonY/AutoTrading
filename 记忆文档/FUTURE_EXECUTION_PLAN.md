@@ -48,8 +48,8 @@
    - 验收：每个实盘 OPEN_SKIPPED 能回答“若放行，按同一出场规则会怎样”。
 
 4. **P1-D 灰度/回滚门禁增强**
-   - 已完成：2026-06-03 `strategy_evolution_gate.py` 已为 decision 输出 `decision_packet`，包含改动、预期优势、风险、证据成熟度、回滚路径、operator action 和 `disabled_report_only` 自动化状态；`rollback_watch_review.py` 已在 P0/P1 rollback-watch 报告中渲染这些 packet；同日新增 close-failure attribution，拆 raw/resolved/unresolved close failures 和 compact reason buckets，并在 rollback-watch/portal 中显示；23:42 补充：post-approval quality 现在带 `0.10%/0.15%/0.25%/0.35%` paper cost/slippage sensitivity，保守 `0.25%` 成本越过 rollback-review loss line 时会进入窗口质量和 decision packet 风险项。
-   - 未完成：更细 regime、窗口 PF 阈值、完整 paper fill/slippage simulation（含 bar-by-bar/撮合深度）、自动 rollback plan。
+   - 已完成：2026-06-03 `strategy_evolution_gate.py` 已为 decision 输出 `decision_packet`，包含改动、预期优势、风险、证据成熟度、回滚路径、operator action 和 `disabled_report_only` 自动化状态；`rollback_watch_review.py` 已在 P0/P1 rollback-watch 报告中渲染这些 packet；同日新增 close-failure attribution，拆 raw/resolved/unresolved close failures 和 compact reason buckets，并在 rollback-watch/portal 中显示；23:42 补充：post-approval quality 现在带 `0.10%/0.15%/0.25%/0.35%` paper cost/slippage sensitivity，保守 `0.25%` 成本越过 rollback-review loss line 时会进入窗口质量和 decision packet 风险项；2026-06-04 00:34 补充：evolution gate 已新增 strategy/change-family `gate_profile`，A/v11 replacement、A/v11 trailing、B/v16 exit-risk、C/v14 sample expansion、confirmation-policy 和 default profiles 有不同 P0/P1 样本阈值与 24h/72h/168h closed-sample 要求，decision/window quality/decision packet/Phase 8 audit 均展示该 profile；full-live review 另有 report-only `regime_robustness` 评分与 audit gap。
+   - 未完成：更完整窗口 PF 阈值、完整 paper fill/slippage simulation（含 bar-by-bar/撮合深度）、operator-approved automatic rollback plan/governance。
    - 验收：每个 P0/P1 策略候选必须包含改动、优势、风险、回滚路径；自动升级/回滚仍默认关闭，直到验收充分。
 
 5. **P1-E 长历史 K线/研究仓增强**
@@ -684,7 +684,8 @@ Phase 9   实盘过渡验证                ← 8完成后
 - [x] P1-C A/v11 ATR trailing counterfactual fill: `counterfactual_open_skips.py` now applies A/v11 approved ATR trailing parameters when skipped rows include positive ATR and 15m/30m timeframe; non-A/B/C rows without usable A/v11 ATR keep fixed percent barrier fallback.
 - [x] P1-A/P1-C/P1-D A/v11 rollout-review exit model and cost sensitivity: real close rows are grouped by exit model and 72h decision packets include cost sensitivity at `0.10%/0.15%/0.25%`. No automatic rollback or parameter change.
 - [x] P1-D evolution-gate paper cost sensitivity: `strategy_evolution_gate.py` post-approval quality and decision packets now include `0.10%/0.15%/0.25%/0.35%` report-only cost/slippage sensitivity; conservative `0.25%` can flag mature windows for manual rollback review. No automatic rollback or parameter change.
+- [x] P1-D profile-aware gate thresholds and regime robustness: `strategy_evolution_gate.py` now exposes strategy/change-family `gate_profile` thresholds, uses profile-specific P0/P1 and post-approval closed-sample requirements, and adds report-only cross-regime robustness scoring/audit gaps. No automatic rollout or rollback.
 - [x] P1-C A/v11 rollout local-cache replay/fill comparison: rollout review now pairs A/v11 open/close rows and replays the approved ATR trailing rule from local Kline cache only; missing cache is reported as data gap, no Binance API call.
 - [ ] Remaining P0-B: final staged fresh-run must generate new post-instrumentation rows to prove exact coverage/pass rate; old rows without exact cases remain coverage gaps, not accepted parity.
 - [ ] Remaining P1-C: A/v11 rollout-review long-history bar-by-bar coverage, recovery-position strategy-specific exits, long Kline windows, and fuller replay/fill report output.
-- [ ] Remaining P1-B/P1-D: wait for enough post-refresh samples, then review strategy/change-type thresholds, full paper fill/slippage simulation, and cross-regime robustness before any manual parameter decision.
+- [ ] Remaining P1-B/P1-D: wait for enough post-refresh samples, then review full paper fill/slippage simulation, window PF thresholds, and rollback-plan governance before any manual parameter decision.

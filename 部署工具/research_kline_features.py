@@ -45,6 +45,33 @@ def dt_from_ms(ms: int) -> datetime:
     return datetime.fromtimestamp(ms / 1000, CST)
 
 
+def normalize_date(value: Any, open_time_ms: Any = None) -> str:
+    text = str(value or "")
+    if len(text) >= 10 and text[4:5] == "-" and text[7:8] == "-":
+        return text[:10]
+    ms = to_int(open_time_ms)
+    if ms > 0:
+        return dt_from_ms(ms).strftime("%Y-%m-%d")
+    return "unknown"
+
+
+def normalize_kline_row(row: dict[str, Any]) -> dict[str, Any]:
+    out = dict(row)
+    open_time_ms = to_int(out.get("open_time_ms"))
+    out["symbol"] = str(out.get("symbol") or "").upper()
+    out["interval"] = str(out.get("interval") or "")
+    out["open_time_ms"] = open_time_ms
+    if open_time_ms > 0:
+        open_dt = dt_from_ms(open_time_ms)
+        out["date"] = open_dt.strftime("%Y-%m-%d")
+        out["open_time"] = open_dt.isoformat(timespec="seconds")
+    else:
+        out["date"] = normalize_date(out.get("date"), open_time_ms)
+    if "close_time_ms" in out:
+        out["close_time_ms"] = to_int(out.get("close_time_ms"))
+    return out
+
+
 def read_cache(path: Path) -> tuple[dict[str, Any], list[list[Any]]]:
     try:
         payload = json.loads(path.read_text(encoding="utf-8", errors="replace"))
@@ -136,6 +163,90 @@ def parse_file(path: Path) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     return parsed, features
 
 
+def kline_key(row: dict[str, Any]) -> tuple[str, str, int]:
+    return (str(row.get("symbol") or ""), str(row.get("interval") or ""), to_int(row.get("open_time_ms")))
+
+
+def dedupe_kline_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    by_key: dict[tuple[str, str, int], dict[str, Any]] = {}
+    for row in rows:
+        row = normalize_kline_row(row)
+        key = kline_key(row)
+        if not key[0] or not key[1] or key[2] <= 0:
+            continue
+        previous = by_key.get(key)
+        if previous is None or str(row.get("cache_ts") or "") >= str(previous.get("cache_ts") or ""):
+            by_key[key] = row
+    return sorted(by_key.values(), key=lambda item: (item["symbol"], item["interval"], item["open_time_ms"]))
+
+
+def build_features(kline_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    features: list[dict[str, Any]] = []
+    grouped: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for row in dedupe_kline_rows(kline_rows):
+        grouped.setdefault((str(row["symbol"]), str(row["interval"])), []).append(row)
+    for (_symbol, _interval), rows in sorted(grouped.items()):
+        closes: list[float] = []
+        for idx, item in enumerate(sorted(rows, key=lambda row: to_int(row.get("open_time_ms")))):
+            open_price = float(item.get("open") or 0)
+            close = float(item.get("close") or 0)
+            high = float(item.get("high") or 0)
+            low = float(item.get("low") or 0)
+            prev_close = closes[-1] if closes else 0.0
+            closes.append(close)
+            ret_1 = (close - prev_close) / prev_close * 100 if prev_close else 0.0
+            ret_open_close = (close - open_price) / open_price * 100 if open_price else 0.0
+            range_pct = (high - low) / open_price * 100 if open_price else 0.0
+            rolling_3 = closes[-3:]
+            rolling_10 = closes[-10:]
+            ret_3 = (close - rolling_3[0]) / rolling_3[0] * 100 if len(rolling_3) >= 3 and rolling_3[0] else 0.0
+            ret_10 = (close - rolling_10[0]) / rolling_10[0] * 100 if len(rolling_10) >= 10 and rolling_10[0] else 0.0
+            features.append(
+                {
+                    "symbol": item["symbol"],
+                    "interval": item["interval"],
+                    "date": normalize_date(item.get("date"), item.get("open_time_ms")),
+                    "open_time": item["open_time"],
+                    "open_time_ms": item["open_time_ms"],
+                    "close": close,
+                    "return_1_pct": round(ret_1, 6),
+                    "return_3_pct": round(ret_3, 6),
+                    "return_10_pct": round(ret_10, 6),
+                    "body_pct": round(ret_open_close, 6),
+                    "range_pct": round(range_pct, 6),
+                    "quote_volume": item.get("quote_volume"),
+                    "bar_index_in_cache": idx,
+                    "bar_index_in_series": idx,
+                    "source_file": item.get("source_file", ""),
+                }
+            )
+    return features
+
+
+def load_existing_rows(out_dir: Path, table: str, fmt: str) -> list[dict[str, Any]]:
+    suffix = "parquet" if fmt == "parquet" else "jsonl"
+    files = sorted((out_dir / table).glob(f"date=*/data.{suffix}"))
+    if not files:
+        return []
+    try:
+        import pandas as pd
+    except ImportError as exc:
+        raise SystemExit("pandas is required for research_kline_features.py") from exc
+    frames = []
+    for path in files:
+        try:
+            frame = pd.read_parquet(path) if fmt == "parquet" else pd.read_json(path, orient="records", lines=True)
+        except Exception:
+            continue
+        if not frame.empty:
+            frames.append(frame)
+    if not frames:
+        return []
+    merged = pd.concat(frames, ignore_index=True)
+    merged = merged.where(pd.notnull(merged), None)
+    return [dict(row) for row in merged.to_dict(orient="records")]
+
+
 def write_frame(rows: list[dict[str, Any]], path: Path, fmt: str) -> int:
     if not rows:
         return 0
@@ -163,7 +274,8 @@ def export_dataset(rows: list[dict[str, Any]], out_dir: Path, table: str, fmt: s
     suffix = "parquet" if fmt == "parquet" else "jsonl"
     by_date: dict[str, list[dict[str, Any]]] = {}
     for row in rows:
-        by_date.setdefault(str(row.get("date") or "unknown"), []).append(row)
+        day = normalize_date(row.get("date"), row.get("open_time_ms"))
+        by_date.setdefault(day, []).append({**row, "date": day})
     partitions: dict[str, dict[str, Any]] = {}
     files = 0
     total = 0
@@ -177,6 +289,18 @@ def export_dataset(rows: list[dict[str, Any]], out_dir: Path, table: str, fmt: s
     return {"table": table, "status": "ok", "files": files, "rows": total, "partitions": partitions}
 
 
+def coverage(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    if not rows:
+        return {"rows": 0, "symbols": 0, "intervals": [], "first_open_time": "", "latest_open_time": ""}
+    return {
+        "rows": len(rows),
+        "symbols": len({str(row.get("symbol") or "") for row in rows if row.get("symbol")}),
+        "intervals": sorted({str(row.get("interval") or "") for row in rows if row.get("interval")}),
+        "first_open_time": min(str(row.get("open_time") or "") for row in rows if row.get("open_time")),
+        "latest_open_time": max(str(row.get("open_time") or "") for row in rows if row.get("open_time")),
+    }
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Export synced kline cache into research_store klines/features")
     parser.add_argument("--cache-dir", default=str(ROOT / "server_logs_tencent" / "runtime" / "kline_cache"))
@@ -184,6 +308,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--days", type=int, default=3)
     parser.add_argument("--limit-files", type=int, default=500)
     parser.add_argument("--format", choices=["parquet", "jsonl"], default="parquet")
+    parser.add_argument("--no-merge-existing", action="store_true", help="Do not merge existing research_store Kline partitions")
     return parser.parse_args(argv)
 
 
@@ -200,13 +325,14 @@ def main(argv: list[str] | None = None) -> int:
         ]
     files = sorted(files, key=lambda path: path.stat().st_mtime, reverse=True)[: max(1, args.limit_files)]
     kline_rows: list[dict[str, Any]] = []
-    feature_rows: list[dict[str, Any]] = []
     for path in files:
-        rows, features = parse_file(path)
+        rows, _features = parse_file(path)
         kline_rows.extend(rows)
-        feature_rows.extend(features)
+    existing_rows = [] if args.no_merge_existing else load_existing_rows(out_dir, "klines", args.format)
+    merged_kline_rows = dedupe_kline_rows([*existing_rows, *kline_rows])
+    feature_rows = build_features(merged_kline_rows)
     results = [
-        export_dataset(kline_rows, out_dir, "klines", args.format),
+        export_dataset(merged_kline_rows, out_dir, "klines", args.format),
         export_dataset(feature_rows, out_dir, "features", args.format),
     ]
     manifest = {
@@ -215,7 +341,12 @@ def main(argv: list[str] | None = None) -> int:
         "out_dir": str(out_dir),
         "days": args.days,
         "format": args.format,
+        "merge_existing": not args.no_merge_existing,
         "files_scanned": len(files),
+        "cache_rows": len(kline_rows),
+        "existing_rows": len(existing_rows),
+        "merged_rows": len(merged_kline_rows),
+        "coverage": coverage(merged_kline_rows),
         "results": results,
     }
     path = out_dir / "kline_features_manifest_latest.json"

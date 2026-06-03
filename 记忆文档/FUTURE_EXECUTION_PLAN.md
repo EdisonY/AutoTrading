@@ -54,6 +54,8 @@
 
 5. **P1-E 长历史 K线/研究仓增强**
    - 当前问题：已有近期 `klines/features`，但不是长历史 K线仓。
+   - 已完成：2026-06-04 `research_kline_features.py` 已从“只导出本轮 cache”升级为默认合并已有 research_store `klines` 分区与新同步 cache 行，按 `(symbol, interval, open_time_ms)` 去重，并从合并后的时间序列重建 `features`；manifest 记录 cache/existing/merged 行数和覆盖范围。重复离线刷新现在可自然累计更长 K线历史，不调用 Binance、不增加 SQLite 压力。
+   - 未完成：仍缺真正 30+ 天历史 K线 backfill source、长历史 depth 仓、分区 retention/压缩策略，以及报告层对 30+ 天覆盖的硬性验收。
    - 验收：30 天以上策略漏斗、replay feature、sentinel outcome 查询秒级可用，并不依赖 SQLite 长期膨胀。
 
 ### Long-term P2 - P0/P1 闭环后推进
@@ -161,7 +163,7 @@
 - [x] 修复 Aliyun→Tencent 关键报告反向同步：`sync_aliyun_reports_to_tencent.py` 默认按关键性排序上传 index/counterfactual/research-store/runtime，使用 bounded OpenSSH/base64 单文件上传、短超时、重试、错误上限；市场日报等 bulky detail 需 `--include-optional`。
 - [x] 数据维护 timer 只保留近期 SQLite 明细，长期研究读 Parquet。`data_maintenance.py` 会清理旧 raw events、账户快照和独立 `sentinel_scans` 分区，避免哨兵扫描长期撑大 SQLite。
 - [x] 补 watermark 增量导出：`research_store_export.py` 现在把每个 table/date 分区的 `rows/max_ts/path/status` 写入 manifest，下一次导出会跳过未变化分区；`--force` 可强制重写。
-- [x] 补 `klines/features` 研究数据集第一版，避免只依赖事件流做策略研究。`shadow_sync_from_tencent.py` 会同步最新 `runtime/kline_cache`，`research_kline_features.py` 导出 `klines` 与 `features` 分区，`research_store_query.py` 和入口页展示覆盖度。后续仍需补更长历史 K线归档。
+- [x] 补 `klines/features` 研究数据集第一版，避免只依赖事件流做策略研究。`shadow_sync_from_tencent.py` 会同步最新 `runtime/kline_cache`，`research_kline_features.py` 导出 `klines` 与 `features` 分区，`research_store_query.py` 和入口页展示覆盖度。2026-06-04 起，Kline 导出默认合并已有分区与新 cache 并去重重算 features，可通过重复刷新自然累计更长历史；后续仍需真正长历史 backfill。
 
 验收：
 - 30 天策略漏斗查询在秒级完成。

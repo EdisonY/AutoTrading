@@ -43,8 +43,8 @@
 
 3. **P1-C 完整 replay/fill 引擎**
    - 目标：OPEN_SKIPPED 放行后的成交、持仓、出场、费用/滑点仿真统一到一个 replay/fill 引擎。
-   - 已完成：`core.replay_fill` 第一版 deterministic fill kernel，支持 long/short、SL/TP、fee、slippage、保守 intrabar stop/take 冲突处理、end-of-window exit，并有单元测试；2026-06-03 `counterfactual_open_skips.py` 已用该 kernel 计算 OPEN_SKIPPED 假设放行后的 fill/PnL，并把 replay_fill payload 写进结果；同日新增通用 percent trailing-stop activation/exit，支持 long/short 保守 intrabar；恢复仓 review 已补账户快照路径 MFE/MAE、MFE回撤、first-seen 和 sample count，作为 recovery-exit replay 的只读事实层；2026-06-03 22:17 补充：fill kernel 已支持 ATR-based trailing activation/pullback（`atr`、`trailing_activation_atr`、`trailing_stop_atr`），可表达 A/v11 trailing-pullback 的核心出场形态。
-   - 未完成：counterfactual/rollout review 仍需显式接入 A/v11 timeframe 参数；策略专属 recovery exit、反向信号/同策略重开证据、长 Kline feature 窗口和更完整 replay/fill 输出仍未完成。
+   - 已完成：`core.replay_fill` 第一版 deterministic fill kernel，支持 long/short、SL/TP、fee、slippage、保守 intrabar stop/take 冲突处理、end-of-window exit，并有单元测试；2026-06-03 `counterfactual_open_skips.py` 已用该 kernel 计算 OPEN_SKIPPED 假设放行后的 fill/PnL，并把 replay_fill payload 写进结果；同日新增通用 percent trailing-stop activation/exit，支持 long/short 保守 intrabar；恢复仓 review 已补账户快照路径 MFE/MAE、MFE回撤、first-seen 和 sample count，作为 recovery-exit replay 的只读事实层；2026-06-03 22:17 补充：fill kernel 已支持 ATR-based trailing activation/pullback（`atr`、`trailing_activation_atr`、`trailing_stop_atr`），可表达 A/v11 trailing-pullback 的核心出场形态；2026-06-03 22:29 补充：`counterfactual_open_skips.py` 已对带正 ATR 的 A/v11 15m/30m skipped rows 显式接入 approved ATR trailing 参数，15m 为 `1.0/1.0 ATR`，30m 为 `1.2/0.8 ATR`，并在 `replay_fill.exit_model` 标注 `a_v11_atr_trailing`。
+   - 未完成：A/v11 rollout review 仍需完整历史 fill comparison；策略专属 recovery exit、反向信号/同策略重开证据、长 Kline feature 窗口和更完整 replay/fill 输出仍未完成。
    - 验收：每个实盘 OPEN_SKIPPED 能回答“若放行，按同一出场规则会怎样”。
 
 4. **P1-D 灰度/回滚门禁增强**
@@ -679,5 +679,7 @@ Phase 9   实盘过渡验证                ← 8完成后
 - [x] P0-B B/C open-success chain parity: B/v16 successful opens now persist confirmation -> threshold -> execution exact cases, and C/v14 successful opens now persist confirmation -> tail_guard -> execution exact cases.
 - [x] P0-B A/v11 open-success chain parity: A/v11 successful Hanmuxia opens now persist entry/pool/safety/risk/sizing/execution exact chains; VPB opens preserve VPB semantics and carry only shared context; replacement-success opens append release cases.
 - [x] P1-B B/v16 full-live rollout review: read-only 24h/72h/168h windows, cost-adjusted PnL, failure/forced-close pressure, decision packet, portal section, Aliyun refresh, reverse sync, and live-context pull. No automatic rollback or parameter change.
-- [ ] Remaining P0-B: expand event-driven same-input replay/live checks beyond single pure gates into orchestration context, especially B/C risk/execution success chains, A/v11 post-open cleanup success context, and historical same-input replay conclusions.
+- [x] P1-C A/v11 ATR trailing counterfactual fill: `counterfactual_open_skips.py` now applies A/v11 approved ATR trailing parameters when skipped rows include positive ATR and 15m/30m timeframe; non-A/B/C rows without usable A/v11 ATR keep fixed percent barrier fallback.
+- [ ] Remaining P0-B: final staged fresh-run must generate new post-instrumentation rows to prove exact coverage/pass rate; old rows without exact cases remain coverage gaps, not accepted parity.
+- [ ] Remaining P1-C: A/v11 rollout-review full historical fill comparison, recovery-position strategy-specific exits, opposite-signal/same-strategy re-open evidence, long Kline windows, and fuller replay/fill report output.
 - [ ] Remaining P1-B/P1-D: wait for enough post-refresh samples, then review strategy/change-type thresholds, paper fill/slippage simulation, and cross-regime robustness before any manual parameter decision.

@@ -50,6 +50,8 @@ KLINE_URL = "https://testnet.binancefuture.com/fapi/v1/klines"
 HORIZONS = (15, 30, 60, 120)
 STRATEGIES = ("A/v11", "B/v16", "C/v14")
 NUMBER_RE = re.compile(r"\d+(?:\.\d+)?")
+A_V11_TRAILING_ACTIVATE_ATR = {"15m": 1.0, "30m": 1.2}
+A_V11_TRAILING_PULLBACK_ATR = {"15m": 1.0, "30m": 0.8}
 
 
 @dataclass
@@ -161,6 +163,51 @@ def normalized_reason(reason: str) -> str:
 def filter_name(event: SkipEvent) -> str:
     stage = event.replay_gate or event.stage or event.layer or "unknown"
     return f"{stage}: {normalized_reason(event.reason)}"
+
+
+def nested_payload_dicts(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    items = [payload]
+    for key in ("raw", "raw_event", "raw_signal", "signal"):
+        value = payload.get(key)
+        if isinstance(value, dict):
+            items.append(value)
+    return items
+
+
+def payload_num(payload: dict[str, Any], *keys: str) -> float | None:
+    for item in nested_payload_dicts(payload):
+        for key in keys:
+            value = num(item.get(key))
+            if value is not None:
+                return value
+    return None
+
+
+def normalized_timeframe(value: Any) -> str:
+    text = str(value or "").strip().lower()
+    if not text:
+        return ""
+    if text.isdigit():
+        return f"{text}m"
+    return text
+
+
+def a_v11_atr_trailing_params(event: SkipEvent) -> dict[str, Any] | None:
+    if event.strategy != "A/v11":
+        return None
+    tf = normalized_timeframe(event.timeframe)
+    if tf not in A_V11_TRAILING_ACTIVATE_ATR:
+        return None
+    atr = payload_num(event.payload, "atr", "atr_at_entry")
+    if atr is None or atr <= 0:
+        return None
+    return {
+        "exit_model": "a_v11_atr_trailing",
+        "trailing_timeframe": tf,
+        "atr": atr,
+        "trailing_activation_atr": A_V11_TRAILING_ACTIVATE_ATR[tf],
+        "trailing_stop_atr": A_V11_TRAILING_PULLBACK_ATR[tf],
+    }
 
 
 def load_skip_events(db: Path, since: datetime, until: datetime) -> list[SkipEvent]:
@@ -331,6 +378,14 @@ def evaluate(
     else:
         stop_loss = entry_price * (1 - sl_pct / 100)
         take_profit = entry_price * (1 + tp_pct / 100)
+    exit_params = a_v11_atr_trailing_params(event)
+    trailing_kwargs: dict[str, Any] = {}
+    if exit_params:
+        trailing_kwargs = {
+            "atr": exit_params["atr"],
+            "trailing_stop_atr": exit_params["trailing_stop_atr"],
+            "trailing_activation_atr": exit_params["trailing_activation_atr"],
+        }
     fill = simulate_replay_fill(
         ReplayFillRequest(
             symbol=event.symbol,
@@ -339,6 +394,7 @@ def evaluate(
             quantity=quantity,
             stop_loss=stop_loss,
             take_profit=take_profit,
+            **trailing_kwargs,
             fee_bps=5.0,
             slippage_bps=0.0,
         ),
@@ -353,10 +409,15 @@ def evaluate(
             for bar in window
         ],
     )
+    fill_payload = fill.to_dict()
+    if exit_params:
+        fill_payload.update(exit_params)
+    else:
+        fill_payload["exit_model"] = "fixed_pct_barrier"
     return_pct = (fill.net_pnl_usdt / (margin_usdt * leverage)) * 100
     return Result(
         event, horizon, entry_ts, entry_price, fill.exit_price, return_pct,
-        fill.net_pnl_usdt, mfe_pct, mae_pct, fill.exit_reason, "complete", fill.to_dict()
+        fill.net_pnl_usdt, mfe_pct, mae_pct, fill.exit_reason, "complete", fill_payload
     )
 
 
@@ -485,7 +546,7 @@ def report_markdown(
         "",
         f"- 对已有明确 `symbol/side` 的 `OPEN_SKIPPED`，使用否决后的下一根 1m K 线开盘作为模拟入场价。",
         f"- 模拟仓位统一为保证金 {args.margin_usdt:.0f} USDT、{args.leverage:.0f}x 杠杆；PnL 由 `core.replay_fill` 计算，含默认 5bps 往返手续费模型。",
-        f"- `MFE/MAE` 为顺向/逆向最大价格波动；`TP/SL first` 是共享 fill kernel 的统一 `{args.tp_pct:.1f}% / {args.sl_pct:.1f}%` 价格障碍测试，不替代各策略真实 ATR 出场。",
+        f"- `MFE/MAE` 为顺向/逆向最大价格波动；`TP/SL first` 统计共享 fill kernel 的 `{args.tp_pct:.1f}% / {args.sl_pct:.1f}%` 固定障碍。A/v11 事件若带正 ATR 与 15m/30m 周期，会叠加 approved ATR trailing 出场参数。",
         f"- 默认用 {args.primary_horizon} 分钟结果判断过滤层是否错杀；尚未走满窗口的事件只入库为 pending，不进入结论。",
         "- 事件归一使用 `core.replay.ReplayEvent` / `ReplayDecision`，过滤层分组优先采用统一 replay gate，后续会把实盘门控迁到同一路径。",
         "",

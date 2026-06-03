@@ -33,6 +33,7 @@ UPLOADS = [
     (ROOT / "core" / "replay.py", f"{REMOTE_DIR}/core/replay.py"),
     (ROOT / "core" / "replay_depth_cache.py", f"{REMOTE_DIR}/core/replay_depth_cache.py"),
     (ROOT / "core" / "replay_fill.py", f"{REMOTE_DIR}/core/replay_fill.py"),
+    (ROOT / "core" / "replay_kline_source.py", f"{REMOTE_DIR}/core/replay_kline_source.py"),
     (ROOT / "core" / "review_analytics.py", f"{REMOTE_DIR}/core/review_analytics.py"),
     (ROOT / "core" / "experiment.py", f"{REMOTE_DIR}/core/experiment.py"),
     (ROOT / "core" / "research_memory.py", f"{REMOTE_DIR}/core/research_memory.py"),

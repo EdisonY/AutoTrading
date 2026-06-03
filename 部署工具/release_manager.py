@@ -121,6 +121,7 @@ RESEARCH_CORE = [
     file_pair("core/replay.py"),
     file_pair("core/replay_depth_cache.py"),
     file_pair("core/replay_fill.py"),
+    file_pair("core/replay_kline_source.py"),
     file_pair("core/review_analytics.py"),
     file_pair("core/experiment.py"),
     file_pair("core/research_memory.py"),

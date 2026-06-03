@@ -31,6 +31,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from core.replay_fill import ReplayFillRequest, simulate_replay_fill
+from core.replay_kline_source import load_research_store_kline_rows
 
 CST = timezone(timedelta(hours=8))
 KLINE_CACHE_LIMITS = (100, 200, 500, 1000)
@@ -655,6 +656,13 @@ def load_cached_kline_rows(symbol: str, timeframe: str) -> tuple[list[list[Any]]
     return [], ""
 
 
+def load_replay_kline_rows(symbol: str, timeframe: str, start: datetime, end: datetime) -> tuple[list[list[Any]], str]:
+    rows, source = load_research_store_kline_rows(ROOT, symbol, timeframe, start=start, end=end)
+    if rows:
+        return rows, source
+    return load_cached_kline_rows(symbol, timeframe)
+
+
 def row_open_ms(row: list[Any]) -> int:
     try:
         return int(float(row[0]))
@@ -721,7 +729,7 @@ def recovery_replay_quantity(pos: dict[str, Any], entry_price: float) -> float:
 
 
 def build_recovery_bar_replay_evidence(pos: dict[str, Any]) -> dict[str, Any]:
-    """Replay a recovery-position path through the shared fill kernel using local Kline cache only."""
+    """Replay a recovery-position path through local research_store/cache Klines."""
     strategy = str(pos.get("strategy") or "")
     symbol = str(pos.get("symbol") or "").upper()
     side = normalize_side(pos.get("side"))
@@ -745,9 +753,9 @@ def build_recovery_bar_replay_evidence(pos: dict[str, Any]) -> dict[str, Any]:
         return {"status": "missing_quantity", "action": "replay_data_gap", "automation": "disabled_report_only"}
 
     for timeframe in preferred_recovery_replay_timeframes(pos):
-        rows, source = load_cached_kline_rows(symbol, timeframe)
+        rows, source = load_replay_kline_rows(symbol, timeframe, first_seen, snapshot_ts)
         if not rows:
-            attempts.append({"timeframe": timeframe, "status": "missing_kline_cache"})
+            attempts.append({"timeframe": timeframe, "status": "missing_kline_data"})
             continue
         window_rows = rows_between(rows, timeframe, first_seen, snapshot_ts)
         bars = replay_bars(window_rows)
@@ -794,7 +802,7 @@ def build_recovery_bar_replay_evidence(pos: dict[str, Any]) -> dict[str, Any]:
             "trailing_stop_pct": round(trailing_pct, 4),
             "thresholds_on_margin": profile,
             "automation": "disabled_report_only",
-            "note": "local kline cache only; no Binance API call; recovery entry time is first-seen snapshot, not original exchange open time",
+            "note": "local research_store/klines when available, then kline cache; no Binance API call; recovery entry time is first-seen snapshot, not original exchange open time",
         }
     return {
         "status": "missing_data",
@@ -802,7 +810,7 @@ def build_recovery_bar_replay_evidence(pos: dict[str, Any]) -> dict[str, Any]:
         "attempts": attempts[:6],
         "thresholds_on_margin": profile,
         "automation": "disabled_report_only",
-        "note": "local kline cache only; no Binance API call",
+        "note": "local research_store/klines when available, then kline cache; no Binance API call",
     }
 
 

@@ -23,6 +23,44 @@ class StrategyTruthLedgerRecoveryPathTests(unittest.TestCase):
     def kline_ms(self, text: str) -> int:
         return int(datetime.fromisoformat(text).timestamp() * 1000)
 
+    def write_research_klines(self, root: Path, symbol: str, interval: str, rows: list[list[object]]) -> None:
+        out = root / "research_store" / "klines" / "date=2026-06-03" / "data.jsonl"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        records = []
+        for row in rows:
+            open_time_ms = int(row[0])
+            records.append(
+                {
+                    "symbol": symbol,
+                    "interval": interval,
+                    "open_time_ms": open_time_ms,
+                    "open": row[1],
+                    "high": row[2],
+                    "low": row[3],
+                    "close": row[4],
+                    "volume": row[5] if len(row) > 5 else 0,
+                    "close_time_ms": open_time_ms + 15 * 60_000 - 1,
+                    "quote_volume": row[7] if len(row) > 7 else 0,
+                }
+            )
+        out.write_text("\n".join(json.dumps(item) for item in records) + "\n", encoding="utf-8")
+
+    def sample_recovery_position(self, symbol: str = "BTCUSDT") -> dict[str, object]:
+        return {
+            "strategy": "A/v11",
+            "account": "acct-a",
+            "symbol": symbol,
+            "side": "long",
+            "entry_price": 100.0,
+            "qty": 4.0,
+            "leverage": 4.0,
+            "margin": 100.0,
+            "unrealized_pnl": 0.2,
+            "first_seen_ts": "2026-06-03T08:00:00+08:00",
+            "snapshot_ts": "2026-06-03T08:30:00+08:00",
+            "latest_same_strategy_signal": {"timeframe": "15m"},
+        }
+
     def test_enrich_recovery_path_metrics_attaches_mfe_mae_and_drawdown(self):
         tool = load_tool()
         recovery = [
@@ -272,78 +310,96 @@ class StrategyTruthLedgerRecoveryPathTests(unittest.TestCase):
     def test_recovery_bar_replay_uses_local_kline_cache(self):
         tool = load_tool()
         with tempfile.TemporaryDirectory() as tmp:
-            tool.ROOT = Path(tmp)
-            cache_dir = Path(tmp) / "runtime" / "kline_cache"
-            cache_dir.mkdir(parents=True)
-            (cache_dir / "BTCUSDT_15m_100.json").write_text(
-                json.dumps(
-                    {
-                        "rows": [
-                            [self.kline_ms("2026-06-03T08:00:00+08:00"), "100", "101", "100", "101"],
-                            [self.kline_ms("2026-06-03T08:15:00+08:00"), "101", "101", "100.4", "100.5"],
-                            [self.kline_ms("2026-06-03T08:30:00+08:00"), "100.5", "100.6", "100.1", "100.2"],
-                        ]
-                    }
-                ),
-                encoding="utf-8",
-            )
-            recovery = [
-                {
-                    "strategy": "A/v11",
-                    "account": "acct-a",
-                    "symbol": "BTCUSDT",
-                    "side": "long",
-                    "entry_price": 100.0,
-                    "qty": 4.0,
-                    "leverage": 4.0,
-                    "margin": 100.0,
-                    "unrealized_pnl": 0.2,
-                    "first_seen_ts": "2026-06-03T08:00:00+08:00",
-                    "snapshot_ts": "2026-06-03T08:30:00+08:00",
-                    "latest_same_strategy_signal": {"timeframe": "15m"},
-                }
-            ]
+            old_root = tool.ROOT
+            try:
+                tool.ROOT = Path(tmp)
+                cache_dir = Path(tmp) / "runtime" / "kline_cache"
+                cache_dir.mkdir(parents=True)
+                (cache_dir / "BTCUSDT_15m_100.json").write_text(
+                    json.dumps(
+                        {
+                            "rows": [
+                                [self.kline_ms("2026-06-03T08:00:00+08:00"), "100", "101", "100", "101"],
+                                [self.kline_ms("2026-06-03T08:15:00+08:00"), "101", "101", "100.4", "100.5"],
+                                [self.kline_ms("2026-06-03T08:30:00+08:00"), "100.5", "100.6", "100.1", "100.2"],
+                            ]
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+                recovery = [self.sample_recovery_position()]
 
-            summary = tool.evaluate_recovery_bar_replay_evidence(recovery)
-            evidence = recovery[0]["recovery_replay_evidence"]
-            review = tool.review_recovery_positions(recovery)
-            pos = review["positions"][0]
+                summary = tool.evaluate_recovery_bar_replay_evidence(recovery)
+                evidence = recovery[0]["recovery_replay_evidence"]
+                review = tool.review_recovery_positions(recovery)
+                pos = review["positions"][0]
+            finally:
+                tool.ROOT = old_root
 
             self.assertEqual(evidence["status"], "complete")
             self.assertEqual(evidence["action"], "bar_replay_exit_manual_review")
             self.assertEqual(evidence["replay_exit_reason"], "trailing_stop")
             self.assertEqual(evidence["timeframe"], "15m")
-            self.assertIn("local kline cache only", evidence["note"])
+            self.assertIn("kline cache", evidence["note"])
             self.assertEqual(summary["manual_review_positions"], 1)
             self.assertEqual(pos["risk"], "review")
             self.assertEqual(pos["shadow_action"], "bar_replay_exit_manual_review")
             self.assertEqual(pos["recovery_replay_action"], "bar_replay_exit_manual_review")
 
+    def test_recovery_bar_replay_uses_research_store_without_cache(self):
+        tool = load_tool()
+        with tempfile.TemporaryDirectory() as tmp:
+            old_root = tool.ROOT
+            try:
+                tool.ROOT = Path(tmp)
+                rows = [
+                    [self.kline_ms("2026-06-03T08:00:00+08:00"), "100", "101", "100", "101"],
+                    [self.kline_ms("2026-06-03T08:15:00+08:00"), "101", "101", "100.4", "100.5"],
+                    [self.kline_ms("2026-06-03T08:30:00+08:00"), "100.5", "100.6", "100.1", "100.2"],
+                ]
+                self.write_research_klines(Path(tmp), "BTCUSDT", "15m", rows)
+                recovery = [self.sample_recovery_position()]
+
+                summary = tool.evaluate_recovery_bar_replay_evidence(recovery)
+                evidence = recovery[0]["recovery_replay_evidence"]
+            finally:
+                tool.ROOT = old_root
+
+        self.assertEqual(evidence["status"], "complete")
+        self.assertEqual(evidence["replay_exit_reason"], "trailing_stop")
+        self.assertIn("research_store/klines", evidence["note"])
+        self.assertIn("research_store", evidence["kline_source"])
+        self.assertEqual(summary["manual_review_positions"], 1)
+
     def test_recovery_bar_replay_missing_cache_is_data_gap(self):
         tool = load_tool()
         with tempfile.TemporaryDirectory() as tmp:
-            tool.ROOT = Path(tmp)
-            recovery = [
-                {
-                    "strategy": "B/v16",
-                    "account": "acct-b",
-                    "symbol": "ETHUSDT",
-                    "side": "short",
-                    "entry_price": 2000.0,
-                    "qty": 0.2,
-                    "leverage": 4.0,
-                    "margin": 100.0,
-                    "unrealized_pnl": 1.0,
-                    "first_seen_ts": "2026-06-03T08:00:00+08:00",
-                    "snapshot_ts": "2026-06-03T09:00:00+08:00",
-                    "latest_same_strategy_signal": {"timeframe": "15m"},
-                }
-            ]
+            old_root = tool.ROOT
+            try:
+                tool.ROOT = Path(tmp)
+                recovery = [
+                    {
+                        "strategy": "B/v16",
+                        "account": "acct-b",
+                        "symbol": "ETHUSDT",
+                        "side": "short",
+                        "entry_price": 2000.0,
+                        "qty": 0.2,
+                        "leverage": 4.0,
+                        "margin": 100.0,
+                        "unrealized_pnl": 1.0,
+                        "first_seen_ts": "2026-06-03T08:00:00+08:00",
+                        "snapshot_ts": "2026-06-03T09:00:00+08:00",
+                        "latest_same_strategy_signal": {"timeframe": "15m"},
+                    }
+                ]
 
-            summary = tool.evaluate_recovery_bar_replay_evidence(recovery)
-            evidence = recovery[0]["recovery_replay_evidence"]
-            review = tool.review_recovery_positions(recovery)
-            pos = review["positions"][0]
+                summary = tool.evaluate_recovery_bar_replay_evidence(recovery)
+                evidence = recovery[0]["recovery_replay_evidence"]
+                review = tool.review_recovery_positions(recovery)
+                pos = review["positions"][0]
+            finally:
+                tool.ROOT = old_root
 
             self.assertEqual(evidence["status"], "missing_data")
             self.assertEqual(evidence["action"], "replay_data_gap")

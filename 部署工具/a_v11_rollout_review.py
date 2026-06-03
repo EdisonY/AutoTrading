@@ -31,6 +31,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from core.replay_fill import ReplayFillRequest, simulate_replay_fill
+from core.replay_kline_source import load_research_store_kline_rows
 
 CST = timezone(timedelta(hours=8))
 WINDOWS_HOURS = (24, 72, 168)
@@ -201,6 +202,13 @@ def load_cached_kline_rows(symbol: str, timeframe: str) -> tuple[list[list[Any]]
     return [], ""
 
 
+def load_replay_kline_rows(symbol: str, timeframe: str, start: datetime, end: datetime) -> tuple[list[list[Any]], str]:
+    rows, source = load_research_store_kline_rows(ROOT, symbol, timeframe, start=start, end=end)
+    if rows:
+        return rows, source
+    return load_cached_kline_rows(symbol, timeframe)
+
+
 def row_open_ms(row: list[Any]) -> int:
     try:
         return int(float(row[0]))
@@ -321,9 +329,9 @@ def replay_trade_pair(pair: dict[str, Any]) -> dict[str, Any]:
         return {"status": "missing_entry_price", "symbol": symbol, "side": side, "timeframe": timeframe}
     if atr <= 0:
         return {"status": "missing_atr", "symbol": symbol, "side": side, "timeframe": timeframe}
-    rows, source = load_cached_kline_rows(symbol, timeframe)
+    rows, source = load_replay_kline_rows(symbol, timeframe, entry_ts, close_ts)
     if not rows:
-        return {"status": "missing_kline_cache", "symbol": symbol, "side": side, "timeframe": timeframe}
+        return {"status": "missing_kline_data", "symbol": symbol, "side": side, "timeframe": timeframe}
     window_rows = rows_between(rows, timeframe, entry_ts, close_ts)
     bars = replay_bars(window_rows)
     if not bars:
@@ -401,7 +409,7 @@ def build_replay_fill_comparison(rows: list[sqlite3.Row], start: datetime, end: 
         "median_abs_delta_usdt": round(median([abs(v) for v in deltas]), 4) if deltas else 0.0,
         "replay_exit_reasons": [{"reason": k, "count": v} for k, v in by_exit_reason.most_common(8)],
         "top_deltas": top_delta,
-        "note": "Uses local kline cache only; no Binance API call is made.",
+        "note": "Uses local research_store/klines when available, then local kline cache; no Binance API call is made.",
     }
 
 
@@ -795,7 +803,7 @@ def render_md(payload: dict[str, Any]) -> str:
             f"- Actual vs replay PnL: `{float(replay72.get('actual_pnl_usdt') or 0):+.2f}` / `{float(replay72.get('replay_pnl_usdt') or 0):+.2f}` USDT",
             f"- Delta: `{float(replay72.get('pnl_delta_usdt') or 0):+.2f}` USDT; median abs delta `{float(replay72.get('median_abs_delta_usdt') or 0):.2f}`",
             f"- Status counts: `{json.dumps(replay72.get('status_counts') or {}, ensure_ascii=False)}`",
-            f"- Note: {replay72.get('note') or 'local kline cache only; no Binance API call'}",
+            f"- Note: {replay72.get('note') or 'local research_store/klines when available, then kline cache; no Binance API call'}",
             "",
             "| Symbol | Side | TF | Actual PnL | Replay PnL | Delta | Actual exit | Replay exit | Replay reason |",
             "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | --- |",

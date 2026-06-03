@@ -25,6 +25,98 @@ class AV11RolloutReviewPacketTests(unittest.TestCase):
     def setUpClass(cls):
         cls.tool = load_tool()
 
+    def write_research_klines(self, root: Path, symbol: str, interval: str, rows: list[list[object]]) -> None:
+        out = root / "research_store" / "klines" / "date=2026-06-03" / "data.jsonl"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        records = []
+        for row in rows:
+            open_time_ms = int(row[0])
+            records.append(
+                {
+                    "symbol": symbol,
+                    "interval": interval,
+                    "open_time_ms": open_time_ms,
+                    "open": row[1],
+                    "high": row[2],
+                    "low": row[3],
+                    "close": row[4],
+                    "volume": row[5] if len(row) > 5 else 0,
+                    "close_time_ms": open_time_ms + 15 * 60_000 - 1,
+                    "quote_volume": row[7] if len(row) > 7 else 0,
+                }
+            )
+        out.write_text("\n".join(json.dumps(item) for item in records) + "\n", encoding="utf-8")
+
+    def replay_db_rows(self) -> list[sqlite3.Row]:
+        con = sqlite3.connect(":memory:")
+        con.row_factory = sqlite3.Row
+        con.execute(
+            """
+            create table events (
+                id integer primary key,
+                ts text,
+                strategy text,
+                symbol text,
+                event_type text,
+                category text,
+                side text,
+                reason text,
+                payload_json text
+            )
+            """
+        )
+        con.executemany(
+            """
+            insert into events (ts, strategy, symbol, event_type, category, side, reason, payload_json)
+            values (?, 'A/v11', 'AAAUSDT', ?, '', 'long', ?, ?)
+            """,
+            [
+                (
+                    "2026-06-03T10:00:00+08:00",
+                    "OPEN",
+                    "",
+                    json.dumps(
+                        {
+                            "raw": {
+                                "symbol": "AAAUSDT",
+                                "side": "long",
+                                "price": 100,
+                                "sl": 95,
+                                "tp": 110,
+                                "atr": 2,
+                                "timeframe": "15m",
+                                "exchange_qty": 4,
+                                "leverage": 4,
+                            }
+                        }
+                    ),
+                ),
+                (
+                    "2026-06-03T10:30:00+08:00",
+                    "CLOSE",
+                    "浮动止损",
+                    json.dumps(
+                        {
+                            "raw": {
+                                "symbol": "AAAUSDT",
+                                "side": "long",
+                                "entry_time": "2026-06-03T10:00:00+08:00",
+                                "entry_price": 100,
+                                "exit_price": 104,
+                                "pnl_usd": 16,
+                                "reason": "浮动止损",
+                                "timeframe": "15m",
+                                "exchange_qty": 4,
+                            }
+                        }
+                    ),
+                ),
+            ],
+        )
+        rows = list(con.execute("select * from events order by id"))
+        con.close()
+        return rows
+
     def test_decision_packet_contains_rollback_path_and_maturity(self):
         windows = {
             "24h": {"closed_samples": 25, "pnl_after_cost_usdt": -20, "forced_close_rate": 0.02},
@@ -156,76 +248,8 @@ class AV11RolloutReviewPacketTests(unittest.TestCase):
                     encoding="utf-8",
                 )
 
-                con = sqlite3.connect(":memory:")
-                con.row_factory = sqlite3.Row
-                con.execute(
-                    """
-                    create table events (
-                        id integer primary key,
-                        ts text,
-                        strategy text,
-                        symbol text,
-                        event_type text,
-                        category text,
-                        side text,
-                        reason text,
-                        payload_json text
-                    )
-                    """
-                )
-                con.executemany(
-                    """
-                    insert into events (ts, strategy, symbol, event_type, category, side, reason, payload_json)
-                    values (?, 'A/v11', 'AAAUSDT', ?, '', 'long', ?, ?)
-                    """,
-                    [
-                        (
-                            "2026-06-03T10:00:00+08:00",
-                            "OPEN",
-                            "",
-                            json.dumps(
-                                {
-                                    "raw": {
-                                        "symbol": "AAAUSDT",
-                                        "side": "long",
-                                        "price": 100,
-                                        "sl": 95,
-                                        "tp": 110,
-                                        "atr": 2,
-                                        "timeframe": "15m",
-                                        "exchange_qty": 4,
-                                        "leverage": 4,
-                                    }
-                                }
-                            ),
-                        ),
-                        (
-                            "2026-06-03T10:30:00+08:00",
-                            "CLOSE",
-                            "浮动止损",
-                            json.dumps(
-                                {
-                                    "raw": {
-                                        "symbol": "AAAUSDT",
-                                        "side": "long",
-                                        "entry_time": "2026-06-03T10:00:00+08:00",
-                                        "entry_price": 100,
-                                        "exit_price": 104,
-                                        "pnl_usd": 16,
-                                        "reason": "浮动止损",
-                                        "timeframe": "15m",
-                                        "exchange_qty": 4,
-                                    }
-                                }
-                            ),
-                        ),
-                    ],
-                )
-                db_rows = list(con.execute("select * from events order by id"))
-                con.close()
-
                 comparison = self.tool.build_replay_fill_comparison(
-                    db_rows,
+                    self.replay_db_rows(),
                     self.tool.parse_dt("2026-06-03T09:00:00+08:00"),
                     self.tool.parse_dt("2026-06-03T11:00:00+08:00"),
                 )
@@ -237,7 +261,32 @@ class AV11RolloutReviewPacketTests(unittest.TestCase):
         self.assertEqual(comparison["completed"], 1)
         self.assertEqual(comparison["status_counts"], {"complete": 1})
         self.assertEqual(comparison["top_deltas"][0]["replay_exit_reason"], "trailing_stop")
-        self.assertIn("local kline cache only", comparison["note"])
+        self.assertIn("local kline cache", comparison["note"])
+
+    def test_replay_fill_comparison_uses_research_store_without_cache(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            old_root = self.tool.ROOT
+            try:
+                self.tool.ROOT = Path(tmp)
+                rows = [
+                    [int(self.tool.parse_dt("2026-06-03T10:00:00+08:00").timestamp() * 1000), "100", "103", "99", "102"],
+                    [int(self.tool.parse_dt("2026-06-03T10:15:00+08:00").timestamp() * 1000), "102", "104", "101", "103"],
+                    [int(self.tool.parse_dt("2026-06-03T10:30:00+08:00").timestamp() * 1000), "103", "105", "102", "104"],
+                ]
+                self.write_research_klines(Path(tmp), "AAAUSDT", "15m", rows)
+
+                comparison = self.tool.build_replay_fill_comparison(
+                    self.replay_db_rows(),
+                    self.tool.parse_dt("2026-06-03T09:00:00+08:00"),
+                    self.tool.parse_dt("2026-06-03T11:00:00+08:00"),
+                )
+            finally:
+                self.tool.ROOT = old_root
+
+        self.assertEqual(comparison["status"], "ready")
+        self.assertEqual(comparison["completed"], 1)
+        self.assertIn("research_store/klines", comparison["note"])
+        self.assertIn("research_store", comparison["top_deltas"][0]["kline_source"])
 
     def test_decision_packet_includes_replay_fill_comparison(self):
         windows = {

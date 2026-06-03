@@ -74,6 +74,7 @@ from core.strategy_gates import (
     evaluate_c_v14_stale_entry_price_gate,
     evaluate_c_v14_tail_guard,
     evaluate_consecutive_loss_cooldown_gate,
+    evaluate_execution_result_gate,
     evaluate_no_same_symbol_position_gate,
     evaluate_positive_quantity_gate,
     evaluate_same_side_position_gate,
@@ -1952,7 +1953,14 @@ class Scanner:
             confirm_position=True,
         ))
         if not exec_result.success:
-            if exec_result.preflight_rejected:
+            execution_gate = evaluate_execution_result_gate(
+                success=exec_result.success,
+                preflight_rejected=exec_result.preflight_rejected,
+                code=exec_result.code,
+                reason=exec_result.reason,
+                message=exec_result.message,
+            )
+            if execution_gate.gate == "execution_preflight":
                 logger.info(f"  [{tf}] {inst_id} 执行预检跳过: {exec_result.reason}")
                 log_event({
                     "time": now_str, "event": "OPEN_SKIPPED", "symbol": inst_id,

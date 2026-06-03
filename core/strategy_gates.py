@@ -322,6 +322,30 @@ def evaluate_positive_quantity_gate(
     return StrategyGateDecision(True, "execution", "quantity_positive", evidence={"quantity": qty})
 
 
+def evaluate_execution_result_gate(
+    *,
+    success: bool,
+    preflight_rejected: bool,
+    code: str | None = "",
+    reason: str | None = "",
+    message: str | None = "",
+) -> StrategyGateDecision:
+    """Classify an execution result into replay/live execution gates."""
+    code_text = str(code or "")
+    reason_text = str(reason or message or code_text or "execution_failed")
+    evidence = {
+        "success": bool(success),
+        "preflight_rejected": bool(preflight_rejected),
+        "code": code_text,
+        "message": str(message or ""),
+    }
+    if success:
+        return StrategyGateDecision(True, "execution", "execution_success", evidence=evidence)
+    if preflight_rejected:
+        return StrategyGateDecision(False, "execution_preflight", reason_text, evidence=evidence)
+    return StrategyGateDecision(False, "execution", reason_text, evidence=evidence)
+
+
 def evaluate_a_v11_margin_sizing_gate(
     *,
     quantity: float,

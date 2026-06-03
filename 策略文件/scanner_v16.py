@@ -44,6 +44,7 @@ from core.strategy_gates import (
     evaluate_b_v16_confirmation_gate,
     evaluate_b_v16_entry_threshold,
     evaluate_b_v16_small_live_stage_guard,
+    evaluate_execution_result_gate,
     evaluate_no_same_symbol_position_gate,
     evaluate_positive_quantity_gate,
     evaluate_score_max_gate,
@@ -1152,7 +1153,14 @@ class ScannerV16:
             r = exec_result.raw if isinstance(exec_result.raw, dict) else {}
 
             if not exec_result.success:
-                if exec_result.preflight_rejected:
+                execution_gate = evaluate_execution_result_gate(
+                    success=exec_result.success,
+                    preflight_rejected=exec_result.preflight_rejected,
+                    code=exec_result.code,
+                    reason=exec_result.reason,
+                    message=exec_result.message,
+                )
+                if execution_gate.gate == "execution_preflight":
                     detail = exec_result.preflight_detail
                     logger.info(f"  执行预检跳过: {sym} {exec_result.reason}")
                     log_event({

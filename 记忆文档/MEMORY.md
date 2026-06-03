@@ -40,6 +40,11 @@
 - 本地 30 日复验：主动策略 PnL `+163.00 USDT`；A/v11 `-80.89`、B/v16 `+167.31`、C/v14 `+76.58`；当前恢复仓 `0`。这是真相台账/入口页证据修正，不改任何实盘交易逻辑。
 - Phase 7 首版恢复仓独立审查已加入 truth ledger 和 portal：恢复仓数、最老年龄、保证金、未实现 PnL、风险分层、单仓 age/PnL%/shadow_action。当前因恢复仓样本为 0，接管后 MFE/MAE、反向信号退出证据仍待后续样本或 replay。
 
+## 2026-06-03 10:15 CST - P0-A public fresh-run blocker + P0-B execution gate
+- 长期目标继续按 `FUTURE_EXECUTION_PLAN.md` canonical P0/P1/P2 推进，P0-A 仍未验收。腾讯最新 staged fresh-run 中，A/v11 Kline 公共请求触发 Binance Testnet `HTTP 418/-1003`，queue public cooldown 到 `2026-06-03T10:31:59.888+08:00`。10:06 已再次停止 A/B/C scanner、sentinel、market-data-cache，只保留 API queue + A/B/C user-stream active。
+- 当前判断：fail-closed 队列避免了冷却期间继续入队，但 public producer 不能在 cooldown 内继续跑，否则 journal 会持续出现 blocked-by-cooldown 噪声，且 fresh-run 不能算 clean。下一轮必须等 cooldown 过期后更慢分阶段：先单 public producer，稳定后再 A，B/C 最后。
+- 冷却期间继续 P0-B：新增 shared `evaluate_execution_result_gate()`，A/v11、B/v16、C/v14 的 execution preflight-vs-failure 分支已接入同一纯 gate；不改事件 payload、阈值、仓位、杠杆、止损、下单或冷却分钟。已通过 no-restart disk deploy 上传到腾讯：`20260603-101942-strategy-a-7885a45`、`20260603-102046-strategy-b-7885a45`、`20260603-102149-strategy-c-7885a45`。
+
 ## 2026-06-02 N6 watchlist 历史持久化
 - 为继续拆解 `never_scanned_in_mirror`，哨兵现在会把每轮 `market_mover_watchlist.json` 追加写入 `runtime/market_mover_watchlist_history.jsonl` 和每日分片。现有 latest JSON 仍保留，watchlist 构造逻辑、scanner cadence、策略阈值都不变。
 - `shadow_sync_from_tencent.py` 会把 watchlist history 和当前 watchlist 带到阿里云 bounded mirror；`sentinel_quality_review.py` 会报告 watchlist history 是否可用；入口页显示 watchlist snapshot 数、去重币种和时间范围。上线前本地历史为 0，这是预期，因为 durable 采集从本轮部署后开始。部署后阿里云短刷新已读到 `Watchlist snapshots: 63`，说明 Tencent daily shard 到 Aliyun mirror 到 portal 的链路已通。

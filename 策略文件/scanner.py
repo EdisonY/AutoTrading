@@ -125,6 +125,7 @@ from core.strategy_gates import (
     evaluate_a_v11_releasable_position,
     evaluate_a_v11_replacement_signal,
     evaluate_a_v11_resonance_required_gate,
+    evaluate_execution_result_gate,
     evaluate_no_same_symbol_position_gate,
     evaluate_symbol_blacklist_gate,
     evaluate_symbol_cooldown_gate,
@@ -2207,64 +2208,71 @@ class Scanner:
                     )
                     return
                 logger.info(f"  下单成功: orderId={order_id} qty={exchange_qty}")
-            elif exec_result.preflight_rejected:
-                err_code = exec_result.code or "preflight_rejected"
-                err_msg = exec_result.message or exec_result.reason
-                logger.info(f"  执行预检跳过: code={err_code} msg={err_msg}")
-                event = {
-                    "time": now_str, "event": "OPEN_SKIPPED", "symbol": inst_id,
-                    "side": side, "price": price, "sl": sl, "tp": tp,
-                    "score": net_score, "reasons": reasons,
-                    "atr": sig["atr"], "leverage": self.leverage,
-                    "divergence": sig["divergence_primary"]["description"],
-                    "st_dir": "多" if sig["st_direction"] == 1 else "空",
-                    "st_flip": sig["st_flipped"],
-                    "timeframe": tf,
-                    "resonance": resonance,
-                    "err_code": err_code,
-                    "err_msg": err_msg,
-                    "skip_reason": f"执行预检拒绝({err_code}): {err_msg[:80]}",
-                    "reason": f"执行预检拒绝({err_code}): {err_msg[:80]}",
-                    "preflight": exec_result.preflight_detail,
-                    "risk_category": "execution_preflight",
-                    "decision_stage": "execution_preflight",
-                    "filter_layer": "execution",
-                    **sentinel_fields(inst_id),
-                }
-                log_event(event)
-                now_dt = datetime.now(CST)
-                self.cooldowns[tf][inst_id] = now_dt + timedelta(minutes=5)
-                logger.info(f"  ⏳ {inst_id}({tf}) 预检跳过，冷却5分钟")
-                return
-            elif exec_result.code == "-1001":
-                # 字典式错误响应（如 Binance Testnet）
-                err_code = exec_result.code or "?"
-                err_msg = exec_result.message or "?"
-                logger.error(f"  下单失败: code={err_code} msg={err_msg}")
-                event = {
-                    "time": now_str, "event": "OPEN_FAILED", "symbol": inst_id,
-                    "side": side, "price": price, "sl": sl, "tp": tp,
-                    "score": net_score, "reasons": reasons,
-                    "atr": sig["atr"], "leverage": self.leverage,
-                    "divergence": sig["divergence_primary"]["description"],
-                    "st_dir": "多" if sig["st_direction"] == 1 else "空",
-                    "st_flip": sig["st_flipped"],
-                    "timeframe": tf,
-                    "resonance": resonance,
-                    "err_code": err_code,
-                    "err_msg": err_msg,
-                    "reason": f"下单失败({err_code}): {err_msg[:80]}",
-                    "decision_stage": "execution",
-                    "filter_layer": "execution",
-                    **sentinel_fields(inst_id),
-                }
-                log_event(event)
-                # v6: 开仓失败也进入冷却期（15分钟），避免同币种反复失败
-                now_dt = datetime.now(CST)
-                self.cooldowns[tf][inst_id] = now_dt + timedelta(minutes=15)
-                logger.info(f"  ⏳ {inst_id}({tf}) 开仓失败，冷却15分钟")
-                return
-            else:
+            if not exec_result.success:
+                execution_gate = evaluate_execution_result_gate(
+                    success=exec_result.success,
+                    preflight_rejected=exec_result.preflight_rejected,
+                    code=exec_result.code,
+                    reason=exec_result.reason,
+                    message=exec_result.message,
+                )
+                if execution_gate.gate == "execution_preflight":
+                    err_code = exec_result.code or "preflight_rejected"
+                    err_msg = exec_result.message or exec_result.reason
+                    logger.info(f"  执行预检跳过: code={err_code} msg={err_msg}")
+                    event = {
+                        "time": now_str, "event": "OPEN_SKIPPED", "symbol": inst_id,
+                        "side": side, "price": price, "sl": sl, "tp": tp,
+                        "score": net_score, "reasons": reasons,
+                        "atr": sig["atr"], "leverage": self.leverage,
+                        "divergence": sig["divergence_primary"]["description"],
+                        "st_dir": "多" if sig["st_direction"] == 1 else "空",
+                        "st_flip": sig["st_flipped"],
+                        "timeframe": tf,
+                        "resonance": resonance,
+                        "err_code": err_code,
+                        "err_msg": err_msg,
+                        "skip_reason": f"执行预检拒绝({err_code}): {err_msg[:80]}",
+                        "reason": f"执行预检拒绝({err_code}): {err_msg[:80]}",
+                        "preflight": exec_result.preflight_detail,
+                        "risk_category": "execution_preflight",
+                        "decision_stage": "execution_preflight",
+                        "filter_layer": "execution",
+                        **sentinel_fields(inst_id),
+                    }
+                    log_event(event)
+                    now_dt = datetime.now(CST)
+                    self.cooldowns[tf][inst_id] = now_dt + timedelta(minutes=5)
+                    logger.info(f"  ⏳ {inst_id}({tf}) 预检跳过，冷却5分钟")
+                    return
+                if exec_result.code == "-1001":
+                    # 字典式错误响应（如 Binance Testnet）
+                    err_code = exec_result.code or "?"
+                    err_msg = exec_result.message or "?"
+                    logger.error(f"  下单失败: code={err_code} msg={err_msg}")
+                    event = {
+                        "time": now_str, "event": "OPEN_FAILED", "symbol": inst_id,
+                        "side": side, "price": price, "sl": sl, "tp": tp,
+                        "score": net_score, "reasons": reasons,
+                        "atr": sig["atr"], "leverage": self.leverage,
+                        "divergence": sig["divergence_primary"]["description"],
+                        "st_dir": "多" if sig["st_direction"] == 1 else "空",
+                        "st_flip": sig["st_flipped"],
+                        "timeframe": tf,
+                        "resonance": resonance,
+                        "err_code": err_code,
+                        "err_msg": err_msg,
+                        "reason": f"下单失败({err_code}): {err_msg[:80]}",
+                        "decision_stage": "execution",
+                        "filter_layer": "execution",
+                        **sentinel_fields(inst_id),
+                    }
+                    log_event(event)
+                    # v6: 开仓失败也进入冷却期（15分钟），避免同币种反复失败
+                    now_dt = datetime.now(CST)
+                    self.cooldowns[tf][inst_id] = now_dt + timedelta(minutes=15)
+                    logger.info(f"  ⏳ {inst_id}({tf}) 开仓失败，冷却15分钟")
+                    return
                 # 其他格式的错误
                 err_code = exec_result.code or "?"
                 err_msg = exec_result.message or str(exec_result.raw)[:200]

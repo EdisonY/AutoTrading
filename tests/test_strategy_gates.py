@@ -21,6 +21,7 @@ from core.strategy_gates import (
     evaluate_c_v14_stale_entry_price_gate,
     evaluate_c_v14_tail_guard,
     evaluate_consecutive_loss_cooldown_gate,
+    evaluate_execution_result_gate,
     evaluate_no_same_symbol_position_gate,
     evaluate_positive_quantity_gate,
     evaluate_same_side_position_gate,
@@ -479,6 +480,31 @@ class StrategyGateParityTest(unittest.TestCase):
         self.assertEqual(qty_zero.reason, "qty<=0")
         self.assertEqual(qty_zero.gate, "execution")
         self.assertTrue(evaluate_positive_quantity_gate(quantity=0.001).allowed)
+
+        exec_ok = evaluate_execution_result_gate(success=True, preflight_rejected=False)
+        self.assertTrue(exec_ok.allowed)
+        self.assertEqual(exec_ok.gate, "execution")
+        self.assertEqual(exec_ok.reason, "execution_success")
+
+        exec_preflight = evaluate_execution_result_gate(
+            success=False,
+            preflight_rejected=True,
+            code="exchange_min_notional",
+            reason="min notional",
+        )
+        self.assertFalse(exec_preflight.allowed)
+        self.assertEqual(exec_preflight.gate, "execution_preflight")
+        self.assertEqual(exec_preflight.reason, "min notional")
+
+        exec_failed = evaluate_execution_result_gate(
+            success=False,
+            preflight_rejected=False,
+            code="-1007",
+            message="status unknown",
+        )
+        self.assertFalse(exec_failed.allowed)
+        self.assertEqual(exec_failed.gate, "execution")
+        self.assertEqual(exec_failed.reason, "status unknown")
 
     def test_watchlist_score_adjustment(self):
         penalized = evaluate_watchlist_score_adjustment(

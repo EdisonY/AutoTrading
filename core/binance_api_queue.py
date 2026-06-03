@@ -251,6 +251,23 @@ class BinanceApiQueue:
             return 0, ""
         return max(active, key=lambda item: item[0])
 
+    def pending_count(self, *, scope: str, account: str = "", include_leased: bool = True) -> int:
+        statuses = [STATUS_QUEUED, STATUS_DEFERRED]
+        if include_leased:
+            statuses.append(STATUS_LEASED)
+        params: list[Any] = [scope, *statuses]
+        account_filter = ""
+        if account:
+            account_filter = " AND account = ?"
+            params.append(account)
+        with self._connection() as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) AS count FROM api_requests WHERE scope = ? AND status IN (%s)%s"
+                % (",".join("?" for _ in statuses), account_filter),
+                params,
+            ).fetchone()
+        return int(row["count"] or 0) if row else 0
+
     def lease_next(
         self,
         *,

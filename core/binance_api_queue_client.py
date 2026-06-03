@@ -48,6 +48,20 @@ def priority_for_request(method: str, path: str) -> int:
     return PRIORITY_NORMAL
 
 
+def _max_pending_for_scope(scope: str, explicit: int | None = None) -> int:
+    if explicit is not None:
+        return int(explicit)
+    scope_key = str(scope or "").upper()
+    scoped = os.environ.get(f"BINANCE_API_QUEUE_CLIENT_MAX_PENDING_{scope_key}")
+    if scoped is not None:
+        return int(scoped)
+    if str(scope or "").lower() == "public":
+        return int(os.environ.get("BINANCE_API_QUEUE_CLIENT_MAX_PENDING_PUBLIC", "3"))
+    if str(scope or "").lower() == "signed":
+        return int(os.environ.get("BINANCE_API_QUEUE_CLIENT_MAX_PENDING_SIGNED", "20"))
+    return int(os.environ.get("BINANCE_API_QUEUE_CLIENT_MAX_PENDING", "10"))
+
+
 def queued_api_request(
     *,
     scope: str,
@@ -62,6 +76,7 @@ def queued_api_request(
     queue: BinanceApiQueue | None = None,
     timeout_sec: float | None = None,
     poll_interval_sec: float | None = None,
+    max_pending_requests: int | None = None,
 ) -> Any:
     queue = queue or BinanceApiQueue(default_queue_db_path())
     timeout = float(timeout_sec if timeout_sec is not None else os.environ.get("BINANCE_API_QUEUE_CLIENT_TIMEOUT_SEC", "180"))
@@ -77,6 +92,17 @@ def queued_api_request(
             "cooldown_until_ms": cooldown_until,
             "cooldown_reason": cooldown_reason,
         }
+    max_pending = _max_pending_for_scope(scope, max_pending_requests)
+    if max_pending > 0:
+        pending_count = queue.pending_count(scope=scope, account=account, include_leased=True)
+        if pending_count >= max_pending:
+            return {
+                "code": "-1",
+                "msg": f"queued request blocked by pending backlog: {pending_count}/{max_pending}",
+                "queue_status": "backlog",
+                "pending_count": pending_count,
+                "max_pending": max_pending,
+            }
     request = queue.submit_request(
         scope=scope,
         account=account,

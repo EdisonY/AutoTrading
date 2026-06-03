@@ -56,6 +56,18 @@ class BinanceApiQueueTest(unittest.TestCase):
         self.assertEqual(done.result_status, 200)
         self.assertEqual(done.result_body, {"ok": True})
 
+    def test_pending_count_by_scope_and_account(self):
+        queue = self.make_queue()
+        queue.submit_request(scope="public", method="GET", path="/fapi/v1/time")
+        signed_a = queue.submit_request(scope="signed", account="A", method="GET", path="/fapi/v2/balance")
+        queue.submit_request(scope="signed", account="B", method="GET", path="/fapi/v2/balance")
+        queue.fail_request(signed_a.request_id, error="retry later", retry=True, defer_ms=60_000)
+
+        self.assertEqual(queue.pending_count(scope="public"), 1)
+        self.assertEqual(queue.pending_count(scope="signed"), 2)
+        self.assertEqual(queue.pending_count(scope="signed", account="A"), 1)
+        self.assertEqual(queue.pending_count(scope="signed", account="B"), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

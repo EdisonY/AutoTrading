@@ -81,6 +81,26 @@ class BinanceApiQueueClientTest(unittest.TestCase):
         self.assertEqual(result["queue_status"], "cooldown")
         self.assertEqual(queue.summary()["counts"], {})
 
+    def test_pending_backlog_blocks_submit(self):
+        queue = self.make_queue()
+        queue.submit_request(scope="public", label="existing", method="GET", path="/fapi/v1/ticker/24hr")
+
+        result = queued_api_request(
+            scope="public",
+            label="test",
+            method="GET",
+            path="/fapi/v1/klines",
+            queue=queue,
+            timeout_sec=0.1,
+            poll_interval_sec=0.02,
+            max_pending_requests=1,
+        )
+
+        self.assertEqual(result["code"], "-1")
+        self.assertEqual(result["queue_status"], "backlog")
+        self.assertEqual(result["pending_count"], 1)
+        self.assertEqual(queue.summary()["counts"], {"queued": 1})
+
     def test_trade_paths_have_trade_priority(self):
         self.assertGreater(priority_for_request("POST", "/fapi/v1/order"), priority_for_request("GET", "/fapi/v2/balance"))
 

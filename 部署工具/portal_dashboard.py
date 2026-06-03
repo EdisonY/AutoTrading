@@ -2464,13 +2464,16 @@ def render_html(out_dir: Path) -> str:
   <td>{int(pos.get('opposite_open_like_count') or 0)}</td>
   <td>{h(pos.get('signal_shadow_action'))}</td>
   <td>{h(pos.get('strategy_exit_action'))}</td>
+  <td>{h(pos.get('recovery_replay_action'))}:{h(pos.get('recovery_replay_exit_reason') or pos.get('recovery_replay_status'))}</td>
   <td>{h(pos.get('risk'))}</td>
   <td>{h(pos.get('shadow_action'))}</td>
 </tr>
 """.strip()
         for pos in recovery_positions[:10]
-    ) or '<tr><td colspan="15">当前无恢复仓</td></tr>'
+    ) or '<tr><td colspan="16">当前无恢复仓</td></tr>'
     recovery_signal = recovery_review.get("signal_counts") or {}
+    recovery_replay = truth.get("recovery_bar_replay_evidence") or {}
+    recovery_replay_counts = recovery_replay.get("action_counts") or recovery_review.get("replay_counts") or {}
     recovery_total_upnl = float(
         truth_summary.get("total_recovery_unrealized_pnl_usdt")
         or truth_summary.get("total_recovery_unrealized_pnl_usd")
@@ -3066,9 +3069,9 @@ th {{ background:#f1f5f9; color:#334155; }}
       <tbody>{quality_rows}</tbody>
     </table>
     <p class="note">主动策略累计 PnL: <b class="{'pos' if float(truth_summary.get('total_active_pnl_usd', 0)) >= 0 else 'neg'}">{float(truth_summary.get('total_active_pnl_usd', 0)):+.2f}</b> USDT；恢复仓未实现 PnL: <b class="{'pos' if recovery_total_upnl >= 0 else 'neg'}">{recovery_total_upnl:+.2f}</b> USDT。</p>
-    <p class="note">恢复仓独立审查：review={int(recovery_risk.get('review') or 0)}，watch={int(recovery_risk.get('watch') or 0)}，none={int(recovery_risk.get('none') or 0)}；同策略重开支持={int(recovery_signal.get('same_strategy_reopen_supported') or 0)}，反向信号复核={int(recovery_signal.get('opposite_signal_review') or 0)}；策略退出证据 manual={int(recovery_strategy_exit.get('manual_review_positions') or 0)}，watch={int(recovery_strategy_exit.get('watch_positions') or 0)}，hold-bias={int(recovery_strategy_exit.get('hold_bias_positions') or 0)}；只读 shadow，不自动平仓。</p>
+    <p class="note">恢复仓独立审查：review={int(recovery_risk.get('review') or 0)}，watch={int(recovery_risk.get('watch') or 0)}，none={int(recovery_risk.get('none') or 0)}；同策略重开支持={int(recovery_signal.get('same_strategy_reopen_supported') or 0)}，反向信号复核={int(recovery_signal.get('opposite_signal_review') or 0)}；策略退出证据 manual={int(recovery_strategy_exit.get('manual_review_positions') or 0)}，watch={int(recovery_strategy_exit.get('watch_positions') or 0)}，hold-bias={int(recovery_strategy_exit.get('hold_bias_positions') or 0)}；本地K线replay exit-review={int(recovery_replay_counts.get('bar_replay_exit_manual_review') or 0)}，data-gap={int(recovery_replay_counts.get('replay_data_gap') or 0)}；只读 shadow，不自动平仓。</p>
     <table>
-      <thead><tr><th>策略</th><th>币种</th><th>方向</th><th>年龄h</th><th>浮盈</th><th>浮盈/保证金</th><th>MFE</th><th>MAE</th><th>MFE回撤</th><th>同向重开</th><th>反向信号</th><th>信号动作</th><th>策略退出证据</th><th>风险</th><th>Shadow动作</th></tr></thead>
+      <thead><tr><th>策略</th><th>币种</th><th>方向</th><th>年龄h</th><th>浮盈</th><th>浮盈/保证金</th><th>MFE</th><th>MAE</th><th>MFE回撤</th><th>同向重开</th><th>反向信号</th><th>信号动作</th><th>策略退出证据</th><th>Bar replay</th><th>风险</th><th>Shadow动作</th></tr></thead>
       <tbody>{recovery_review_rows}</tbody>
     </table>
   </section>

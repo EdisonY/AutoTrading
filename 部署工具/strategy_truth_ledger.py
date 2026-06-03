@@ -25,7 +25,16 @@ if sys.platform == "win32":
     except Exception:
         pass
 
+SCRIPT_DIR = Path(__file__).resolve().parent
+ROOT = SCRIPT_DIR.parent if SCRIPT_DIR.name == "部署工具" else SCRIPT_DIR
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from core.replay_fill import ReplayFillRequest, simulate_replay_fill
+
 CST = timezone(timedelta(hours=8))
+KLINE_CACHE_LIMITS = (100, 200, 500, 1000)
+RECOVERY_REPLAY_TIMEFRAMES = ("15m", "30m", "1h")
 
 STRATEGY_MAP = {
     "A/v11": {"account": "A", "name": "半木夏"},
@@ -595,6 +604,244 @@ def recovery_strategy_exit_profile(strategy: str) -> dict[str, float]:
     return {key: safe_float(value) for key, value in profile.items()}
 
 
+def normalize_timeframe(value: Any) -> str:
+    text = str(value or "").strip().lower()
+    if text in {"15", "15min", "15m"}:
+        return "15m"
+    if text in {"30", "30min", "30m"}:
+        return "30m"
+    if text in {"60", "60min", "60m", "1h"}:
+        return "1h"
+    return text
+
+
+def timeframe_ms(timeframe: str) -> int:
+    tf = normalize_timeframe(timeframe)
+    if not tf:
+        return 0
+    try:
+        unit = tf[-1]
+        value = int(tf[:-1])
+    except Exception:
+        return 0
+    if unit == "m":
+        return value * 60_000
+    if unit == "h":
+        return value * 60 * 60_000
+    return 0
+
+
+def kline_cache_paths(symbol: str, timeframe: str) -> list[Path]:
+    safe_symbol = str(symbol or "").upper().replace("/", "_")
+    tf = normalize_timeframe(timeframe)
+    paths: list[Path] = []
+    for base in (ROOT, ROOT / "server_logs_tencent"):
+        for limit in KLINE_CACHE_LIMITS:
+            paths.append(base / "runtime" / "kline_cache" / f"{safe_symbol}_{tf}_{limit}.json")
+    return paths
+
+
+def load_cached_kline_rows(symbol: str, timeframe: str) -> tuple[list[list[Any]], str]:
+    for path in kline_cache_paths(symbol, timeframe):
+        if not path.exists():
+            continue
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8", errors="replace"))
+        except Exception:
+            continue
+        rows = payload.get("rows") if isinstance(payload, dict) else payload
+        if isinstance(rows, list) and rows:
+            return rows, str(path)
+    return [], ""
+
+
+def row_open_ms(row: list[Any]) -> int:
+    try:
+        return int(float(row[0]))
+    except Exception:
+        return 0
+
+
+def rows_between(rows: list[list[Any]], timeframe: str, start: datetime, end: datetime) -> list[list[Any]]:
+    step_ms = timeframe_ms(timeframe)
+    if step_ms <= 0:
+        return []
+    start_ms = int(start.timestamp() * 1000)
+    end_ms = int(end.timestamp() * 1000)
+    first_ms = (start_ms // step_ms) * step_ms
+    return [row for row in rows if first_ms <= row_open_ms(row) <= end_ms]
+
+
+def replay_bars(rows: list[list[Any]]) -> list[dict[str, Any]]:
+    bars: list[dict[str, Any]] = []
+    for row in rows:
+        try:
+            bars.append(
+                {
+                    "ts": datetime.fromtimestamp(int(float(row[0])) / 1000, tz=CST).isoformat(timespec="seconds"),
+                    "open": float(row[1]),
+                    "high": float(row[2]),
+                    "low": float(row[3]),
+                    "close": float(row[4]),
+                }
+            )
+        except Exception:
+            continue
+    return bars
+
+
+def preferred_recovery_replay_timeframes(pos: dict[str, Any]) -> list[str]:
+    candidates: list[str] = []
+    for key in ("latest_same_strategy_signal", "latest_opposite_signal"):
+        signal = pos.get(key)
+        if isinstance(signal, dict):
+            tf = normalize_timeframe(signal.get("timeframe"))
+            if tf:
+                candidates.append(tf)
+    candidates.extend(RECOVERY_REPLAY_TIMEFRAMES)
+    out: list[str] = []
+    for tf in candidates:
+        if tf and tf not in out:
+            out.append(tf)
+    return out
+
+
+def recovery_replay_quantity(pos: dict[str, Any], entry_price: float) -> float:
+    qty = abs(safe_float(pos.get("qty")))
+    if qty > 0:
+        return qty
+    notional = abs(safe_float(pos.get("notional")))
+    if entry_price > 0 and notional > 0:
+        return notional / entry_price
+    margin = abs(safe_float(pos.get("margin")))
+    leverage = max(1.0, safe_float(pos.get("leverage"), 4.0))
+    if entry_price > 0 and margin > 0:
+        return margin * leverage / entry_price
+    return 0.0
+
+
+def build_recovery_bar_replay_evidence(pos: dict[str, Any]) -> dict[str, Any]:
+    """Replay a recovery-position path through the shared fill kernel using local Kline cache only."""
+    strategy = str(pos.get("strategy") or "")
+    symbol = str(pos.get("symbol") or "").upper()
+    side = normalize_side(pos.get("side"))
+    entry_price = safe_float(pos.get("entry_price"))
+    snapshot_ts = parse_dt(pos.get("snapshot_ts"))
+    first_seen = parse_dt(pos.get("first_seen_ts") or pos.get("snapshot_ts"))
+    leverage = max(1.0, safe_float(pos.get("leverage"), 4.0))
+    profile = recovery_strategy_exit_profile(strategy)
+    activation_pct = profile["min_mfe_pct_on_margin"] / leverage
+    trailing_pct = profile["trailing_watch_drawdown_pct"] / leverage
+    quantity = recovery_replay_quantity(pos, entry_price)
+    attempts: list[dict[str, Any]] = []
+
+    if not symbol or side not in {"long", "short"}:
+        return {"status": "missing_identity", "action": "replay_data_gap", "automation": "disabled_report_only"}
+    if not first_seen or not snapshot_ts or snapshot_ts < first_seen:
+        return {"status": "missing_time", "action": "replay_data_gap", "automation": "disabled_report_only"}
+    if entry_price <= 0:
+        return {"status": "missing_entry_price", "action": "replay_data_gap", "automation": "disabled_report_only"}
+    if quantity <= 0:
+        return {"status": "missing_quantity", "action": "replay_data_gap", "automation": "disabled_report_only"}
+
+    for timeframe in preferred_recovery_replay_timeframes(pos):
+        rows, source = load_cached_kline_rows(symbol, timeframe)
+        if not rows:
+            attempts.append({"timeframe": timeframe, "status": "missing_kline_cache"})
+            continue
+        window_rows = rows_between(rows, timeframe, first_seen, snapshot_ts)
+        bars = replay_bars(window_rows)
+        if not bars:
+            attempts.append({"timeframe": timeframe, "status": "missing_bars", "kline_source": source})
+            continue
+        try:
+            fill = simulate_replay_fill(
+                ReplayFillRequest(
+                    symbol=symbol,
+                    side=side,
+                    entry_price=entry_price,
+                    quantity=quantity,
+                    trailing_stop_pct=trailing_pct,
+                    trailing_activation_pct=activation_pct,
+                    fee_bps=FEE_RATE_TAKER * 10_000,
+                    slippage_bps=0.0,
+                ),
+                bars,
+            )
+        except Exception as exc:
+            attempts.append({"timeframe": timeframe, "status": "replay_error", "error": str(exc)[:160]})
+            continue
+        current_upnl = safe_float(pos.get("unrealized_pnl"))
+        action = "bar_replay_exit_manual_review" if fill.exit_reason != "end_of_window" else "bar_replay_hold_bias"
+        return {
+            "status": "complete",
+            "action": action,
+            "symbol": symbol,
+            "side": side,
+            "timeframe": timeframe,
+            "entry_ts": first_seen.isoformat(timespec="seconds"),
+            "snapshot_ts": snapshot_ts.isoformat(timespec="seconds"),
+            "entry_price": round(entry_price, 8),
+            "replay_exit_price": fill.exit_price,
+            "replay_exit_reason": fill.exit_reason,
+            "replay_exit_ts": fill.exit_ts,
+            "replay_pnl_usdt": round(fill.net_pnl_usdt, 4),
+            "current_unrealized_pnl_usdt": round(current_upnl, 4),
+            "pnl_delta_vs_current_usdt": round(fill.net_pnl_usdt - current_upnl, 4),
+            "bars_held": fill.bars_held,
+            "kline_source": source,
+            "trailing_activation_pct": round(activation_pct, 4),
+            "trailing_stop_pct": round(trailing_pct, 4),
+            "thresholds_on_margin": profile,
+            "automation": "disabled_report_only",
+            "note": "local kline cache only; no Binance API call; recovery entry time is first-seen snapshot, not original exchange open time",
+        }
+    return {
+        "status": "missing_data",
+        "action": "replay_data_gap",
+        "attempts": attempts[:6],
+        "thresholds_on_margin": profile,
+        "automation": "disabled_report_only",
+        "note": "local kline cache only; no Binance API call",
+    }
+
+
+def evaluate_recovery_bar_replay_evidence(recovery: list[dict[str, Any]]) -> dict[str, Any]:
+    """Attach and summarize report-only bar replay evidence for recovery positions."""
+    action_counts: dict[str, int] = {}
+    status_counts: dict[str, int] = {}
+    positions: list[dict[str, Any]] = []
+    for pos in recovery:
+        evidence = build_recovery_bar_replay_evidence(pos)
+        pos["recovery_replay_evidence"] = evidence
+        action = str(evidence.get("action") or "replay_data_gap")
+        status = str(evidence.get("status") or "unknown")
+        action_counts[action] = action_counts.get(action, 0) + 1
+        status_counts[status] = status_counts.get(status, 0) + 1
+        positions.append(
+            {
+                "strategy": pos.get("strategy"),
+                "symbol": pos.get("symbol"),
+                "side": pos.get("side"),
+                "status": status,
+                "action": action,
+                "timeframe": evidence.get("timeframe") or "",
+                "replay_exit_reason": evidence.get("replay_exit_reason") or "",
+                "replay_pnl_usdt": evidence.get("replay_pnl_usdt"),
+                "pnl_delta_vs_current_usdt": evidence.get("pnl_delta_vs_current_usdt"),
+            }
+        )
+    return {
+        "policy": "report_only_local_kline_bar_replay_for_recovery_positions",
+        "automation": "disabled_report_only",
+        "action_counts": dict(sorted(action_counts.items())),
+        "status_counts": dict(sorted(status_counts.items())),
+        "manual_review_positions": int(action_counts.get("bar_replay_exit_manual_review", 0)),
+        "data_gap_positions": int(action_counts.get("replay_data_gap", 0)),
+        "positions": positions,
+    }
+
+
 def build_recovery_strategy_exit_evidence(pos: dict[str, Any]) -> dict[str, Any]:
     """Build report-only, strategy-aware recovery exit evidence for one position."""
     strategy = str(pos.get("strategy") or "")
@@ -706,9 +953,15 @@ def review_recovery_positions(recovery: list[dict]) -> dict[str, Any]:
         )
         pos["strategy_exit_evidence"] = strategy_exit_evidence
         strategy_exit_action = str(strategy_exit_evidence.get("action") or "keep_shadow_monitoring")
+        replay_evidence = pos.get("recovery_replay_evidence") or build_recovery_bar_replay_evidence(pos)
+        pos["recovery_replay_evidence"] = replay_evidence
+        replay_action = str(replay_evidence.get("action") or "replay_data_gap")
         if strategy_exit_action in {"opposite_signal_manual_review", "mfe_drawdown_manual_review"}:
             risk = "review"
             action = strategy_exit_action
+        elif replay_action == "bar_replay_exit_manual_review":
+            risk = "review"
+            action = replay_action
         elif age_hours >= 24 or upnl_pct <= -5:
             risk = "review"
             action = "manual_review"
@@ -749,6 +1002,12 @@ def review_recovery_positions(recovery: list[dict]) -> dict[str, Any]:
                 "strategy_exit_action": strategy_exit_action,
                 "strategy_exit_triggers": strategy_exit_evidence.get("triggers") or [],
                 "strategy_exit_evidence": strategy_exit_evidence,
+                "recovery_replay_action": replay_action,
+                "recovery_replay_status": replay_evidence.get("status") or "",
+                "recovery_replay_exit_reason": replay_evidence.get("replay_exit_reason") or "",
+                "recovery_replay_pnl_usdt": replay_evidence.get("replay_pnl_usdt"),
+                "recovery_replay_delta_usdt": replay_evidence.get("pnl_delta_vs_current_usdt"),
+                "recovery_replay_evidence": replay_evidence,
                 "risk": risk,
                 "shadow_action": action,
                 "note": "只读审查；不自动平仓、不改变退出规则。",
@@ -784,10 +1043,37 @@ def review_recovery_positions(recovery: list[dict]) -> dict[str, Any]:
                 "keep_shadow_monitoring",
             )
         },
+        "replay_counts": {
+            action: sum(
+                1
+                for pos in recovery
+                if (pos.get("recovery_replay_evidence") or {}).get("action") == action
+            )
+            for action in (
+                "bar_replay_exit_manual_review",
+                "bar_replay_hold_bias",
+                "replay_data_gap",
+            )
+        },
+        "replay_status_counts": {
+            status: sum(
+                1
+                for pos in recovery
+                if (pos.get("recovery_replay_evidence") or {}).get("status") == status
+            )
+            for status in (
+                "complete",
+                "missing_data",
+                "missing_identity",
+                "missing_time",
+                "missing_entry_price",
+                "missing_quantity",
+            )
+        },
         "oldest_age_hours": round(oldest_age, 2),
         "total_margin_usdt": round(total_margin, 2),
         "total_unrealized_pnl_usdt": round(total_upnl, 2),
-        "path_metric_note": "report_only_snapshot_path_mfe_mae_and_signal_evidence",
+        "path_metric_note": "report_only_snapshot_path_mfe_mae_signal_and_local_kline_replay_evidence",
         "positions": positions,
         "policy": "report_only_no_auto_exit",
     }
@@ -906,6 +1192,7 @@ def build_output(
 
     # Recovery exit policy evaluation
     recovery_exit_policies = evaluate_recovery_exit_policies(recovery)
+    recovery_bar_replay_evidence = evaluate_recovery_bar_replay_evidence(recovery)
     recovery_strategy_exit_evidence = evaluate_recovery_strategy_exit_evidence(recovery)
     recovery_review = review_recovery_positions(recovery)
 
@@ -939,6 +1226,7 @@ def build_output(
         "recovery_review": recovery_review,
         "recovery_exit_policies": recovery_exit_policies,
         "recovery_strategy_exit_evidence": recovery_strategy_exit_evidence,
+        "recovery_bar_replay_evidence": recovery_bar_replay_evidence,
         "daily_facts": daily_facts,
         "account_summary": account_summary,
     }
@@ -1013,11 +1301,17 @@ def write_markdown(output: dict, path: Path) -> None:
         f"trailing观察={int(strategy_exit_counts.get('recovery_trailing_watch') or 0)}, "
         f"同向持有倾向={int(strategy_exit_counts.get('same_side_reopen_hold_bias') or 0)}"
     )
+    replay_counts = review.get("replay_counts") or {}
+    lines.append(
+        f"- 本地K线bar replay: 退出复核={int(replay_counts.get('bar_replay_exit_manual_review') or 0)}, "
+        f"持有倾向={int(replay_counts.get('bar_replay_hold_bias') or 0)}, "
+        f"数据缺口={int(replay_counts.get('replay_data_gap') or 0)}"
+    )
     positions = review.get("positions") or []
     if positions:
         lines.append("")
-        lines.append("| Strategy | Symbol | Side | Age h | Margin | UPNL | UPNL/Margin | MFE | MAE | MFE drawdown | Same re-open | Opposite signal | Signal action | Strategy exit | Risk | Shadow action |")
-        lines.append("|------|------|------|------:|------:|------:|------------:|----:|----:|-------------:|------------:|---------------:|---------------|---------------|------|------------|")
+        lines.append("| Strategy | Symbol | Side | Age h | Margin | UPNL | UPNL/Margin | MFE | MAE | MFE drawdown | Same re-open | Opposite signal | Signal action | Strategy exit | Bar replay | Risk | Shadow action |")
+        lines.append("|------|------|------|------:|------:|------:|------------:|----:|----:|-------------:|------------:|---------------:|---------------|---------------|-----------|------|------------|")
         for pos in positions[:20]:
             lines.append(
                 f"| {pos.get('strategy')} | {pos.get('symbol')} | {pos.get('side')} | "
@@ -1032,6 +1326,7 @@ def write_markdown(output: dict, path: Path) -> None:
                 f"{int(pos.get('opposite_open_like_count') or 0)} | "
                 f"{pos.get('signal_shadow_action')} | "
                 f"{pos.get('strategy_exit_action')} | "
+                f"{pos.get('recovery_replay_action')}:{pos.get('recovery_replay_exit_reason') or pos.get('recovery_replay_status')} | "
                 f"{pos.get('risk')} | {pos.get('shadow_action')} |"
             )
     else:
@@ -1080,6 +1375,30 @@ def write_markdown(output: dict, path: Path) -> None:
                 lines.append(f"| {action} | {int(count or 0)} |")
         lines.append("")
         lines.append("注：该层只合并策略信号、MFE/MAE、MFE回撤与持仓年龄，不自动平仓。")
+
+    replay = output.get("recovery_bar_replay_evidence") or {}
+    if replay:
+        counts = replay.get("action_counts") or {}
+        status_counts = replay.get("status_counts") or {}
+        lines.extend(["", "## 恢复仓本地K线 Bar Replay 证据", ""])
+        lines.append(
+            f"- 策略: {replay.get('policy')}；自动化: {replay.get('automation')}；"
+            f"退出复核={int(replay.get('manual_review_positions') or 0)}；"
+            f"数据缺口={int(replay.get('data_gap_positions') or 0)}"
+        )
+        if counts:
+            lines.append("| Action | Count |")
+            lines.append("|--------|------:|")
+            for action, count in counts.items():
+                lines.append(f"| {action} | {int(count or 0)} |")
+        if status_counts:
+            lines.append("")
+            lines.append("| Status | Count |")
+            lines.append("|--------|------:|")
+            for status, count in status_counts.items():
+                lines.append(f"| {status} | {int(count or 0)} |")
+        lines.append("")
+        lines.append("注：该层只读取本地/镜像 `runtime/kline_cache`，不调用 Binance；恢复仓入场时间用 first-seen 快照近似。")
 
     lines.append("")
     path.write_text("\n".join(lines), encoding="utf-8")

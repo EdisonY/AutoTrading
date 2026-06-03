@@ -1,9 +1,13 @@
 import importlib.util
+import json
+import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
+CST = timezone(timedelta(hours=8))
 
 
 def load_tool():
@@ -16,6 +20,9 @@ def load_tool():
 
 
 class StrategyTruthLedgerRecoveryPathTests(unittest.TestCase):
+    def kline_ms(self, text: str) -> int:
+        return int(datetime.fromisoformat(text).timestamp() * 1000)
+
     def test_enrich_recovery_path_metrics_attaches_mfe_mae_and_drawdown(self):
         tool = load_tool()
         recovery = [
@@ -94,7 +101,7 @@ class StrategyTruthLedgerRecoveryPathTests(unittest.TestCase):
         review = tool.review_recovery_positions(recovery)
         pos = review["positions"][0]
 
-        self.assertEqual(review["path_metric_note"], "report_only_snapshot_path_mfe_mae_and_signal_evidence")
+        self.assertEqual(review["path_metric_note"], "report_only_snapshot_path_mfe_mae_signal_and_local_kline_replay_evidence")
         self.assertEqual(pos["first_seen_ts"], "2026-06-03T07:00:00+08:00")
         self.assertEqual(pos["path_samples"], 4)
         self.assertEqual(pos["mfe_pct_on_margin"], 8.0)
@@ -261,6 +268,88 @@ class StrategyTruthLedgerRecoveryPathTests(unittest.TestCase):
         self.assertEqual(pos["shadow_action"], "recovery_trailing_watch")
         self.assertEqual(pos["strategy_exit_action"], "recovery_trailing_watch")
         self.assertEqual(review["strategy_exit_counts"]["recovery_trailing_watch"], 1)
+
+    def test_recovery_bar_replay_uses_local_kline_cache(self):
+        tool = load_tool()
+        with tempfile.TemporaryDirectory() as tmp:
+            tool.ROOT = Path(tmp)
+            cache_dir = Path(tmp) / "runtime" / "kline_cache"
+            cache_dir.mkdir(parents=True)
+            (cache_dir / "BTCUSDT_15m_100.json").write_text(
+                json.dumps(
+                    {
+                        "rows": [
+                            [self.kline_ms("2026-06-03T08:00:00+08:00"), "100", "101", "100", "101"],
+                            [self.kline_ms("2026-06-03T08:15:00+08:00"), "101", "101", "100.4", "100.5"],
+                            [self.kline_ms("2026-06-03T08:30:00+08:00"), "100.5", "100.6", "100.1", "100.2"],
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            recovery = [
+                {
+                    "strategy": "A/v11",
+                    "account": "acct-a",
+                    "symbol": "BTCUSDT",
+                    "side": "long",
+                    "entry_price": 100.0,
+                    "qty": 4.0,
+                    "leverage": 4.0,
+                    "margin": 100.0,
+                    "unrealized_pnl": 0.2,
+                    "first_seen_ts": "2026-06-03T08:00:00+08:00",
+                    "snapshot_ts": "2026-06-03T08:30:00+08:00",
+                    "latest_same_strategy_signal": {"timeframe": "15m"},
+                }
+            ]
+
+            summary = tool.evaluate_recovery_bar_replay_evidence(recovery)
+            evidence = recovery[0]["recovery_replay_evidence"]
+            review = tool.review_recovery_positions(recovery)
+            pos = review["positions"][0]
+
+            self.assertEqual(evidence["status"], "complete")
+            self.assertEqual(evidence["action"], "bar_replay_exit_manual_review")
+            self.assertEqual(evidence["replay_exit_reason"], "trailing_stop")
+            self.assertEqual(evidence["timeframe"], "15m")
+            self.assertIn("local kline cache only", evidence["note"])
+            self.assertEqual(summary["manual_review_positions"], 1)
+            self.assertEqual(pos["risk"], "review")
+            self.assertEqual(pos["shadow_action"], "bar_replay_exit_manual_review")
+            self.assertEqual(pos["recovery_replay_action"], "bar_replay_exit_manual_review")
+
+    def test_recovery_bar_replay_missing_cache_is_data_gap(self):
+        tool = load_tool()
+        with tempfile.TemporaryDirectory() as tmp:
+            tool.ROOT = Path(tmp)
+            recovery = [
+                {
+                    "strategy": "B/v16",
+                    "account": "acct-b",
+                    "symbol": "ETHUSDT",
+                    "side": "short",
+                    "entry_price": 2000.0,
+                    "qty": 0.2,
+                    "leverage": 4.0,
+                    "margin": 100.0,
+                    "unrealized_pnl": 1.0,
+                    "first_seen_ts": "2026-06-03T08:00:00+08:00",
+                    "snapshot_ts": "2026-06-03T09:00:00+08:00",
+                    "latest_same_strategy_signal": {"timeframe": "15m"},
+                }
+            ]
+
+            summary = tool.evaluate_recovery_bar_replay_evidence(recovery)
+            evidence = recovery[0]["recovery_replay_evidence"]
+            review = tool.review_recovery_positions(recovery)
+            pos = review["positions"][0]
+
+            self.assertEqual(evidence["status"], "missing_data")
+            self.assertEqual(evidence["action"], "replay_data_gap")
+            self.assertEqual(summary["data_gap_positions"], 1)
+            self.assertEqual(pos["recovery_replay_action"], "replay_data_gap")
+            self.assertNotEqual(pos["shadow_action"], "bar_replay_exit_manual_review")
 
 
 if __name__ == "__main__":

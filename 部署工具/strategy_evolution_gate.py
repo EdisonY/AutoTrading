@@ -943,6 +943,89 @@ def risk_score(results: list[dict[str, Any]], cf_status: str, account_risk: dict
     return max(0, min(100, score))
 
 
+def evidence_maturity_label(
+    evidence: int,
+    latest: dict[str, Any],
+    post_approval: dict[str, Any] | None,
+) -> str:
+    windows = (post_approval or {}).get("windows") or {}
+    closed72 = to_int(((windows.get("72h") or {}).get("quality") or {}).get("closed_samples"))
+    closed168 = to_int(((windows.get("168h") or {}).get("quality") or {}).get("closed_samples"))
+    sample = max(to_int(latest.get("sample_trades")), closed72, closed168)
+    if evidence >= 85 and (sample >= 100 or closed168 >= 100):
+        return "mature"
+    if evidence >= 65 and (sample >= 50 or closed72 >= 50):
+        return "reviewable"
+    if evidence >= 45 and sample >= 30:
+        return "thin_review"
+    return "insufficient"
+
+
+def build_decision_packet(
+    candidate: dict[str, Any],
+    latest: dict[str, Any],
+    cf_status: str,
+    cf_metrics: dict[str, Any],
+    acc_risk: dict[str, Any],
+    post_approval: dict[str, Any] | None,
+    blockers: list[str],
+    status: str,
+    action: str,
+    evidence: int,
+    risk: int,
+) -> dict[str, Any]:
+    windows = (post_approval or {}).get("windows") or {}
+    q24 = (windows.get("24h") or {}).get("quality") or {}
+    q72 = (windows.get("72h") or {}).get("quality") or {}
+    risks = list(blockers[:5])
+    if acc_risk.get("sizing_violation_count"):
+        risks.append(f"账户尺寸违规 {acc_risk.get('sizing_violation_count')}")
+    if acc_risk.get("risk_count"):
+        risks.append(f"硬顶风险 {acc_risk.get('risk_count')}")
+    if not risks:
+        risks.append("no_active_blocker")
+
+    rollback_steps = [
+        "keep_auto_upgrade_and_auto_rollback_disabled",
+        "pause_new_expansion_before_operator_review",
+        "restore_previous_stable_parameter_or_release_if_operator_approves",
+        "verify_24h_72h_168h_windows_after_revert",
+    ]
+    if status == "rollback_required":
+        rollback_steps.insert(1, "prepare_manual_rollback_immediately")
+    elif status == "rollback_watch":
+        rollback_steps.insert(1, "prepare_rollback_review_packet")
+
+    shadow_delta = round(to_float(latest.get("shadow_pnl")) - to_float(latest.get("original_pnl")), 4)
+    counterfactual_pnl = round(to_float(cf_metrics.get("pnl")), 4)
+    expected_advantage = f"shadow pnl delta {shadow_delta:+.2f} USDT; counterfactual {cf_status} pnl {counterfactual_pnl:+.2f} USDT"
+
+    return {
+        "change": candidate.get("proposal") or candidate.get("problem") or latest.get("experiment_id") or "",
+        "expected_advantage": expected_advantage,
+        "expected_edge": {
+            "shadow_pnl_delta": shadow_delta,
+            "counterfactual_status": cf_status,
+            "counterfactual_pnl": counterfactual_pnl,
+        },
+        "risk": {
+            "score": risk,
+            "items": risks[:8],
+            "account": acc_risk,
+        },
+        "evidence_maturity": {
+            "label": evidence_maturity_label(evidence, latest, post_approval),
+            "score": evidence,
+            "shadow_samples": to_int(latest.get("sample_trades")),
+            "closed_24h": to_int(q24.get("closed_samples")),
+            "closed_72h": to_int(q72.get("closed_samples")),
+        },
+        "rollback_path": rollback_steps,
+        "operator_action": action,
+        "automation": "disabled_report_only",
+    }
+
+
 def build_decisions(
     candidates: list[dict[str, Any]],
     experiments: list[dict[str, Any]],
@@ -1006,6 +1089,19 @@ def build_decisions(
         latest = results[-1] if results else {}
         ev_score = evidence_score(results, cf_status, win)
         rk_score = risk_score(results, cf_status, acc_risk, win)
+        decision_packet = build_decision_packet(
+            candidate,
+            latest,
+            cf_status,
+            cf_metrics,
+            acc_risk,
+            post_approval,
+            blockers,
+            status,
+            action,
+            ev_score,
+            rk_score,
+        )
         decisions.append(
             {
                 "candidate_id": key,
@@ -1039,6 +1135,7 @@ def build_decisions(
                 },
                 "account_risk": acc_risk,
                 "blockers": blockers[:5],
+                "decision_packet": decision_packet,
                 "manual_review": review or {},
                 "approved_full_live": bool(full_live_approval),
                 "full_live_approval": full_live_approval or {},
@@ -1231,14 +1328,16 @@ def render_md(payload: dict[str, Any]) -> str:
         f"- 扩样成熟度: {payload['summary'].get('expansion_readiness', {})}",
         f"- Phase 8 门禁硬化审计: {payload['summary'].get('promotion_gate_hardening', {})}",
         "",
-        "| 优先级 | 状态 | 策略 | 候选 | 证据分 | 风险分 | 建议动作 | 关键阻塞 |",
-        "|---|---|---|---|---:|---:|---|---|",
+        "| 优先级 | 状态 | 策略 | 候选 | 证据成熟度 | 证据分 | 风险分 | 建议动作 | 关键阻塞 |",
+        "|---|---|---|---|---|---:|---:|---|---|",
     ]
     for d in payload.get("decisions", []):
         blockers = "; ".join(d.get("blockers") or []) or "-"
+        packet = d.get("decision_packet") or {}
+        maturity = (packet.get("evidence_maturity") or {}).get("label") or "-"
         lines.append(
             f"| {d.get('priority')} | {d.get('status')} | {d.get('strategy')} | "
-            f"{d.get('candidate_id')} | {d.get('evidence_score')} | {d.get('risk_score')} | "
+            f"{d.get('candidate_id')} | {maturity} | {d.get('evidence_score')} | {d.get('risk_score')} | "
             f"{d.get('recommended_action')} | {blockers} |"
         )
     return "\n".join(lines) + "\n"
@@ -1253,6 +1352,7 @@ def render_html(payload: dict[str, Any]) -> str:
   <td>{h(d.get('status'))}</td>
   <td>{h(d.get('strategy'))}</td>
   <td>{h(d.get('candidate_id'))}</td>
+  <td>{h(((d.get('decision_packet') or {}).get('evidence_maturity') or {}).get('label') or '-')}</td>
   <td>{h(d.get('evidence_score'))}</td>
   <td>{h(d.get('risk_score'))}</td>
   <td>{h(d.get('recommended_action'))}</td>
@@ -1260,7 +1360,7 @@ def render_html(payload: dict[str, Any]) -> str:
 </tr>
 """.strip()
         for d in payload.get("decisions", [])
-    ) or '<tr><td colspan="8">暂无候选</td></tr>'
+    ) or '<tr><td colspan="9">暂无候选</td></tr>'
     detail_rows = "".join(
         f"""
 <article>
@@ -1273,6 +1373,7 @@ def render_html(payload: dict[str, Any]) -> str:
     <dt>反事实</dt><dd>{h((d.get('counterfactual') or {}).get('status'))} / samples={h((d.get('counterfactual') or {}).get('samples'))} / pnl={float((d.get('counterfactual') or {}).get('pnl') or 0):+.2f}</dd>
     <dt>窗口</dt><dd>{h(json.dumps(d.get('windows') or {}, ensure_ascii=False))}</dd>
     <dt>放开后实盘</dt><dd>{h(json.dumps((d.get('post_approval_live') or {}).get('windows') or {}, ensure_ascii=False))}</dd>
+    <dt>决策包</dt><dd>{h(json.dumps(d.get('decision_packet') or {}, ensure_ascii=False))}</dd>
   </dl>
 </article>
 """.strip()
@@ -1311,7 +1412,7 @@ dd {{ margin:0; }}
   </header>
   <section class="table-wrap">
     <table>
-      <thead><tr><th>优先级</th><th>状态</th><th>策略</th><th>候选</th><th>证据分</th><th>风险分</th><th>建议动作</th><th>关键阻塞</th></tr></thead>
+      <thead><tr><th>优先级</th><th>状态</th><th>策略</th><th>候选</th><th>证据成熟度</th><th>证据分</th><th>风险分</th><th>建议动作</th><th>关键阻塞</th></tr></thead>
       <tbody>{rows}</tbody>
     </table>
   </section>

@@ -39,6 +39,23 @@ def as_float(value: Any, default: float = 0.0) -> float:
         return default
 
 
+def render_risk(value: Any) -> str:
+    if isinstance(value, list):
+        return "; ".join(str(v) for v in value) or "-"
+    if isinstance(value, dict):
+        items = value.get("items")
+        if isinstance(items, list):
+            return "; ".join(str(v) for v in items) or "-"
+        return json.dumps(value, ensure_ascii=False)
+    return str(value or "-")
+
+
+def render_path(value: Any) -> str:
+    if isinstance(value, list):
+        return "; ".join(str(v) for v in value) or "-"
+    return str(value or "-")
+
+
 def action_for(item: dict[str, Any]) -> str:
     priority = str(item.get("priority") or "")
     status = str(item.get("status") or "")
@@ -84,6 +101,7 @@ def extract_item(decision: dict[str, Any]) -> dict[str, Any] | None:
         "quality_24h": w24.get("quality") or {},
         "quality_72h": w72.get("quality") or {},
         "account_risk": decision.get("account_risk") or {},
+        "decision_packet": decision.get("decision_packet") or {},
     }
     item["action"] = action_for(item)
     return item
@@ -112,6 +130,7 @@ def build_payload(evolution_path: Path) -> dict[str, Any]:
             "actions": counts,
             "worst_candidate": worst.get("candidate_id") or "",
             "worst_pnl_after_cost_24h": as_float((worst.get("quality_24h") or {}).get("realized_pnl_after_cost")) if worst else 0.0,
+            "decision_packets": sum(1 for item in items if item.get("decision_packet")),
         },
         "items": items,
     }
@@ -124,20 +143,24 @@ def render_md(payload: dict[str, Any]) -> str:
         "",
         f"- Generated: `{payload.get('generated_at')}`",
         f"- Active P0/P1 rollback-watch items: `{int(summary.get('items') or 0)}`",
+        f"- Items with decision packet: `{int(summary.get('decision_packets') or 0)}`",
         f"- Worst 24h after-cost PnL: `{summary.get('worst_candidate') or '-'} {as_float(summary.get('worst_pnl_after_cost_24h')):+.2f} USDT`",
         "",
         "## Items",
         "",
-        "| Priority | Strategy | Candidate | 24h closed | 24h PnL after cost | Forced rate | Open fail rate | Regime | Action |",
-        "| --- | --- | --- | ---: | ---: | ---: | ---: | --- | --- |",
+        "| Priority | Strategy | Candidate | Maturity | 24h closed | 24h PnL after cost | Forced rate | Open fail rate | Regime | Action |",
+        "| --- | --- | --- | --- | ---: | ---: | ---: | ---: | --- | --- |",
     ]
     for item in payload.get("items") or []:
         q24 = item.get("quality_24h") or {}
+        packet = item.get("decision_packet") or {}
+        maturity = (packet.get("evidence_maturity") or {}).get("label") or "-"
         lines.append(
-            "| {priority} | {strategy} | {candidate} | {closed} | {pnl:+.2f} | {forced:.1%} | {open_failed:.1%} | {regime} | {action} |".format(
+            "| {priority} | {strategy} | {candidate} | {maturity} | {closed} | {pnl:+.2f} | {forced:.1%} | {open_failed:.1%} | {regime} | {action} |".format(
                 priority=item.get("priority") or "",
                 strategy=item.get("strategy") or "",
                 candidate=item.get("candidate_id") or "",
+                maturity=maturity,
                 closed=int(q24.get("closed_samples") or 0),
                 pnl=as_float(q24.get("realized_pnl_after_cost")),
                 forced=as_float(q24.get("forced_close_rate")),
@@ -146,6 +169,18 @@ def render_md(payload: dict[str, Any]) -> str:
                 action=item.get("action") or "",
             )
         )
+    lines.extend(["", "## Decision Packets", ""])
+    for item in payload.get("items") or []:
+        packet = item.get("decision_packet") or {}
+        if not packet:
+            continue
+        lines.append(f"### {item.get('candidate_id')}")
+        lines.append(f"- Change: {packet.get('change') or '-'}")
+        lines.append(f"- Expected advantage: {packet.get('expected_advantage') or '-'}")
+        lines.append(f"- Risk: {render_risk(packet.get('risk'))}")
+        lines.append(f"- Rollback path: {render_path(packet.get('rollback_path'))}")
+        lines.append(f"- Automation: {packet.get('automation') or 'disabled_report_only'}")
+        lines.append("")
     lines.extend(["", "## Rule", ""])
     lines.append("- Report-only. No automatic rollback, no parameter change, no order action.")
     lines.append("- `prepare_rollback_review` means evidence is strong enough to prepare an operator rollback decision.")

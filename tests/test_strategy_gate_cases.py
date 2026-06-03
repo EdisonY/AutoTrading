@@ -75,6 +75,53 @@ class StrategyGateCasesTest(unittest.TestCase):
                     "expected_reason": "min notional",
                 },
                 {
+                    "name": "account-state-missing",
+                    "gate": "account_state_available",
+                    "inputs": {"account_state_available": False},
+                    "expected_allowed": False,
+                    "expected_reason": "account_state_unavailable",
+                },
+                {
+                    "name": "a-sizing-out-of-tolerance",
+                    "gate": "a_v11_margin_sizing",
+                    "inputs": {
+                        "quantity": 1,
+                        "price": 50,
+                        "risk_usdt": 100,
+                        "leverage": 4,
+                        "order_margin_tolerance_pct": 0.1,
+                    },
+                    "expected_allowed": False,
+                    "expected_reason": "margin_sizing_out_of_tolerance",
+                },
+                {
+                    "name": "b-confirm-pass",
+                    "gate": "b_v16_confirmation",
+                    "inputs": {
+                        "side": "long",
+                        "raw_score": 92,
+                        "confirm_signal": {"trade_side": "long", "net_score": 36},
+                        "open_positions": 1,
+                        "max_active_new_positions": 4,
+                        "no_confirm_high_score_pass": 95,
+                        "confirm_opposite_reject_score": 35,
+                        "opposite_high_score_pass": 90,
+                        "weak_confirm_pass_score": 88,
+                        "confirm_min_score": 25,
+                        "confirm_bonus": 5,
+                        "confirm_strong_bonus": 8,
+                    },
+                    "expected_allowed": True,
+                    "expected_reason": "15m确认36+8",
+                },
+                {
+                    "name": "c-stale-entry-price",
+                    "gate": "c_v14_stale_entry_price",
+                    "inputs": {"recent_prices": [1.23, 1.23, 1.23], "repeated_count": 3},
+                    "expected_allowed": False,
+                    "expected_reason": "入场价连续3次相同，疑似数据冻结",
+                },
+                {
                     "name": "intentional-mismatch",
                     "gate": "positive_quantity",
                     "inputs": {"quantity": 0},
@@ -83,7 +130,7 @@ class StrategyGateCasesTest(unittest.TestCase):
             ]
         )
 
-        self.assertEqual([row["passed"] for row in results], [True, True, True, False])
+        self.assertEqual([row["passed"] for row in results], [True, True, True, True, True, True, True, False])
         self.assertEqual(results[-1]["reason"], "qty<=0")
 
     def test_unknown_gate_raises(self):

@@ -16,7 +16,7 @@
 
 2. **P0-B Replay/live 同路径**
    - 目标：A/B/C scanner 和 replay 使用同一套纯策略 gate/decision 函数，实盘只负责编排、下单、持久化。
-   - 已完成：`core.replay` 事件模型、观测型 `ReplayGateResult`、gate audit、OPEN_SKIPPED 归因覆盖；A/v11、B/v16、C/v14 entry-threshold gates 已抽到 `core.strategy_gates` 并由 live scanner 调用；B/v16 15m confirmation gate、C/v14 15m confirmation gate、C/v14 low-score tail guard、C/v14 stale entry-price market-data guard、C/v14 ATR market microstructure gate、A/v11 resonance-adjusted score、resonance-required gate、tradability gate、replacement-signal eligibility、pool-capacity replacement eligibility、releasable-position selection 与 market microstructure gate、A/B/C no-same-symbol position gate、A/B/C central account-state availability gate、C/v14 same-side position/sector/stop-loss gates、B/v16 stop-loss gate、B/C score-max gate、B/v16 active-position limit gate、B/v16 watchlist score adjustment、B/v16 small-live stage guard、C/v14 consecutive-loss global cooldown、A/v11+C/v14 per-symbol datetime cooldown、B/v16 scan-count cooldown、A/C ATR-zero blacklist、B loss blacklist、A/B/C same-timeframe already-held pre-filter、B/C positive quantity execution gate、A/v11 fixed-margin sizing gate、A/B/C execution result preflight-vs-failure gate 也已抽到 shared pure function；`tests/test_strategy_gates.py` 已提供第一版 shared gate parity smoke；`core.strategy_gate_cases` 已提供 JSON-like same-input gate case runner，可将 replay/live 输入送入同一 pure gate 并检查 expected allowed/reason。
+   - 已完成：`core.replay` 事件模型、观测型 `ReplayGateResult`、gate audit、OPEN_SKIPPED 归因覆盖；A/v11、B/v16、C/v14 entry-threshold gates 已抽到 `core.strategy_gates` 并由 live scanner 调用；B/v16 15m confirmation gate、C/v14 15m confirmation gate、C/v14 low-score tail guard、C/v14 stale entry-price market-data guard、C/v14 ATR market microstructure gate、A/v11 resonance-adjusted score、resonance-required gate、tradability gate、replacement-signal eligibility、pool-capacity replacement eligibility、releasable-position selection 与 market microstructure gate、A/B/C no-same-symbol position gate、A/B/C central account-state availability gate、C/v14 same-side position/sector/stop-loss gates、B/v16 stop-loss gate、B/C score-max gate、B/v16 active-position limit gate、B/v16 watchlist score adjustment、B/v16 small-live stage guard、C/v14 consecutive-loss global cooldown、A/v11+C/v14 per-symbol datetime cooldown、B/v16 scan-count cooldown、A/C ATR-zero blacklist、B loss blacklist、A/B/C same-timeframe already-held pre-filter、B/C positive quantity execution gate、A/v11 fixed-margin sizing gate、A/B/C execution result preflight-vs-failure gate 也已抽到 shared pure function；`tests/test_strategy_gates.py` 已提供第一版 shared gate parity smoke；`core.strategy_gate_cases` 已提供 JSON-like same-input gate case runner，可将 replay/live 输入送入同一 pure gate 并检查 expected allowed/reason；2026-06-03 已把 case runner 扩到更多现有纯 gates：account-state、active-position、A/v11 margin sizing/market/replacement/resonance/releasable、B/v16 confirmation/small-live、C/v14 confirmation/tail/stale-price/market、same-side/timeframe/sector/blacklist/scan cooldown/watchlist adjustment 等。
    - 未完成：A/v11 replacement close/open orchestration、confirmation/risk/execution gates、C/v14 remaining market-data/risk/execution gates、B/v16 remaining position/execution gates 继续共享化，scanner 接入更多纯 gate，历史事件驱动的同输入 replay/live 结论一致性测试。
    - 验收：给定同一时间、币种、上下文，replay 与 live 入场/否决结论一致；关键 OPEN_SKIPPED/OPEN_FAILED 无未知 gate。
 
@@ -32,12 +32,13 @@
 
 3. **P1-C 完整 replay/fill 引擎**
    - 目标：OPEN_SKIPPED 放行后的成交、持仓、出场、费用/滑点仿真统一到一个 replay/fill 引擎。
-   - 已完成：`core.replay_fill` 第一版 deterministic fill kernel，支持 long/short、SL/TP、fee、slippage、保守 intrabar stop/take 冲突处理、end-of-window exit，并有单元测试。
-   - 未完成：尚未接 counterfactual OPEN_SKIPPED 数据、策略专属 trailing/recovery exit、Kline feature 窗口和 portal/report 输出。
+   - 已完成：`core.replay_fill` 第一版 deterministic fill kernel，支持 long/short、SL/TP、fee、slippage、保守 intrabar stop/take 冲突处理、end-of-window exit，并有单元测试；2026-06-03 `counterfactual_open_skips.py` 已用该 kernel 计算 OPEN_SKIPPED 假设放行后的 fill/PnL，并把 replay_fill payload 写进结果。
+   - 未完成：策略专属 trailing/recovery exit、长 Kline feature 窗口和更完整 portal/report 输出。
    - 验收：每个实盘 OPEN_SKIPPED 能回答“若放行，按同一出场规则会怎样”。
 
 4. **P1-D 灰度/回滚门禁增强**
-   - 未完成：更细 regime、关闭确认失败归因、窗口 PF 阈值、paper fill/slippage simulation、自动 rollback plan。
+   - 已完成：2026-06-03 `strategy_evolution_gate.py` 已为 decision 输出 `decision_packet`，包含改动、预期优势、风险、证据成熟度、回滚路径、operator action 和 `disabled_report_only` 自动化状态；`rollback_watch_review.py` 已在 P0/P1 rollback-watch 报告中渲染这些 packet。
+   - 未完成：更细 regime、关闭确认失败归因、窗口 PF 阈值、更完整 paper fill/slippage simulation、自动 rollback plan。
    - 验收：每个 P0/P1 策略候选必须包含改动、优势、风险、回滚路径；自动升级/回滚仍默认关闭，直到验收充分。
 
 5. **P1-E 长历史 K线/研究仓增强**

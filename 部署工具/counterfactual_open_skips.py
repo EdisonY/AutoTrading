@@ -40,6 +40,7 @@ except Exception:
     render_markdown_html = None
 
 from core.replay import ReplayEvent, classify_replay_decision
+from core.replay_fill import ReplayFillRequest, simulate_replay_fill
 from core.binance_api_guard import record_public_response, wait_before_public_request
 from core.binance_api_queue_client import api_queue_client_enabled, queued_api_request
 
@@ -82,6 +83,7 @@ class Result:
     mae_pct: float | None
     barrier_outcome: str
     status: str
+    replay_fill: dict[str, Any] | None = None
 
 
 DDL = """
@@ -313,10 +315,8 @@ def evaluate(
     if close_price is None:
         return Result(event, horizon, entry_ts, entry_price, None, None, None, None, None, "", "invalid_close_price")
     direction = 1.0 if event.side == "long" else -1.0
-    return_pct = direction * (close_price - entry_price) / entry_price * 100
     mfe_pct = 0.0
     mae_pct = 0.0
-    barrier = "none"
     for bar in window:
         high = float(bar[2])
         low = float(bar[3])
@@ -324,19 +324,39 @@ def evaluate(
         adverse = ((entry_price - low) / entry_price * 100) if direction > 0 else ((high - entry_price) / entry_price * 100)
         mfe_pct = max(mfe_pct, favorable)
         mae_pct = max(mae_pct, adverse)
-        if barrier == "none":
-            hit_tp = favorable >= tp_pct
-            hit_sl = adverse >= sl_pct
-            if hit_sl and hit_tp:
-                barrier = "both_same_bar_conservative_sl"
-            elif hit_tp:
-                barrier = "tp_first"
-            elif hit_sl:
-                barrier = "sl_first"
-    sim_pnl = margin_usdt * leverage * return_pct / 100
+    quantity = (margin_usdt * leverage) / entry_price
+    if event.side == "short":
+        stop_loss = entry_price * (1 + sl_pct / 100)
+        take_profit = entry_price * (1 - tp_pct / 100)
+    else:
+        stop_loss = entry_price * (1 - sl_pct / 100)
+        take_profit = entry_price * (1 + tp_pct / 100)
+    fill = simulate_replay_fill(
+        ReplayFillRequest(
+            symbol=event.symbol,
+            side=event.side,
+            entry_price=entry_price,
+            quantity=quantity,
+            stop_loss=stop_loss,
+            take_profit=take_profit,
+            fee_bps=5.0,
+            slippage_bps=0.0,
+        ),
+        [
+            {
+                "ts": datetime.fromtimestamp(int(bar[0]) / 1000, tz=UTC).isoformat(),
+                "open": float(bar[1]),
+                "high": float(bar[2]),
+                "low": float(bar[3]),
+                "close": float(bar[4]),
+            }
+            for bar in window
+        ],
+    )
+    return_pct = (fill.net_pnl_usdt / (margin_usdt * leverage)) * 100
     return Result(
-        event, horizon, entry_ts, entry_price, close_price, return_pct,
-        sim_pnl, mfe_pct, mae_pct, barrier, "complete"
+        event, horizon, entry_ts, entry_price, fill.exit_price, return_pct,
+        fill.net_pnl_usdt, mfe_pct, mae_pct, fill.exit_reason, "complete", fill.to_dict()
     )
 
 
@@ -385,6 +405,7 @@ def store_results(db: Path, results: list[Result], evaluated_at: str) -> None:
                             **r.event.payload,
                             "replay_decision": r.event.replay_decision,
                             "replay_gate": r.event.replay_gate,
+                            "replay_fill": r.replay_fill or {},
                         },
                         ensure_ascii=False,
                         separators=(",", ":"),
@@ -408,8 +429,8 @@ def aggregate(rows: list[Result]) -> dict[str, Any]:
         "median_pnl": median(pnl) if pnl else None,
         "avg_mfe": mean([float(r.mfe_pct) for r in completed]) if completed else None,
         "avg_mae": mean([float(r.mae_pct) for r in completed]) if completed else None,
-        "tp_first": sum(r.barrier_outcome == "tp_first" for r in completed),
-        "sl_first": sum(r.barrier_outcome in {"sl_first", "both_same_bar_conservative_sl"} for r in completed),
+        "tp_first": sum(r.barrier_outcome in {"tp_first", "take_profit"} for r in completed),
+        "sl_first": sum(r.barrier_outcome in {"sl_first", "both_same_bar_conservative_sl", "stop_loss"} for r in completed),
     }
 
 
@@ -463,8 +484,8 @@ def report_markdown(
         "## 口径",
         "",
         f"- 对已有明确 `symbol/side` 的 `OPEN_SKIPPED`，使用否决后的下一根 1m K 线开盘作为模拟入场价。",
-        f"- 模拟仓位统一为保证金 {args.margin_usdt:.0f} USDT、{args.leverage:.0f}x 杠杆；PnL 用于比较过滤价值，不等同于真实成交回报。",
-        f"- `MFE/MAE` 为顺向/逆向最大价格波动；`TP/SL first` 是统一 `{args.tp_pct:.1f}% / {args.sl_pct:.1f}%` 价格障碍测试，不替代各策略真实 ATR 出场。",
+        f"- 模拟仓位统一为保证金 {args.margin_usdt:.0f} USDT、{args.leverage:.0f}x 杠杆；PnL 由 `core.replay_fill` 计算，含默认 5bps 往返手续费模型。",
+        f"- `MFE/MAE` 为顺向/逆向最大价格波动；`TP/SL first` 是共享 fill kernel 的统一 `{args.tp_pct:.1f}% / {args.sl_pct:.1f}%` 价格障碍测试，不替代各策略真实 ATR 出场。",
         f"- 默认用 {args.primary_horizon} 分钟结果判断过滤层是否错杀；尚未走满窗口的事件只入库为 pending，不进入结论。",
         "- 事件归一使用 `core.replay.ReplayEvent` / `ReplayDecision`，过滤层分组优先采用统一 replay gate，后续会把实盘门控迁到同一路径。",
         "",
@@ -565,6 +586,7 @@ def write_json_report(path: Path, events: list[SkipEvent], results: list[Result]
         "hours": args.hours,
         "primary_horizon_minutes": args.primary_horizon,
         "replay_schema": "core.replay/v1",
+        "fill_schema": "core.replay_fill/v1",
         "events": len(events),
         "complete_primary_samples": len(primary),
         "overall": aggregate(primary),

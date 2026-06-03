@@ -151,6 +151,43 @@ class StrategyGateCasesTest(unittest.TestCase):
         with self.assertRaises(KeyError):
             evaluate_strategy_gate_case({"gate": "missing", "inputs": {}})
 
+    def test_a_v11_replacement_orchestration_cases_replay(self):
+        results = evaluate_strategy_gate_cases(
+            [
+                {
+                    "name": "a-replacement-signal",
+                    "gate": "a_v11_replacement_signal",
+                    "inputs": {"effective_score": 108, "strong_signal_threshold": 112},
+                    "expected_allowed": False,
+                    "expected_reason": "replacement_signal_fail",
+                },
+                {
+                    "name": "a-pool-full",
+                    "gate": "a_v11_pool_capacity_replacement",
+                    "inputs": {
+                        "timeframe_full": True,
+                        "replacement_signal_allowed": False,
+                        "reject_reason": "周期池满且未达到强信号替换条件",
+                    },
+                    "expected_allowed": False,
+                    "expected_reason": "周期池满且未达到强信号替换条件",
+                },
+                {
+                    "name": "a-release-missing",
+                    "gate": "a_v11_replacement_release_result",
+                    "inputs": {"release_success": False, "reason": "周期池满且无可释放弱仓"},
+                    "expected_allowed": False,
+                    "expected_reason": "周期池满且无可释放弱仓",
+                },
+            ]
+        )
+
+        self.assertEqual([row["passed"] for row in results], [True, True, True])
+        self.assertEqual(
+            [row["reason"] for row in results],
+            ["replacement_signal_fail", "周期池满且未达到强信号替换条件", "周期池满且无可释放弱仓"],
+        )
+
     def test_strategy_gate_case_is_json_safe_and_replayable(self):
         decision = evaluate_symbol_blacklist_gate(
             symbol="BTCUSDT",

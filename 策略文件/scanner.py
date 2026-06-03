@@ -122,6 +122,7 @@ from core.strategy_gates import (
     evaluate_a_v11_margin_sizing_gate,
     evaluate_a_v11_market_microstructure_gate,
     evaluate_a_v11_pool_capacity_replacement_gate,
+    evaluate_a_v11_replacement_release_result_gate,
     evaluate_a_v11_releasable_position,
     evaluate_a_v11_replacement_signal,
     evaluate_a_v11_resonance_required_gate,
@@ -1138,6 +1139,51 @@ class Scanner:
         )
         return decision.allowed
 
+    def _replacement_orchestration_cases(
+        self,
+        sig: dict,
+        *,
+        resonance: bool,
+        timeframe_full: bool,
+        tf: str,
+        reject_reason: str = "周期池满且未达到强信号替换条件",
+    ):
+        effective_score = self._effective_signal_score(sig, resonance=resonance)
+        replacement_gate = evaluate_a_v11_replacement_signal(
+            effective_score=effective_score,
+            strong_signal_threshold=STRONG_SIGNAL_THRESHOLD,
+        )
+        pool_gate = evaluate_a_v11_pool_capacity_replacement_gate(
+            timeframe_full=timeframe_full,
+            replacement_signal_allowed=replacement_gate.allowed,
+            reject_reason=reject_reason,
+        )
+        meta = {"strategy": "A/v11", "timeframe": tf, "chain": "position_replacement"}
+        cases = [
+            strategy_gate_case(
+                name="a_v11_replacement_signal",
+                gate="a_v11_replacement_signal",
+                inputs={
+                    "effective_score": effective_score,
+                    "strong_signal_threshold": STRONG_SIGNAL_THRESHOLD,
+                },
+                decision=replacement_gate,
+                meta={**meta, "chain_step": "replacement_signal"},
+            ),
+            strategy_gate_case(
+                name="a_v11_pool_capacity_replacement",
+                gate="a_v11_pool_capacity_replacement",
+                inputs={
+                    "timeframe_full": timeframe_full,
+                    "replacement_signal_allowed": replacement_gate.allowed,
+                    "reject_reason": reject_reason,
+                },
+                decision=pool_gate,
+                meta={**meta, "chain_step": "pool_capacity"},
+            ),
+        ]
+        return replacement_gate, pool_gate, cases
+
     def _passes_entry_threshold(self, sig: dict) -> bool:
         decision = evaluate_a_v11_entry_threshold(
             timeframe=sig["timeframe"],
@@ -1916,9 +1962,11 @@ class Scanner:
                 sig = next((s for s in all_signals.get(tf, []) if s["symbol"] == sym), None)
                 if sig:
                     tf_full = self._pos_count(tf) >= self.max_positions
-                    pool_gate = evaluate_a_v11_pool_capacity_replacement_gate(
+                    _, pool_gate, replacement_cases = self._replacement_orchestration_cases(
+                        sig,
+                        resonance=True,
                         timeframe_full=tf_full,
-                        replacement_signal_allowed=self._can_try_full_replacement(sig, resonance=True),
+                        tf=tf,
                     )
                     if not pool_gate.allowed:
                         log_sentinel_scan(
@@ -1927,6 +1975,7 @@ class Scanner:
                             score=abs(float(sig.get("net_score") or 0)),
                             decision_stage="position_replacement",
                             filter_layer="risk",
+                            strategy_gate_cases=replacement_cases,
                         )
                         continue
                     self._open_position(sig, now_str, resonance=True, force_replacement=tf_full)
@@ -1954,9 +2003,11 @@ class Scanner:
                     )
                     continue
                 tf_full = self._pos_count(tf) >= self.max_positions
-                pool_gate = evaluate_a_v11_pool_capacity_replacement_gate(
+                _, pool_gate, replacement_cases = self._replacement_orchestration_cases(
+                    sig,
+                    resonance=False,
                     timeframe_full=tf_full,
-                    replacement_signal_allowed=self._can_try_full_replacement(sig, resonance=False),
+                    tf=tf,
                 )
                 if not pool_gate.allowed:
                     log_sentinel_scan(
@@ -1965,6 +2016,7 @@ class Scanner:
                         score=abs(float(sig.get("net_score") or 0)),
                         decision_stage="position_replacement",
                         filter_layer="risk",
+                        strategy_gate_cases=replacement_cases,
                     )
                     continue
                 self._open_position(sig, now_str, resonance=False, force_replacement=tf_full)
@@ -1979,9 +2031,11 @@ class Scanner:
                 if cd and now < cd:
                     continue
                 tf_full = self._pos_count(tf) >= self.max_positions
-                pool_gate = evaluate_a_v11_pool_capacity_replacement_gate(
+                _, pool_gate, replacement_cases = self._replacement_orchestration_cases(
+                    vsig,
+                    resonance=vsig.get("vpb_resonance", False),
                     timeframe_full=tf_full,
-                    replacement_signal_allowed=self._can_try_full_replacement(vsig, resonance=vsig.get("vpb_resonance", False)),
+                    tf=tf,
                     reject_reason="VPB周期池满且未达到强信号替换条件",
                 )
                 if not pool_gate.allowed:
@@ -1991,6 +2045,7 @@ class Scanner:
                         score=abs(float(vsig.get("vpb_score") or vsig.get("net_score") or 0)),
                         decision_stage="position_replacement",
                         filter_layer="risk",
+                        strategy_gate_cases=replacement_cases,
                     )
                     continue
                 self._open_position(vsig, now_str, resonance=vsig.get("vpb_resonance", False), force_replacement=tf_full)
@@ -2243,7 +2298,13 @@ class Scanner:
 
             released_for_replacement = False
             if force_replacement:
-                if self._release_position_for_strong_signal(
+                _, _, replacement_cases = self._replacement_orchestration_cases(
+                    sig,
+                    resonance=resonance,
+                    timeframe_full=True,
+                    tf=tf,
+                )
+                release_success = self._release_position_for_strong_signal(
                     sig,
                     now_str,
                     now_dt,
@@ -2251,7 +2312,8 @@ class Scanner:
                     effective_score=net_score,
                     preferred_tf=tf,
                     require_preferred_tf=True,
-                ):
+                )
+                if release_success:
                     released_for_replacement = True
                     log_event({
                         "time": now_str, "event": "OPEN_RETRY_AFTER_EVICT",
@@ -2259,9 +2321,21 @@ class Scanner:
                         "timeframe": tf, "reason": "周期池满，强信号释放弱仓后重试开仓",
                         "decision_stage": "position_replacement",
                         "filter_layer": "risk",
+                        "strategy_gate_cases": replacement_cases,
                         **sentinel_fields(inst_id),
                     })
                 else:
+                    release_gate = evaluate_a_v11_replacement_release_result_gate(
+                        release_success=False,
+                        reason="周期池满且无可释放弱仓",
+                    )
+                    release_case = strategy_gate_case(
+                        name="a_v11_replacement_release_result",
+                        gate="a_v11_replacement_release_result",
+                        inputs={"release_success": False, "reason": "周期池满且无可释放弱仓"},
+                        decision=release_gate,
+                        meta={"strategy": "A/v11", "timeframe": tf, "chain_step": "release_result"},
+                    )
                     log_event({
                         "time": now_str, "event": "OPEN_SKIPPED", "symbol": inst_id,
                         "side": side, "score": net_score, "timeframe": tf,
@@ -2274,6 +2348,7 @@ class Scanner:
                         "replacement_elite_score": EVICT_ELITE_SCORE,
                         "tf_positions": self._pos_count(tf),
                         "max_positions_per_tf": self.max_positions,
+                        "strategy_gate_cases": [*replacement_cases, release_case],
                         **sentinel_fields(inst_id),
                     })
                     return

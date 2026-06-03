@@ -531,6 +531,28 @@ def evaluate_a_v11_pool_capacity_replacement_gate(
     )
 
 
+def evaluate_a_v11_replacement_release_result_gate(
+    *,
+    release_success: bool,
+    reason: str = "replacement_release_failed",
+) -> StrategyGateDecision:
+    """Evaluate the final A/v11 replacement release orchestration result."""
+    reason_text = str(reason or "replacement_release_failed")
+    if release_success:
+        return StrategyGateDecision(
+            True,
+            "position_replacement",
+            "replacement_release_succeeded",
+            evidence={"release_success": True},
+        )
+    return StrategyGateDecision(
+        False,
+        "position_replacement",
+        reason_text,
+        evidence={"release_success": False, "reason": reason_text},
+    )
+
+
 def evaluate_a_v11_resonance_required_gate(
     *,
     require_resonance: bool,

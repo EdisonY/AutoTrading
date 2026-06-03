@@ -44,6 +44,8 @@ RESEARCH_STORE_JSON = ROOT / "runtime" / "research_store_summary_latest.json"
 RESEARCH_STORE_MD = REPORTS_DIR / "research_store_summary_latest.md"
 KLINE_BACKFILL_JSON = ROOT / "runtime" / "research_kline_backfill_latest.json"
 KLINE_BACKFILL_MD = REPORTS_DIR / "research_kline_backfill_latest.md"
+DEPTH_BACKFILL_JSON = ROOT / "runtime" / "research_depth_backfill_latest.json"
+DEPTH_BACKFILL_MD = REPORTS_DIR / "research_depth_backfill_latest.md"
 REPLAY_FEATURE_JSON = ROOT / "runtime" / "replay_feature_dataset_latest.json"
 REPLAY_FEATURE_MD = REPORTS_DIR / "replay_feature_dataset_latest.md"
 REPLAY_GATE_JSON = ROOT / "runtime" / "replay_gate_audit_latest.json"
@@ -575,6 +577,7 @@ def research_store_summary(path: Path | None) -> dict[str, Any]:
         "kline_coverage": [],
         "kline_acceptance": {"status": "missing", "target_met": False, "target_days": 30},
         "feature_coverage": [],
+        "depth_coverage": [],
         "totals": {"events": 0, "signals": 0, "opens": 0, "skipped": 0, "failed": 0},
         "top_skip": {},
     }
@@ -606,6 +609,7 @@ def research_store_summary(path: Path | None) -> dict[str, Any]:
         "kline_coverage": payload.get("kline_coverage") if isinstance(payload.get("kline_coverage"), list) else [],
         "kline_acceptance": payload.get("kline_acceptance") if isinstance(payload.get("kline_acceptance"), dict) else empty["kline_acceptance"],
         "feature_coverage": payload.get("feature_coverage") if isinstance(payload.get("feature_coverage"), list) else [],
+        "depth_coverage": payload.get("depth_coverage") if isinstance(payload.get("depth_coverage"), list) else [],
         "totals": totals,
         "top_skip": skip_layers[0] if skip_layers else {},
     }
@@ -631,6 +635,34 @@ def kline_backfill_summary(path: Path | None) -> dict[str, Any]:
     return {
         "available": True,
         "path": KLINE_BACKFILL_MD,
+        "age": age_text(generated_at),
+        "fresh": bool(generated_at and (datetime.now(CST) - generated_at).total_seconds() < 4 * 3600),
+        "plan": plan,
+        "submit": submit,
+        "ingest": ingest,
+    }
+
+
+def depth_backfill_summary(path: Path | None) -> dict[str, Any]:
+    empty = {
+        "available": False,
+        "path": DEPTH_BACKFILL_MD,
+        "age": "无深度计划",
+        "fresh": False,
+        "plan": {"summary": {"requests": 0, "status": "missing"}},
+        "submit": {},
+        "ingest": {},
+    }
+    payload = read_json(path) if path else None
+    if not isinstance(payload, dict):
+        return empty
+    generated_at = parse_dt(payload.get("generated_at"))
+    plan = payload.get("plan") if isinstance(payload.get("plan"), dict) else {}
+    submit = payload.get("submit") if isinstance(payload.get("submit"), dict) else {}
+    ingest = payload.get("ingest") if isinstance(payload.get("ingest"), dict) else {}
+    return {
+        "available": True,
+        "path": DEPTH_BACKFILL_MD,
         "age": age_text(generated_at),
         "fresh": bool(generated_at and (datetime.now(CST) - generated_at).total_seconds() < 4 * 3600),
         "plan": plan,
@@ -1551,6 +1583,11 @@ def function_status_cards(data: dict[str, Any]) -> list[dict[str, str]]:
     kline_backfill_plan = (kline_backfill.get("plan") or {}).get("summary") or {}
     kline_backfill_submit = kline_backfill.get("submit") or {}
     kline_backfill_ingest = kline_backfill.get("ingest") or {}
+    depth_backfill = data.get("depth_backfill") or {}
+    depth_backfill_plan = (depth_backfill.get("plan") or {}).get("summary") or {}
+    depth_backfill_submit = depth_backfill.get("submit") or {}
+    depth_backfill_ingest = depth_backfill.get("ingest") or {}
+    depth_backfill_cache = depth_backfill_ingest.get("depth_cache") or {}
     replay_feature = data.get("replay_feature") or {}
     replay_summary = replay_feature.get("summary") or {}
     replay_gate = data.get("replay_gate") or {}
@@ -1722,6 +1759,22 @@ def function_status_cards(data: dict[str, Any]) -> list[dict[str, str]]:
                 f"ingested rows {int(kline_backfill_ingest.get('backfill_rows') or 0)}; 更新 {kline_backfill.get('age')}。默认只生成计划，不直接请求 Binance。"
                 if kline_backfill.get("available")
                 else "K线长历史补数计划尚未生成；30日覆盖缺口只能先从现有 research_store 判断。"
+            ),
+        },
+        {
+            "level": "ok" if depth_backfill.get("fresh") else "warn",
+            "name": "深度采样计划",
+            "value": (
+                f"{int(depth_backfill_plan.get('requests') or 0)} 请求"
+                if depth_backfill.get("available")
+                else "未生成"
+            ),
+            "body": (
+                f"状态 {depth_backfill_plan.get('status', '-')}; submitted {int(depth_backfill_submit.get('submitted') or 0)}; "
+                f"ingested rows {int(depth_backfill_ingest.get('backfill_rows') or 0)}; "
+                f"cache files {int(depth_backfill_cache.get('files_written') or 0)}; 更新 {depth_backfill.get('age')}。默认只生成计划，不直接请求 Binance。"
+                if depth_backfill.get("available")
+                else "深度采样计划尚未生成；盘口 replay 只能使用已有 runtime/depth_cache。"
             ),
         },
         {
@@ -2321,6 +2374,8 @@ def build_data() -> dict[str, Any]:
     data["research_store_html"] = RESEARCH_STORE_MD
     data["kline_backfill"] = kline_backfill_summary(KLINE_BACKFILL_JSON)
     data["kline_backfill_html"] = KLINE_BACKFILL_MD
+    data["depth_backfill"] = depth_backfill_summary(DEPTH_BACKFILL_JSON)
+    data["depth_backfill_html"] = DEPTH_BACKFILL_MD
     data["replay_feature"] = replay_feature_summary(REPLAY_FEATURE_JSON)
     data["replay_feature_html"] = REPLAY_FEATURE_MD
     data["replay_gate"] = replay_gate_summary(REPLAY_GATE_JSON)
@@ -2808,6 +2863,20 @@ def render_html(out_dir: Path) -> str:
 """.strip()
         for r in (research_store.get("feature_coverage") or [])[:6]
     ) or '<tr><td colspan="6">暂无特征研究分区</td></tr>'
+    research_depth_rows = "".join(
+        f"""
+<tr>
+  <td>{h(r.get('symbol'))}</td>
+  <td>{int(r.get('snapshots') or 0)}</td>
+  <td>{int(r.get('max_bid_levels') or 0)}</td>
+  <td>{int(r.get('max_ask_levels') or 0)}</td>
+  <td>{float(r.get('avg_spread_bps') or 0):.4f}</td>
+  <td>{h(r.get('first_snapshot') or '-')}</td>
+  <td>{h(r.get('latest_snapshot') or '-')}</td>
+</tr>
+""".strip()
+        for r in (research_store.get("depth_coverage") or [])[:8]
+    ) or '<tr><td colspan="7">暂无深度快照研究分区</td></tr>'
     replay_gate = data.get("replay_gate") or {}
     replay_gate_summary_data = replay_gate.get("summary") or {}
     replay_gate_rows = "".join(
@@ -2977,6 +3046,14 @@ def render_html(out_dir: Path) -> str:
             "看 15m/30m/1h 长历史缺口需要哪些 queued Kline 请求。默认只出计划，不直接打 Binance。",
             data["kline_backfill_html"],
             "看补数计划",
+            "slate",
+        ),
+        route_card(
+            "盘口深度怎么采",
+            "采样计划",
+            "看当前盘口 depth snapshot 需要哪些 queued depth 请求。默认只出计划，不直接打 Binance。",
+            data["depth_backfill_html"],
+            "看深度计划",
             "slate",
         ),
         route_card(
@@ -3246,6 +3323,10 @@ th {{ background:#f1f5f9; color:#334155; }}
     <table class="subtable">
       <thead><tr><th>周期</th><th>特征行</th><th>币种数</th><th>平均1bar波动</th><th>平均振幅</th><th>最新K线</th></tr></thead>
       <tbody>{research_feature_rows}</tbody>
+    </table>
+    <table class="subtable">
+      <thead><tr><th>币种</th><th>深度快照</th><th>Bid levels</th><th>Ask levels</th><th>Avg spread bps</th><th>首个快照</th><th>最新快照</th></tr></thead>
+      <tbody>{research_depth_rows}</tbody>
     </table>
   </section>
 

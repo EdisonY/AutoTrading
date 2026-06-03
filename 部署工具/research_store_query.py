@@ -25,7 +25,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 ROOT = SCRIPT_DIR.parent if SCRIPT_DIR.name == "部署工具" else SCRIPT_DIR
 CST = timezone(timedelta(hours=8))
 
-TABLES = ("events", "sentinel_scans", "account_snapshots", "klines", "features")
+TABLES = ("events", "sentinel_scans", "account_snapshots", "klines", "features", "depth_snapshots")
 DEFAULT_KLINE_TARGET_DAYS = 30
 DEFAULT_KLINE_KEY_INTERVALS = ("15m", "30m", "1h")
 
@@ -134,6 +134,7 @@ def build_summary(
         "kline_coverage": [],
         "kline_acceptance": build_kline_acceptance([], kline_target_days, key_intervals),
         "feature_coverage": [],
+        "depth_coverage": [],
     }
     if available.get("events"):
         summary["strategy_funnel"] = query_dicts(
@@ -258,6 +259,26 @@ def build_summary(
             """,
             [cutoff],
         )
+    if available.get("depth_snapshots"):
+        summary["depth_coverage"] = query_dicts(
+            con,
+            """
+            select
+              symbol,
+              count(*) as snapshots,
+              min(snapshot_time) as first_snapshot,
+              max(snapshot_time) as latest_snapshot,
+              max(bid_levels) as max_bid_levels,
+              max(ask_levels) as max_ask_levels,
+              round(avg(spread_bps), 4) as avg_spread_bps
+            from depth_snapshots
+            where snapshot_time >= ?
+            group by 1
+            order by snapshots desc, latest_snapshot desc
+            limit 30
+            """,
+            [cutoff],
+        )
     return summary
 
 
@@ -308,6 +329,18 @@ def render_md(payload: dict[str, Any]) -> str:
         [r.get("interval"), r.get("rows"), r.get("symbols"), r.get("avg_abs_return_1_pct"), r.get("avg_range_pct"), r.get("latest_bar")]
         for r in payload.get("feature_coverage", [])
     ]
+    depth_rows = [
+        [
+            r.get("symbol"),
+            r.get("snapshots"),
+            r.get("max_bid_levels"),
+            r.get("max_ask_levels"),
+            r.get("avg_spread_bps"),
+            r.get("first_snapshot"),
+            r.get("latest_snapshot"),
+        ]
+        for r in payload.get("depth_coverage", [])[:20]
+    ]
     return "\n\n".join(
         [
             "# Research Store Summary",
@@ -335,6 +368,8 @@ def render_md(payload: dict[str, Any]) -> str:
             md_table(["interval", "bars", "symbols", "coverage_days", "target_days", "met", "first", "latest"], kline_rows),
             "## Feature Coverage",
             md_table(["interval", "rows", "symbols", "avg_abs_ret_1", "avg_range", "latest"], feature_rows),
+            "## Depth Snapshot Coverage",
+            md_table(["symbol", "snapshots", "bid_levels", "ask_levels", "avg_spread_bps", "first", "latest"], depth_rows),
         ]
     )
 

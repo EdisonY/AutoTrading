@@ -30,6 +30,16 @@ def write_kline_partition(store: Path, rows: list[dict[str, object]]) -> None:
         path.write_text("\n".join(json.dumps(row) for row in day_rows), encoding="utf-8")
 
 
+def write_depth_partition(store: Path, rows: list[dict[str, object]]) -> None:
+    by_date: dict[str, list[dict[str, object]]] = {}
+    for row in rows:
+        by_date.setdefault(str(row["date"]), []).append(row)
+    for day, day_rows in by_date.items():
+        path = store / "depth_snapshots" / f"date={day}" / "data.jsonl"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("\n".join(json.dumps(row) for row in day_rows), encoding="utf-8")
+
+
 def kline_rows(intervals: list[str], days: int) -> list[dict[str, object]]:
     start = datetime.now().date() - timedelta(days=days - 1)
     rows: list[dict[str, object]] = []
@@ -66,7 +76,10 @@ class ResearchStoreQueryTests(unittest.TestCase):
 
     def build_summary(self, store: Path, days: int = 45) -> dict[str, object]:
         with self.duckdb.connect(database=":memory:") as con:
-            available = {"klines": self.tool.register_view(con, store, "klines", "jsonl")}
+            available = {
+                "klines": self.tool.register_view(con, store, "klines", "jsonl"),
+                "depth_snapshots": self.tool.register_view(con, store, "depth_snapshots", "jsonl"),
+            }
             return self.tool.build_summary(
                 con,
                 available,
@@ -113,6 +126,41 @@ class ResearchStoreQueryTests(unittest.TestCase):
             self.assertEqual(acceptance["status"], "coverage_gap")
             self.assertEqual(acceptance["missing_intervals"], ["30m"])
             self.assertEqual(acceptance["met_required_interval_count"], 2)
+
+    def test_depth_snapshot_coverage_summarizes_rows(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = Path(tmp) / "research_store"
+            write_depth_partition(
+                store,
+                [
+                    {
+                        "symbol": "ABCUSDT",
+                        "date": "2026-06-04",
+                        "snapshot_time": "2026-06-04T00:00:00+08:00",
+                        "bid_levels": 2,
+                        "ask_levels": 3,
+                        "spread_bps": 1.5,
+                    },
+                    {
+                        "symbol": "ABCUSDT",
+                        "date": "2026-06-04",
+                        "snapshot_time": "2026-06-04T00:05:00+08:00",
+                        "bid_levels": 4,
+                        "ask_levels": 5,
+                        "spread_bps": 2.5,
+                    },
+                ],
+            )
+
+            summary = self.build_summary(store)
+
+            self.assertEqual(len(summary["depth_coverage"]), 1)
+            row = summary["depth_coverage"][0]
+            self.assertEqual(row["symbol"], "ABCUSDT")
+            self.assertEqual(row["snapshots"], 2)
+            self.assertEqual(row["max_bid_levels"], 4)
+            self.assertEqual(row["max_ask_levels"], 5)
+            self.assertEqual(row["avg_spread_bps"], 2.0)
 
 
 if __name__ == "__main__":

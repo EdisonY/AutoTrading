@@ -46,6 +46,8 @@ KLINE_BACKFILL_JSON = ROOT / "runtime" / "research_kline_backfill_latest.json"
 KLINE_BACKFILL_MD = REPORTS_DIR / "research_kline_backfill_latest.md"
 DEPTH_BACKFILL_JSON = ROOT / "runtime" / "research_depth_backfill_latest.json"
 DEPTH_BACKFILL_MD = REPORTS_DIR / "research_depth_backfill_latest.md"
+RESEARCH_RETENTION_JSON = ROOT / "runtime" / "research_store_retention_latest.json"
+RESEARCH_RETENTION_MD = REPORTS_DIR / "research_store_retention_latest.md"
 REPLAY_FEATURE_JSON = ROOT / "runtime" / "replay_feature_dataset_latest.json"
 REPLAY_FEATURE_MD = REPORTS_DIR / "replay_feature_dataset_latest.md"
 REPLAY_GATE_JSON = ROOT / "runtime" / "replay_gate_audit_latest.json"
@@ -704,6 +706,36 @@ def depth_backfill_summary(path: Path | None) -> dict[str, Any]:
         "plan": plan,
         "submit": submit,
         "ingest": ingest,
+    }
+
+
+def research_retention_summary(path: Path | None) -> dict[str, Any]:
+    empty = {
+        "available": False,
+        "path": RESEARCH_RETENTION_MD,
+        "age": "无retention计划",
+        "fresh": False,
+        "apply_enabled": False,
+        "summary": {"partitions": 0, "archive_candidate_partitions": 0, "apply_moved": 0, "apply_skipped": 0},
+        "by_table": [],
+        "partitions": [],
+    }
+    payload = read_json(path) if path else None
+    if not isinstance(payload, dict):
+        return empty
+    generated_at = parse_dt(payload.get("generated_at"))
+    summary = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
+    return {
+        "available": True,
+        "path": RESEARCH_RETENTION_MD,
+        "age": age_text(generated_at),
+        "fresh": bool(generated_at and (datetime.now(CST) - generated_at).total_seconds() < 4 * 3600),
+        "apply_enabled": bool(payload.get("apply_enabled")),
+        "hot_days": int(payload.get("hot_days") or 0),
+        "retain_days": int(payload.get("retain_days") or 0),
+        "summary": summary or empty["summary"],
+        "by_table": summary.get("by_table") if isinstance(summary.get("by_table"), list) else [],
+        "partitions": payload.get("partitions") if isinstance(payload.get("partitions"), list) else [],
     }
 
 
@@ -1657,6 +1689,8 @@ def function_status_cards(data: dict[str, Any]) -> list[dict[str, str]]:
     depth_backfill_submit = depth_backfill.get("submit") or {}
     depth_backfill_ingest = depth_backfill.get("ingest") or {}
     depth_backfill_cache = depth_backfill_ingest.get("depth_cache") or {}
+    research_retention = data.get("research_retention") or {}
+    research_retention_summary_data = research_retention.get("summary") or {}
     replay_feature = data.get("replay_feature") or {}
     replay_summary = replay_feature.get("summary") or {}
     replay_gate = data.get("replay_gate") or {}
@@ -1851,6 +1885,29 @@ def function_status_cards(data: dict[str, Any]) -> list[dict[str, str]]:
                 f"cache files {int(depth_backfill_cache.get('files_written') or 0)}; 更新 {depth_backfill.get('age')}。默认只生成计划，不直接请求 Binance。"
                 if depth_backfill.get("available")
                 else "深度采样计划尚未生成；盘口 replay 只能使用已有 runtime/depth_cache 或 research_store/depth_snapshots。"
+            ),
+        },
+        {
+            "level": (
+                "ok"
+                if research_retention.get("fresh") and int(research_retention_summary_data.get("archive_candidate_partitions") or 0) == 0
+                else "warn"
+                if research_retention.get("available")
+                else "warn"
+            ),
+            "name": "研究仓retention",
+            "value": (
+                f"{int(research_retention_summary_data.get('archive_candidate_partitions') or 0)} 候选"
+                if research_retention.get("available")
+                else "未生成"
+            ),
+            "body": (
+                f"分区 {int(research_retention_summary_data.get('partitions') or 0)}；"
+                f"moved {int(research_retention_summary_data.get('apply_moved') or 0)}；"
+                f"skipped {int(research_retention_summary_data.get('apply_skipped') or 0)}；"
+                f"保留 {int(research_retention.get('retain_days') or 0)} 日；更新 {research_retention.get('age')}。默认只计划，apply 才移动到 archive。"
+                if research_retention.get("available")
+                else "研究仓分区 retention/归档计划尚未生成；旧分区可能持续堆积。"
             ),
         },
         {
@@ -2485,6 +2542,8 @@ def build_data() -> dict[str, Any]:
     data["kline_backfill_html"] = KLINE_BACKFILL_MD
     data["depth_backfill"] = depth_backfill_summary(DEPTH_BACKFILL_JSON)
     data["depth_backfill_html"] = DEPTH_BACKFILL_MD
+    data["research_retention"] = research_retention_summary(RESEARCH_RETENTION_JSON)
+    data["research_retention_html"] = RESEARCH_RETENTION_MD
     data["replay_feature"] = replay_feature_summary(REPLAY_FEATURE_JSON)
     data["replay_feature_html"] = REPLAY_FEATURE_MD
     data["replay_gate"] = replay_gate_summary(REPLAY_GATE_JSON)
@@ -2994,6 +3053,38 @@ def render_html(out_dir: Path) -> str:
 """.strip()
         for r in (research_store.get("depth_coverage") or [])[:8]
     ) or '<tr><td colspan="7">暂无深度快照研究分区</td></tr>'
+    research_retention = data.get("research_retention") or {}
+    research_retention_summary_data = research_retention.get("summary") or {}
+    research_retention_table_rows = "".join(
+        f"""
+<tr>
+  <td>{h(r.get('table'))}</td>
+  <td>{int(r.get('partitions') or 0)}</td>
+  <td>{int(r.get('hot') or 0)}</td>
+  <td>{int(r.get('warm') or 0)}</td>
+  <td>{int(r.get('archive_candidate') or 0)}</td>
+  <td>{int(r.get('invalid_date') or 0)}</td>
+  <td>{int(r.get('bytes') or 0)}</td>
+</tr>
+""".strip()
+        for r in (research_retention.get("by_table") or [])
+    ) or '<tr><td colspan="7">暂无 retention 表统计</td></tr>'
+    research_retention_candidate_rows = "".join(
+        f"""
+<tr>
+  <td>{h(r.get('table'))}</td>
+  <td>{h(r.get('date'))}</td>
+  <td>{int(r.get('age_days') or 0)}</td>
+  <td>{int(r.get('size_bytes') or 0)}</td>
+  <td>{h(r.get('row_count') if r.get('row_count') is not None else '-')}</td>
+  <td>{h(r.get('path'))}</td>
+</tr>
+""".strip()
+        for r in [
+            row for row in (research_retention.get("partitions") or [])
+            if isinstance(row, dict) and row.get("status") == "archive_candidate"
+        ][:12]
+    ) or '<tr><td colspan="6">暂无 archive candidate</td></tr>'
     replay_gate = data.get("replay_gate") or {}
     replay_gate_summary_data = replay_gate.get("summary") or {}
     replay_gate_rows = "".join(
@@ -3204,6 +3295,14 @@ def render_html(out_dir: Path) -> str:
             "看当前盘口 depth snapshot 需要哪些 queued depth 请求。默认只出计划，不直接打 Binance。",
             data["depth_backfill_html"],
             "看深度计划",
+            "slate",
+        ),
+        route_card(
+            "旧研究数据怎么管",
+            "retention计划",
+            "看 research_store 哪些分区仍是热数据、哪些可归档。默认只出计划，apply 才移动到 archive。",
+            data["research_retention_html"],
+            "看retention计划",
             "slate",
         ),
         route_card(
@@ -3493,6 +3592,15 @@ th {{ background:#f1f5f9; color:#334155; }}
     <table class="subtable">
       <thead><tr><th>币种</th><th>深度快照</th><th>Bid levels</th><th>Ask levels</th><th>Avg spread bps</th><th>首个快照</th><th>最新快照</th></tr></thead>
       <tbody>{research_depth_rows}</tbody>
+    </table>
+    <p class="note">研究仓 retention：分区 {int(research_retention_summary_data.get('partitions') or 0)}；archive candidates {int(research_retention_summary_data.get('archive_candidate_partitions') or 0)}；moved {int(research_retention_summary_data.get('apply_moved') or 0)}；skipped {int(research_retention_summary_data.get('apply_skipped') or 0)}；保留 {int(research_retention.get('retain_days') or 0)} 日；更新 {h(research_retention.get('age'))}。默认只计划，显式 apply 才移动旧分区。</p>
+    <table class="subtable">
+      <thead><tr><th>表</th><th>分区</th><th>Hot</th><th>Warm</th><th>Archive候选</th><th>日期异常</th><th>Bytes</th></tr></thead>
+      <tbody>{research_retention_table_rows}</tbody>
+    </table>
+    <table class="subtable">
+      <thead><tr><th>表</th><th>日期</th><th>Age days</th><th>Bytes</th><th>Rows</th><th>路径</th></tr></thead>
+      <tbody>{research_retention_candidate_rows}</tbody>
     </table>
   </section>
 

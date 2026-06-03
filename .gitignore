@@ -44,6 +44,7 @@ experiments/results/
 research_memory/cases/
 research_memory/snapshots/
 research_store/
+research_store_archive/
 
 # OS/editor noise
 .DS_Store

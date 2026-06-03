@@ -79,6 +79,7 @@ class LongTermSkeletonReviewTests(unittest.TestCase):
             root = Path(tmp)
             (root / "long_term_skeleton_review.py").write_text("self", encoding="utf-8")
             (root / "部署工具").mkdir()
+            (root / "部署工具" / "main.py").write_text("old copy without marker", encoding="utf-8")
             (root / "main.py").write_text("marker", encoding="utf-8")
             (root / "scanner.py").write_text("strategy_gate_case", encoding="utf-8")
             (root / "binance_client.py").write_text("client", encoding="utf-8")
@@ -104,6 +105,7 @@ class LongTermSkeletonReviewTests(unittest.TestCase):
 
             self.assertEqual(payload["status"], "skeleton_ready")
             self.assertEqual(module["ready_bones"], module["total_bones"])
+            self.assertEqual(module["categories"]["inputs"]["items"][0]["resolved_path"], "main.py")
             test_item = module["categories"]["tests"]["items"][0]
             self.assertTrue(test_item["ready"])
             self.assertIn("repo-only", test_item["detail"])

@@ -380,7 +380,7 @@ def is_deployed_flat_root(root: Path) -> bool:
 
 def deployed_path_aliases(rel_path: str) -> list[str]:
     rel = rel_path.replace("\\", "/")
-    aliases = [rel]
+    aliases: list[str] = []
     prefix_aliases = (
         ("部署工具/systemd/", "systemd/"),
         ("部署工具/", ""),
@@ -390,6 +390,7 @@ def deployed_path_aliases(rel_path: str) -> list[str]:
     for prefix, replacement in prefix_aliases:
         if rel.startswith(prefix):
             aliases.append(replacement + rel[len(prefix) :])
+    aliases.append(rel)
     out: list[str] = []
     seen = set()
     for item in aliases:

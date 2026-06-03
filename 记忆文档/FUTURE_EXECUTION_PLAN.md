@@ -6,7 +6,7 @@
 
 本节是后续自动推进的优先级来源。这里的 P 级是长期工程优先级，不是入口页 attention priority。旧阶段清单仍保留历史上下文；如冲突，以本节顺序为准。
 
-2026-06-04 骨架验收规则补充：第一版先看骨头，不扩肉。`long_term_skeleton_review.py` 本地 strict 检查 143/143 bones；远端 Tencent/Aliyun 扁平 release root 只负责展示/施工态验收，路径通过 `部署工具/ -> root`、`策略文件/ -> root`、`交易客户端/ -> root`、`部署工具/systemd/ -> systemd/` 解析；只要 root 有扁平入口脚本，即使残留 `部署工具/` 目录也按扁平部署处理。未部署到 runtime 节点的源码/测试骨架按本地 strict 验收结果视为 repo-only bone。所有优化项继续写入 post-launch backlog，不作为第一版阻塞。
+2026-06-04 骨架验收规则补充：第一版先看骨头，不扩肉。`long_term_skeleton_review.py` 本地 strict 检查 143/143 bones；远端 Tencent/Aliyun 扁平 release root 只负责展示/施工态验收，路径通过 `部署工具/ -> root`、`策略文件/ -> root`、`交易客户端/ -> root`、`部署工具/systemd/ -> systemd/` 解析；只要 root 有扁平入口脚本，即使残留 `部署工具/` 目录也按扁平部署处理。扁平 root 文件优先于残留 repo-shaped 旧拷贝，原 repo 路径只作 fallback。未部署到 runtime 节点的源码/测试骨架按本地 strict 验收结果视为 repo-only bone。所有优化项继续写入 post-launch backlog，不作为第一版阻塞。
 
 ### Long-term P0 - 必须先完成
 

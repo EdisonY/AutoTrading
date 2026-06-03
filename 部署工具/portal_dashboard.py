@@ -533,6 +533,7 @@ def strategy_truth_summary(path: Path | None) -> dict[str, Any]:
         "strategy_stats": {},
         "recovery_stats": {},
         "recovery_review": {},
+        "recovery_strategy_exit_evidence": {},
     }
     payload = read_json(path) if path else None
     if not isinstance(payload, dict):
@@ -547,6 +548,7 @@ def strategy_truth_summary(path: Path | None) -> dict[str, Any]:
         "strategy_stats": payload.get("strategy_stats") or {},
         "recovery_stats": payload.get("recovery_stats") or {},
         "recovery_review": payload.get("recovery_review") or {},
+        "recovery_strategy_exit_evidence": payload.get("recovery_strategy_exit_evidence") or {},
     }
 
 
@@ -2443,6 +2445,7 @@ def render_html(out_dir: Path) -> str:
         )
     quality_rows = "".join(quality_rows_parts) or '<tr><td colspan="9">暂无真相台账数据</td></tr>'
     recovery_review = truth.get("recovery_review") or {}
+    recovery_strategy_exit = truth.get("recovery_strategy_exit_evidence") or {}
     recovery_risk = recovery_review.get("risk_counts") or {}
     recovery_positions = recovery_review.get("positions") or []
     recovery_review_rows = "".join(
@@ -2460,12 +2463,13 @@ def render_html(out_dir: Path) -> str:
   <td>{int(pos.get('same_strategy_open_like_count') or 0)}</td>
   <td>{int(pos.get('opposite_open_like_count') or 0)}</td>
   <td>{h(pos.get('signal_shadow_action'))}</td>
+  <td>{h(pos.get('strategy_exit_action'))}</td>
   <td>{h(pos.get('risk'))}</td>
   <td>{h(pos.get('shadow_action'))}</td>
 </tr>
 """.strip()
         for pos in recovery_positions[:10]
-    ) or '<tr><td colspan="14">当前无恢复仓</td></tr>'
+    ) or '<tr><td colspan="15">当前无恢复仓</td></tr>'
     recovery_signal = recovery_review.get("signal_counts") or {}
     recovery_total_upnl = float(
         truth_summary.get("total_recovery_unrealized_pnl_usdt")
@@ -3062,9 +3066,9 @@ th {{ background:#f1f5f9; color:#334155; }}
       <tbody>{quality_rows}</tbody>
     </table>
     <p class="note">主动策略累计 PnL: <b class="{'pos' if float(truth_summary.get('total_active_pnl_usd', 0)) >= 0 else 'neg'}">{float(truth_summary.get('total_active_pnl_usd', 0)):+.2f}</b> USDT；恢复仓未实现 PnL: <b class="{'pos' if recovery_total_upnl >= 0 else 'neg'}">{recovery_total_upnl:+.2f}</b> USDT。</p>
-    <p class="note">恢复仓独立审查：review={int(recovery_risk.get('review') or 0)}，watch={int(recovery_risk.get('watch') or 0)}，none={int(recovery_risk.get('none') or 0)}；同策略重开支持={int(recovery_signal.get('same_strategy_reopen_supported') or 0)}，反向信号复核={int(recovery_signal.get('opposite_signal_review') or 0)}；只读 shadow，不自动平仓。</p>
+    <p class="note">恢复仓独立审查：review={int(recovery_risk.get('review') or 0)}，watch={int(recovery_risk.get('watch') or 0)}，none={int(recovery_risk.get('none') or 0)}；同策略重开支持={int(recovery_signal.get('same_strategy_reopen_supported') or 0)}，反向信号复核={int(recovery_signal.get('opposite_signal_review') or 0)}；策略退出证据 manual={int(recovery_strategy_exit.get('manual_review_positions') or 0)}，watch={int(recovery_strategy_exit.get('watch_positions') or 0)}，hold-bias={int(recovery_strategy_exit.get('hold_bias_positions') or 0)}；只读 shadow，不自动平仓。</p>
     <table>
-      <thead><tr><th>策略</th><th>币种</th><th>方向</th><th>年龄h</th><th>浮盈</th><th>浮盈/保证金</th><th>MFE</th><th>MAE</th><th>MFE回撤</th><th>同向重开</th><th>反向信号</th><th>信号动作</th><th>风险</th><th>Shadow动作</th></tr></thead>
+      <thead><tr><th>策略</th><th>币种</th><th>方向</th><th>年龄h</th><th>浮盈</th><th>浮盈/保证金</th><th>MFE</th><th>MAE</th><th>MFE回撤</th><th>同向重开</th><th>反向信号</th><th>信号动作</th><th>策略退出证据</th><th>风险</th><th>Shadow动作</th></tr></thead>
       <tbody>{recovery_review_rows}</tbody>
     </table>
   </section>

@@ -189,6 +189,79 @@ class StrategyTruthLedgerRecoveryPathTests(unittest.TestCase):
         self.assertIn("不自动平仓", pos["note"])
         self.assertEqual(policies["opposite_signal"]["would_exit"], 1)
 
+    def test_strategy_exit_evidence_marks_mfe_drawdown_review(self):
+        tool = load_tool()
+        evidence = tool.build_recovery_strategy_exit_evidence(
+            {
+                "strategy": "B/v16",
+                "mfe_pct_on_margin": 9.0,
+                "mae_pct_on_margin": -1.0,
+                "drawdown_from_mfe_pct_on_margin": -6.5,
+                "age_hours": 5.0,
+                "same_strategy_open_like_count": 0,
+                "opposite_open_like_count": 0,
+            }
+        )
+
+        self.assertEqual(evidence["action"], "mfe_drawdown_manual_review")
+        self.assertEqual(evidence["triggers"], ["mfe_drawdown_review"])
+        self.assertEqual(evidence["automation"], "disabled_report_only")
+
+    def test_strategy_exit_evidence_summarizes_trailing_and_hold_bias(self):
+        tool = load_tool()
+        recovery = [
+            {
+                "strategy": "A/v11",
+                "symbol": "BTCUSDT",
+                "side": "long",
+                "mfe_pct_on_margin": 3.0,
+                "drawdown_from_mfe_pct_on_margin": -2.5,
+                "age_hours": 2.0,
+            },
+            {
+                "strategy": "C/v14",
+                "symbol": "ETHUSDT",
+                "side": "short",
+                "mfe_pct_on_margin": 1.0,
+                "drawdown_from_mfe_pct_on_margin": -0.5,
+                "same_strategy_open_like_count": 2,
+                "age_hours": 2.0,
+            },
+        ]
+
+        summary = tool.evaluate_recovery_strategy_exit_evidence(recovery)
+
+        self.assertEqual(summary["policy"], "report_only_strategy_specific_recovery_exit_evidence")
+        self.assertEqual(summary["action_counts"]["recovery_trailing_watch"], 1)
+        self.assertEqual(summary["action_counts"]["same_side_reopen_hold_bias"], 1)
+        self.assertEqual(summary["watch_positions"], 1)
+        self.assertEqual(summary["hold_bias_positions"], 1)
+        self.assertEqual(recovery[0]["strategy_exit_evidence"]["action"], "recovery_trailing_watch")
+
+    def test_review_exports_strategy_exit_action_counts(self):
+        tool = load_tool()
+        recovery = [
+            {
+                "strategy": "A/v11",
+                "account": "acct-a",
+                "symbol": "BTCUSDT",
+                "side": "long",
+                "margin": 100.0,
+                "unrealized_pnl": 1.0,
+                "mfe_pct_on_margin": 3.0,
+                "drawdown_from_mfe_pct_on_margin": -2.5,
+            }
+        ]
+
+        tool.evaluate_recovery_strategy_exit_evidence(recovery)
+        review = tool.review_recovery_positions(recovery)
+        pos = review["positions"][0]
+
+        self.assertEqual(pos["risk"], "watch")
+        self.assertEqual(pos["shadow_action"], "recovery_trailing_watch")
+        self.assertEqual(pos["strategy_exit_action"], "recovery_trailing_watch")
+        self.assertEqual(review["strategy_exit_counts"]["recovery_trailing_watch"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()

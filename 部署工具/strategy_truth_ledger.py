@@ -35,6 +35,29 @@ STRATEGY_MAP = {
 
 FEE_RATE_TAKER = 0.0005  # 0.05% taker fee per side
 
+RECOVERY_STRATEGY_EXIT_PROFILES = {
+    "A/v11": {
+        "min_mfe_pct_on_margin": 2.0,
+        "trailing_watch_drawdown_pct": 2.0,
+        "mfe_drawdown_review_pct": 4.0,
+    },
+    "B/v16": {
+        "min_mfe_pct_on_margin": 3.0,
+        "trailing_watch_drawdown_pct": 3.0,
+        "mfe_drawdown_review_pct": 6.0,
+    },
+    "C/v14": {
+        "min_mfe_pct_on_margin": 3.0,
+        "trailing_watch_drawdown_pct": 3.0,
+        "mfe_drawdown_review_pct": 7.0,
+    },
+    "default": {
+        "min_mfe_pct_on_margin": 2.5,
+        "trailing_watch_drawdown_pct": 2.5,
+        "mfe_drawdown_review_pct": 5.0,
+    },
+}
+
 
 def parse_dt(value: str | None) -> datetime | None:
     if not value:
@@ -567,6 +590,99 @@ def evaluate_recovery_exit_policies(recovery: list[dict]) -> dict[str, Any]:
     return policies
 
 
+def recovery_strategy_exit_profile(strategy: str) -> dict[str, float]:
+    profile = RECOVERY_STRATEGY_EXIT_PROFILES.get(strategy) or RECOVERY_STRATEGY_EXIT_PROFILES["default"]
+    return {key: safe_float(value) for key, value in profile.items()}
+
+
+def build_recovery_strategy_exit_evidence(pos: dict[str, Any]) -> dict[str, Any]:
+    """Build report-only, strategy-aware recovery exit evidence for one position."""
+    strategy = str(pos.get("strategy") or "")
+    profile = recovery_strategy_exit_profile(strategy)
+    mfe = safe_float(pos.get("mfe_pct_on_margin"))
+    mae = safe_float(pos.get("mae_pct_on_margin"))
+    drawdown = safe_float(pos.get("drawdown_from_mfe_pct_on_margin"))
+    age_hours = safe_float(pos.get("age_hours"))
+    same_open_like = int(pos.get("same_strategy_open_like_count") or 0)
+    opposite_open_like = int(pos.get("opposite_open_like_count") or 0)
+
+    triggers: list[str] = []
+    if opposite_open_like > 0:
+        action = "opposite_signal_manual_review"
+        triggers.append("opposite_open_like_signal")
+    elif (
+        mfe >= profile["min_mfe_pct_on_margin"]
+        and drawdown <= -profile["mfe_drawdown_review_pct"]
+    ):
+        action = "mfe_drawdown_manual_review"
+        triggers.append("mfe_drawdown_review")
+    elif (
+        mfe >= profile["min_mfe_pct_on_margin"]
+        and drawdown <= -profile["trailing_watch_drawdown_pct"]
+    ):
+        action = "recovery_trailing_watch"
+        triggers.append("mfe_trailing_watch")
+    elif same_open_like > 0:
+        action = "same_side_reopen_hold_bias"
+        triggers.append("same_side_open_like_signal")
+    else:
+        action = "keep_shadow_monitoring"
+
+    return {
+        "profile": strategy if strategy in RECOVERY_STRATEGY_EXIT_PROFILES else "default",
+        "action": action,
+        "triggers": triggers,
+        "mfe_pct_on_margin": round(mfe, 2),
+        "mae_pct_on_margin": round(mae, 2),
+        "drawdown_from_mfe_pct_on_margin": round(drawdown, 2),
+        "age_hours": round(age_hours, 2),
+        "same_strategy_open_like_count": same_open_like,
+        "opposite_open_like_count": opposite_open_like,
+        "thresholds": profile,
+        "automation": "disabled_report_only",
+    }
+
+
+def evaluate_recovery_strategy_exit_evidence(recovery: list[dict[str, Any]]) -> dict[str, Any]:
+    """Attach and summarize strategy-specific recovery exit evidence."""
+    now = datetime.now(CST)
+    action_counts: dict[str, int] = {}
+    positions: list[dict[str, Any]] = []
+    for pos in recovery:
+        snap_dt = parse_dt(pos.get("snapshot_ts"))
+        age_hours = (now - snap_dt).total_seconds() / 3600 if snap_dt else safe_float(pos.get("age_hours"))
+        evidence = build_recovery_strategy_exit_evidence({**pos, "age_hours": age_hours})
+        pos["strategy_exit_evidence"] = evidence
+        action = str(evidence.get("action") or "keep_shadow_monitoring")
+        action_counts[action] = action_counts.get(action, 0) + 1
+        positions.append(
+            {
+                "strategy": pos.get("strategy"),
+                "symbol": pos.get("symbol"),
+                "side": pos.get("side"),
+                "action": action,
+                "triggers": evidence.get("triggers") or [],
+                "mfe_pct_on_margin": evidence.get("mfe_pct_on_margin"),
+                "drawdown_from_mfe_pct_on_margin": evidence.get("drawdown_from_mfe_pct_on_margin"),
+                "opposite_open_like_count": evidence.get("opposite_open_like_count"),
+                "same_strategy_open_like_count": evidence.get("same_strategy_open_like_count"),
+            }
+        )
+    return {
+        "policy": "report_only_strategy_specific_recovery_exit_evidence",
+        "automation": "disabled_report_only",
+        "action_counts": dict(sorted(action_counts.items())),
+        "manual_review_positions": sum(
+            action_counts.get(action, 0)
+            for action in ("opposite_signal_manual_review", "mfe_drawdown_manual_review")
+        ),
+        "watch_positions": int(action_counts.get("recovery_trailing_watch", 0)),
+        "hold_bias_positions": int(action_counts.get("same_side_reopen_hold_bias", 0)),
+        "profile_thresholds": RECOVERY_STRATEGY_EXIT_PROFILES,
+        "positions": positions,
+    }
+
+
 def review_recovery_positions(recovery: list[dict]) -> dict[str, Any]:
     """Build read-only recovery-position review facts without changing exit behavior."""
     now = datetime.now(CST)
@@ -577,7 +693,7 @@ def review_recovery_positions(recovery: list[dict]) -> dict[str, Any]:
     oldest_age = 0.0
     for pos in recovery:
         snap_dt = parse_dt(pos.get("snapshot_ts"))
-        age_hours = (now - snap_dt).total_seconds() / 3600 if snap_dt else 0.0
+        age_hours = (now - snap_dt).total_seconds() / 3600 if snap_dt else safe_float(pos.get("age_hours"))
         margin = safe_float(pos.get("margin"))
         upnl = safe_float(pos.get("unrealized_pnl"))
         upnl_pct = upnl / margin * 100 if margin > 0 else 0.0
@@ -585,18 +701,23 @@ def review_recovery_positions(recovery: list[dict]) -> dict[str, Any]:
         total_margin += margin
         total_upnl += upnl
         opposite_open_like = int(pos.get("opposite_open_like_count") or 0)
-        if opposite_open_like > 0:
+        strategy_exit_evidence = pos.get("strategy_exit_evidence") or build_recovery_strategy_exit_evidence(
+            {**pos, "age_hours": age_hours}
+        )
+        pos["strategy_exit_evidence"] = strategy_exit_evidence
+        strategy_exit_action = str(strategy_exit_evidence.get("action") or "keep_shadow_monitoring")
+        if strategy_exit_action in {"opposite_signal_manual_review", "mfe_drawdown_manual_review"}:
             risk = "review"
-            action = "opposite_signal_manual_review"
+            action = strategy_exit_action
         elif age_hours >= 24 or upnl_pct <= -5:
             risk = "review"
             action = "manual_review"
-        elif age_hours >= 8 or upnl_pct <= -2:
+        elif strategy_exit_action == "recovery_trailing_watch" or age_hours >= 8 or upnl_pct <= -2:
             risk = "watch"
-            action = "keep_shadow_monitoring"
+            action = strategy_exit_action if strategy_exit_action == "recovery_trailing_watch" else "keep_shadow_monitoring"
         else:
             risk = "none"
-            action = "hold_baseline"
+            action = strategy_exit_action if strategy_exit_action == "same_side_reopen_hold_bias" else "hold_baseline"
         risk_counts[risk] += 1
         positions.append(
             {
@@ -625,6 +746,9 @@ def review_recovery_positions(recovery: list[dict]) -> dict[str, Any]:
                 "latest_same_strategy_signal": pos.get("latest_same_strategy_signal") or {},
                 "latest_opposite_signal": pos.get("latest_opposite_signal") or {},
                 "signal_shadow_action": pos.get("signal_shadow_action") or "no_recent_same_strategy_signal",
+                "strategy_exit_action": strategy_exit_action,
+                "strategy_exit_triggers": strategy_exit_evidence.get("triggers") or [],
+                "strategy_exit_evidence": strategy_exit_evidence,
                 "risk": risk,
                 "shadow_action": action,
                 "note": "只读审查；不自动平仓、不改变退出规则。",
@@ -645,6 +769,20 @@ def review_recovery_positions(recovery: list[dict]) -> dict[str, Any]:
             "opposite_signal_positions": sum(1 for pos in recovery if int(pos.get("opposite_signal_count") or 0) > 0),
             "same_strategy_reopen_supported": sum(1 for pos in recovery if int(pos.get("same_strategy_open_like_count") or 0) > 0),
             "opposite_signal_review": sum(1 for pos in recovery if int(pos.get("opposite_open_like_count") or 0) > 0),
+        },
+        "strategy_exit_counts": {
+            action: sum(
+                1
+                for pos in recovery
+                if (pos.get("strategy_exit_evidence") or {}).get("action") == action
+            )
+            for action in (
+                "opposite_signal_manual_review",
+                "mfe_drawdown_manual_review",
+                "recovery_trailing_watch",
+                "same_side_reopen_hold_bias",
+                "keep_shadow_monitoring",
+            )
         },
         "oldest_age_hours": round(oldest_age, 2),
         "total_margin_usdt": round(total_margin, 2),
@@ -768,6 +906,7 @@ def build_output(
 
     # Recovery exit policy evaluation
     recovery_exit_policies = evaluate_recovery_exit_policies(recovery)
+    recovery_strategy_exit_evidence = evaluate_recovery_strategy_exit_evidence(recovery)
     recovery_review = review_recovery_positions(recovery)
 
     # Account summary
@@ -799,6 +938,7 @@ def build_output(
         "recovery_stats": recovery_stats,
         "recovery_review": recovery_review,
         "recovery_exit_policies": recovery_exit_policies,
+        "recovery_strategy_exit_evidence": recovery_strategy_exit_evidence,
         "daily_facts": daily_facts,
         "account_summary": account_summary,
     }
@@ -866,11 +1006,18 @@ def write_markdown(output: dict, path: Path) -> None:
         f"- 信号证据: 同策略重开支持={int(signal_counts.get('same_strategy_reopen_supported') or 0)}, "
         f"反向信号需复核={int(signal_counts.get('opposite_signal_review') or 0)}"
     )
+    strategy_exit_counts = review.get("strategy_exit_counts") or {}
+    lines.append(
+        f"- 策略专属退出证据: 反向信号复核={int(strategy_exit_counts.get('opposite_signal_manual_review') or 0)}, "
+        f"MFE回撤复核={int(strategy_exit_counts.get('mfe_drawdown_manual_review') or 0)}, "
+        f"trailing观察={int(strategy_exit_counts.get('recovery_trailing_watch') or 0)}, "
+        f"同向持有倾向={int(strategy_exit_counts.get('same_side_reopen_hold_bias') or 0)}"
+    )
     positions = review.get("positions") or []
     if positions:
         lines.append("")
-        lines.append("| Strategy | Symbol | Side | Age h | Margin | UPNL | UPNL/Margin | MFE | MAE | MFE drawdown | Same re-open | Opposite signal | Signal action | Risk | Shadow action |")
-        lines.append("|------|------|------|------:|------:|------:|------------:|----:|----:|-------------:|------------:|---------------:|---------------|------|------------|")
+        lines.append("| Strategy | Symbol | Side | Age h | Margin | UPNL | UPNL/Margin | MFE | MAE | MFE drawdown | Same re-open | Opposite signal | Signal action | Strategy exit | Risk | Shadow action |")
+        lines.append("|------|------|------|------:|------:|------:|------------:|----:|----:|-------------:|------------:|---------------:|---------------|---------------|------|------------|")
         for pos in positions[:20]:
             lines.append(
                 f"| {pos.get('strategy')} | {pos.get('symbol')} | {pos.get('side')} | "
@@ -884,6 +1031,7 @@ def write_markdown(output: dict, path: Path) -> None:
                 f"{int(pos.get('same_strategy_open_like_count') or 0)} | "
                 f"{int(pos.get('opposite_open_like_count') or 0)} | "
                 f"{pos.get('signal_shadow_action')} | "
+                f"{pos.get('strategy_exit_action')} | "
                 f"{pos.get('risk')} | {pos.get('shadow_action')} |"
             )
     else:
@@ -914,6 +1062,24 @@ def write_markdown(output: dict, path: Path) -> None:
             lines.append(f"| {pol['label']} | {pol['would_exit']} | {pol['would_hold']} |")
         lines.append("")
         lines.append("注：以上为 shadow 评估，不自动执行。朴素时间退出可能截断大赢家，需结合证据决定。")
+
+    strategy_exit = output.get("recovery_strategy_exit_evidence") or {}
+    if strategy_exit:
+        counts = strategy_exit.get("action_counts") or {}
+        lines.extend(["", "## 恢复仓策略专属退出证据", ""])
+        lines.append(
+            f"- 策略: {strategy_exit.get('policy')}；自动化: {strategy_exit.get('automation')}；"
+            f"人工复核={int(strategy_exit.get('manual_review_positions') or 0)}；"
+            f"观察={int(strategy_exit.get('watch_positions') or 0)}；"
+            f"同向持有倾向={int(strategy_exit.get('hold_bias_positions') or 0)}"
+        )
+        if counts:
+            lines.append("| Action | Count |")
+            lines.append("|--------|------:|")
+            for action, count in counts.items():
+                lines.append(f"| {action} | {int(count or 0)} |")
+        lines.append("")
+        lines.append("注：该层只合并策略信号、MFE/MAE、MFE回撤与持仓年龄，不自动平仓。")
 
     lines.append("")
     path.write_text("\n".join(lines), encoding="utf-8")

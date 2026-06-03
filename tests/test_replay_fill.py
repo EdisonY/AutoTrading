@@ -247,6 +247,96 @@ class ReplayFillTest(unittest.TestCase):
                 [{"ts": "t1", "open": 10, "high": 11, "low": 9, "close": 10}],
             )
 
+    def test_depth_order_book_entry_uses_asks_for_long(self):
+        result = simulate_replay_fill(
+            ReplayFillRequest(
+                symbol="ABCUSDT",
+                side="long",
+                entry_price=100,
+                quantity=3,
+                fee_bps=0,
+                entry_order_book={"asks": [["100", "1"], ["101", "2"]]},
+            ),
+            [{"ts": "t1", "open": 100, "high": 102.2, "low": 99.5, "close": 102}],
+        )
+
+        self.assertEqual(result.entry_fill_source, "order_book")
+        self.assertEqual(result.order_book_levels_used, 2)
+        self.assertAlmostEqual(result.entry_price, 100.6666666667)
+        self.assertEqual(result.quantity, 3)
+        self.assertAlmostEqual(result.gross_pnl_usdt, 4.0)
+        self.assertAlmostEqual(result.depth_slippage_usdt, 2.0)
+        self.assertAlmostEqual(result.slippage_usdt, 2.0)
+
+    def test_depth_order_book_entry_uses_bids_for_short(self):
+        result = simulate_replay_fill(
+            ReplayFillRequest(
+                symbol="ABCUSDT",
+                side="short",
+                entry_price=100,
+                quantity=3,
+                fee_bps=0,
+                entry_order_book={"bids": [["100", "1"], ["99", "2"]]},
+            ),
+            [{"ts": "t1", "open": 100, "high": 100.5, "low": 97.5, "close": 98}],
+        )
+
+        self.assertEqual(result.entry_fill_source, "order_book")
+        self.assertEqual(result.order_book_levels_used, 2)
+        self.assertAlmostEqual(result.entry_price, 99.3333333333)
+        self.assertEqual(result.quantity, 3)
+        self.assertAlmostEqual(result.gross_pnl_usdt, 4.0)
+        self.assertAlmostEqual(result.depth_slippage_usdt, 2.0)
+        self.assertAlmostEqual(result.slippage_usdt, 2.0)
+
+    def test_depth_partial_fill_when_book_liquidity_is_thin(self):
+        result = simulate_replay_fill(
+            ReplayFillRequest(
+                symbol="ABCUSDT",
+                side="long",
+                entry_price=100,
+                quantity=5,
+                fee_bps=0,
+                entry_order_book={"asks": [["100", "2"]]},
+            ),
+            [{"ts": "t1", "open": 100, "high": 101.5, "low": 99.5, "close": 101}],
+        )
+
+        self.assertEqual(result.entry_fill_source, "order_book")
+        self.assertEqual(result.quantity, 2)
+        self.assertEqual(result.requested_quantity, 5)
+        self.assertEqual(result.unfilled_quantity, 3)
+        self.assertEqual(result.fill_ratio, 0.4)
+        self.assertTrue(result.partial_fill)
+
+    def test_depth_partial_fill_can_be_rejected(self):
+        with self.assertRaises(ValueError):
+            simulate_replay_fill(
+                ReplayFillRequest(
+                    symbol="ABCUSDT",
+                    side="long",
+                    entry_price=100,
+                    quantity=5,
+                    fee_bps=0,
+                    allow_partial_fill=False,
+                    entry_order_book={"asks": [["100", "2"]]},
+                ),
+                [{"ts": "t1", "open": 100, "high": 101, "low": 99, "close": 100}],
+            )
+
+    def test_explicit_empty_depth_book_is_not_synthetic(self):
+        with self.assertRaises(ValueError):
+            simulate_replay_fill(
+                ReplayFillRequest(
+                    symbol="ABCUSDT",
+                    side="long",
+                    entry_price=100,
+                    quantity=1,
+                    entry_order_book={"asks": []},
+                ),
+                [{"ts": "t1", "open": 100, "high": 101, "low": 99, "close": 100}],
+            )
+
     def test_rejects_invalid_input(self):
         with self.assertRaises(ValueError):
             simulate_replay_fill(ReplayFillRequest("ABCUSDT", "long", 10, 0), [])

@@ -43,6 +43,7 @@ class ReplayFillRequest:
     max_fill_quantity: float | None = None
     max_fill_notional_usdt: float | None = None
     allow_partial_fill: bool = True
+    entry_order_book: dict[str, Any] | None = None
     conservative_intrabar: bool = True
 
 
@@ -58,11 +59,14 @@ class ReplayFillResult:
     fill_ratio: float
     partial_fill: bool
     fill_status: str
+    entry_fill_source: str
+    order_book_levels_used: int
     exit_reason: str
     exit_ts: str
     gross_pnl_usdt: float
     fee_usdt: float
     slippage_usdt: float
+    depth_slippage_usdt: float
     net_pnl_usdt: float
     bars_held: int
 
@@ -108,6 +112,67 @@ def _effective_quantity(req: ReplayFillRequest, *, entry_price: float) -> tuple[
     fill_ratio = effective / requested if requested > 0 else 0.0
     status = "partial" if partial else "filled"
     return effective, fill_ratio, partial, status
+
+
+def _book_level_price_qty(level: Any) -> tuple[float, float] | None:
+    try:
+        if isinstance(level, dict):
+            price = float(level.get("price", level.get("p")))
+            qty = float(level.get("quantity", level.get("qty", level.get("q"))))
+        else:
+            price = float(level[0])
+            qty = float(level[1])
+    except Exception:
+        return None
+    if price <= 0 or qty <= 0:
+        return None
+    return price, qty
+
+
+def _entry_book_levels(req: ReplayFillRequest, *, side: str) -> list[tuple[float, float]]:
+    book = req.entry_order_book
+    if not isinstance(book, dict):
+        return []
+    key = "asks" if side == "long" else "bids"
+    levels = [_book_level_price_qty(level) for level in (book.get(key) or [])]
+    parsed = [level for level in levels if level is not None]
+    return sorted(parsed, key=lambda item: item[0], reverse=(side == "short"))
+
+
+def _depth_entry_fill(
+    req: ReplayFillRequest,
+    *,
+    side: str,
+    target_quantity: float,
+    reference_entry_price: float,
+) -> tuple[float, float, float, int, str]:
+    levels = _entry_book_levels(req, side=side)
+    if not levels:
+        if isinstance(req.entry_order_book, dict):
+            raise ValueError("order book has no fillable liquidity")
+        return reference_entry_price, target_quantity, 0.0, 0, "synthetic"
+    remaining = float(target_quantity)
+    filled = 0.0
+    notional = 0.0
+    levels_used = 0
+    for price, available_qty in levels:
+        if remaining <= 0:
+            break
+        take_qty = min(remaining, available_qty)
+        filled += take_qty
+        notional += take_qty * price
+        remaining -= take_qty
+        levels_used += 1
+    if filled <= 0:
+        raise ValueError("order book has no fillable liquidity")
+    if filled < target_quantity and not req.allow_partial_fill:
+        raise ValueError("partial fill required but allow_partial_fill is false")
+    avg_price = notional / filled
+    if side == "short":
+        depth_cost = max(0.0, reference_entry_price - avg_price) * filled
+    else:
+        depth_cost = max(0.0, avg_price - reference_entry_price) * filled
+    return avg_price, filled, depth_cost, levels_used, "order_book"
 
 
 def _trailing_exit_price(req: ReplayFillRequest, *, entry_price: float, best_price: float) -> float | None:
@@ -184,8 +249,20 @@ def simulate_replay_fill(req: ReplayFillRequest, bars: Iterable[ReplayBar | dict
     if req.trailing_stop_atr is not None and float(req.trailing_stop_atr or 0.0) > 0 and float(req.atr or 0.0) <= 0:
         raise ValueError("atr must be positive when trailing_stop_atr is enabled")
 
-    entry_px = _exit_price_with_slippage(price=req.entry_price, side=side, is_entry=True, slippage_bps=req.slippage_bps)
-    qty, fill_ratio, partial, fill_status = _effective_quantity(req, entry_price=entry_px)
+    reference_entry_px = _exit_price_with_slippage(price=req.entry_price, side=side, is_entry=True, slippage_bps=req.slippage_bps)
+    target_qty, _, _, _ = _effective_quantity(req, entry_price=reference_entry_px)
+    raw_entry_px, qty, depth_slippage, levels_used, fill_source = _depth_entry_fill(
+        req,
+        side=side,
+        target_quantity=target_qty,
+        reference_entry_price=float(req.entry_price),
+    )
+    entry_px = _exit_price_with_slippage(price=raw_entry_px, side=side, is_entry=True, slippage_bps=req.slippage_bps)
+    partial = qty < requested_qty
+    if partial and not req.allow_partial_fill:
+        raise ValueError("partial fill required but allow_partial_fill is false")
+    fill_ratio = qty / requested_qty if requested_qty > 0 else 0.0
+    fill_status = "partial" if partial else "filled"
     exit_reason = "end_of_window"
     exit_price = parsed_bars[-1].close
     exit_ts = parsed_bars[-1].ts
@@ -220,11 +297,14 @@ def simulate_replay_fill(req: ReplayFillRequest, bars: Iterable[ReplayBar | dict
         fill_ratio=round(fill_ratio, 8),
         partial_fill=partial,
         fill_status=fill_status,
+        entry_fill_source=fill_source,
+        order_book_levels_used=levels_used,
         exit_reason=exit_reason,
         exit_ts=exit_ts,
         gross_pnl_usdt=round(gross, 8),
         fee_usdt=round(fee, 8),
         slippage_usdt=round(slippage, 8),
+        depth_slippage_usdt=round(depth_slippage, 8),
         net_pnl_usdt=round(gross - fee, 8),
         bars_held=bars_held,
     )

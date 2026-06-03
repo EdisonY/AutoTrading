@@ -307,6 +307,57 @@ def log_event(event: dict):
     write_event_store({**_decision_from_event(event), "raw_event": event}, "B/v16/events")
     log_decision(_decision_from_event(event), persist_event_store=False)
 
+def _execution_result_case(name: str, exec_result, *, timeframe: str = "", phase: str = "") -> dict:
+    execution_gate = evaluate_execution_result_gate(
+        success=exec_result.success,
+        preflight_rejected=exec_result.preflight_rejected,
+        code=exec_result.code,
+        reason=exec_result.reason,
+        message=exec_result.message,
+    )
+    meta = {"strategy": "B/v16", "timeframe": timeframe}
+    if phase:
+        meta["phase"] = phase
+    return strategy_gate_case(
+        name=name,
+        gate="execution_result",
+        inputs={
+            "success": exec_result.success,
+            "preflight_rejected": exec_result.preflight_rejected,
+            "code": exec_result.code,
+            "reason": exec_result.reason,
+            "message": exec_result.message,
+        },
+        decision=execution_gate,
+        meta=meta,
+    )
+
+def _execution_exception_case(name: str, exc: Exception | str, *, timeframe: str = "", phase: str = "") -> dict:
+    message = str(exc)
+    execution_gate = evaluate_execution_result_gate(
+        success=False,
+        preflight_rejected=False,
+        code="exception",
+        reason=message,
+        message=message,
+    )
+    meta = {"strategy": "B/v16", "timeframe": timeframe}
+    if phase:
+        meta["phase"] = phase
+    return strategy_gate_case(
+        name=name,
+        gate="execution_result",
+        inputs={
+            "success": False,
+            "preflight_rejected": False,
+            "code": "exception",
+            "reason": message,
+            "message": message,
+        },
+        decision=execution_gate,
+        meta=meta,
+    )
+
 def log_signal(signal: dict):
     log_jsonl(SIGNAL_LOG, signal)
     write_event_store({**_decision_from_signal(signal), "raw_signal": signal}, "B/v16/signals")
@@ -1518,6 +1569,14 @@ class ScannerV16:
                     "side": pos.side, "exit_price": exit_price, "reason": reason,
                     "failure_reason": close_exec.reason, "exchange_status": close_exec.status,
                     "exchange_close_success": False, "timeframe": tf,
+                    "decision_stage": "execution",
+                    "filter_layer": "execution",
+                    "strategy_gate_case": _execution_result_case(
+                        "b_v16_close_execution_result",
+                        close_exec,
+                        timeframe=tf,
+                        phase="normal_close",
+                    ),
                 })
                 return
             logger.info(f"  平仓[{tf}]: {sym} {pos.side} {reason} @{exit_price:.4f}")
@@ -1527,6 +1586,14 @@ class ScannerV16:
                 "time": str(datetime.now(CST)), "event": "CLOSE_FAILED", "symbol": sym,
                 "side": pos.side, "exit_price": exit_price, "reason": reason,
                 "failure_reason": str(e), "exchange_close_success": False, "timeframe": tf,
+                "decision_stage": "execution",
+                "filter_layer": "execution",
+                "strategy_gate_case": _execution_exception_case(
+                    "b_v16_close_exception",
+                    e,
+                    timeframe=tf,
+                    phase="normal_close",
+                ),
             })
             return
 
@@ -1604,9 +1671,42 @@ class ScannerV16:
                     "failure_reason": "" if close_exec.success else close_exec.reason,
                     "exchange_status": close_exec.status,
                     "exchange_close_success": close_exec.success,
+                    **({} if close_exec.success else {
+                        "decision_stage": "execution",
+                        "filter_layer": "execution",
+                        "strategy_gate_case": _execution_result_case(
+                            "b_v16_forced_close_execution_result",
+                            close_exec,
+                            timeframe="exchange",
+                            phase="hard_stop",
+                        ),
+                    }),
                 })
             except Exception as e:
                 logger.error(f"  交易所硬顶平仓失败: {symbol} {side} {e}")
+                log_event({
+                    "time": str(datetime.now(CST)),
+                    "event": "FORCED_CLOSE_FAILED",
+                    "symbol": symbol,
+                    "side": side,
+                    "reason": f"交易所硬顶{MAX_LOSS_PCT:.0f}%",
+                    "loss_pct": round(loss_pct, 2),
+                    "entry_price": entry,
+                    "mark_price": mark,
+                    "qty": abs(amt),
+                    "side_source": side_source,
+                    "raw_position_side": p.get("positionSide", ""),
+                    "failure_reason": str(e),
+                    "exchange_close_success": False,
+                    "decision_stage": "execution",
+                    "filter_layer": "execution",
+                    "strategy_gate_case": _execution_exception_case(
+                        "b_v16_forced_close_exception",
+                        e,
+                        timeframe="exchange",
+                        phase="hard_stop",
+                    ),
+                })
 
     def run_cycle(self):
         self._enforce_hard_stop_on_exchange()

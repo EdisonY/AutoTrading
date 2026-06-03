@@ -908,6 +908,8 @@ def _decision_from_event(event: dict) -> dict:
         "reason": reason,
         "source": "event",
         "event": status,
+        "decision_stage": event.get("decision_stage") or event.get("stage") or "",
+        "filter_layer": event.get("filter_layer") or event.get("risk_category") or "",
         "raw": event,
         "sentinel": event.get("sentinel", False),
         "sentinel_reason": event.get("sentinel_reason", ""),
@@ -953,6 +955,57 @@ def log_event(event: dict):
     write_jsonl_with_daily_shard(EVENTS_LOG, event)
     write_event_store({**_decision_from_event(event), "raw_event": event}, "A/v11/events")
     log_decision(_decision_from_event(event), persist_event_store=False)
+
+def _execution_result_case(name: str, exec_result, *, timeframe: str = "", phase: str = "") -> dict:
+    execution_gate = evaluate_execution_result_gate(
+        success=exec_result.success,
+        preflight_rejected=exec_result.preflight_rejected,
+        code=exec_result.code,
+        reason=exec_result.reason,
+        message=exec_result.message,
+    )
+    meta = {"strategy": "A/v11", "timeframe": timeframe}
+    if phase:
+        meta["phase"] = phase
+    return strategy_gate_case(
+        name=name,
+        gate="execution_result",
+        inputs={
+            "success": exec_result.success,
+            "preflight_rejected": exec_result.preflight_rejected,
+            "code": exec_result.code,
+            "reason": exec_result.reason,
+            "message": exec_result.message,
+        },
+        decision=execution_gate,
+        meta=meta,
+    )
+
+def _execution_exception_case(name: str, exc: Exception | str, *, timeframe: str = "", phase: str = "") -> dict:
+    message = str(exc)
+    execution_gate = evaluate_execution_result_gate(
+        success=False,
+        preflight_rejected=False,
+        code="exception",
+        reason=message,
+        message=message,
+    )
+    meta = {"strategy": "A/v11", "timeframe": timeframe}
+    if phase:
+        meta["phase"] = phase
+    return strategy_gate_case(
+        name=name,
+        gate="execution_result",
+        inputs={
+            "success": False,
+            "preflight_rejected": False,
+            "code": "exception",
+            "reason": message,
+            "message": message,
+        },
+        decision=execution_gate,
+        meta=meta,
+    )
 
 def _log_sentinel_scan_event(event: dict):
     """Log sentinel scan to dedicated sentinel_scans table (not events)."""
@@ -1402,6 +1455,16 @@ class Scanner:
                 "new_symbol": sig.get("symbol"), "new_score": new_score,
                 "preferred_tf": preferred_tf or "",
                 "require_preferred_tf": require_preferred_tf,
+                "exchange_status": close_exec.status,
+                "exchange_close_success": False,
+                "decision_stage": "execution",
+                "filter_layer": "execution",
+                "strategy_gate_case": _execution_result_case(
+                    "a_v11_evict_close_execution_result",
+                    close_exec,
+                    timeframe=old_tf,
+                    phase="replacement_release",
+                ),
             })
             logger.warning(f"  释放弱仓失败: {pos.symbol} {pos.side} {close_exec.reason}")
             return False
@@ -1656,6 +1719,7 @@ class Scanner:
             exchange_close_success = False
             result = {}
             qty = abs(amt)
+            close_failure_case = None
             try:
                 try:
                     _delete("/fapi/v1/allOpenOrders", {"symbol": symbol})
@@ -1669,8 +1733,21 @@ class Scanner:
                 ))
                 exchange_close_success = close_exec.success
                 result = close_exec.raw if isinstance(close_exec.raw, dict) else {}
+                if not exchange_close_success:
+                    close_failure_case = _execution_result_case(
+                        "a_v11_forced_close_execution_result",
+                        close_exec,
+                        timeframe="exchange",
+                        phase="hard_stop",
+                    )
             except Exception as e:
                 logger.error(f"  交易所硬顶平仓异常: {symbol} {pos_side} {e}")
+                close_failure_case = _execution_exception_case(
+                    "a_v11_forced_close_exception",
+                    e,
+                    timeframe="exchange",
+                    phase="hard_stop",
+                )
 
             pnl_pct = -round(loss_pct, 2)
             pnl_usd = (mark - entry) * qty if side == "long" else (entry - mark) * qty
@@ -1689,6 +1766,12 @@ class Scanner:
                 "exchange_close_success": exchange_close_success,
                 "order_id": result.get("orderId") if isinstance(result, dict) else "",
             }
+            if not exchange_close_success and close_failure_case:
+                event.update({
+                    "decision_stage": "execution",
+                    "filter_layer": "execution",
+                    "strategy_gate_case": close_failure_case,
+                })
             log_event(event)
             logger.warning(
                 f"  交易所硬顶平仓: {symbol} {side} qty={qty:g} "
@@ -2448,6 +2531,14 @@ class Scanner:
                         "close_failure_reason": close_exec.reason,
                         "decision_stage": "post_open_sizing_confirm",
                         "filter_layer": "execution",
+                        **({} if close_exec.success else {
+                            "strategy_gate_case": _execution_result_case(
+                                "a_v11_post_open_sizing_close_execution_result",
+                                close_exec,
+                                timeframe=tf,
+                                phase="post_open_sizing_confirm",
+                            ),
+                        }),
                         **sentinel_fields(inst_id),
                     })
                     now_dt = datetime.now(CST)
@@ -2722,6 +2813,7 @@ class Scanner:
                 sym = pos.symbol
                 # ── 真实平仓 ──
                 exchange_close_success = False
+                close_failure_case = None
                 if pos.exchange_qty > 0:
                     try:
                         pos_side = "long" if pos.side == "long" else "short"
@@ -2736,8 +2828,20 @@ class Scanner:
                             logger.info(f"  平仓成功: {sym} {pos_side} {pos.exchange_qty}")
                         else:
                             logger.error(f"  平仓失败: {close_exec.reason}")
+                            close_failure_case = _execution_result_case(
+                                "a_v11_close_execution_result",
+                                close_exec,
+                                timeframe=tf,
+                                phase="normal_close",
+                            )
                     except Exception as e:
                         logger.error(f"  平仓异常: {e}")
+                        close_failure_case = _execution_exception_case(
+                            "a_v11_close_exception",
+                            e,
+                            timeframe=tf,
+                            phase="normal_close",
+                        )
 
                 if pos.side == "long":
                     pnl = (exit_price - pos.entry_price) / pos.entry_price * 100 * pos.leverage
@@ -2778,6 +2882,12 @@ class Scanner:
                     "resonance": pos.resonance,
                     "exchange_close_success": exchange_close_success,
                 }
+                if not exchange_close_success and close_failure_case:
+                    event.update({
+                        "decision_stage": "execution",
+                        "filter_layer": "execution",
+                        "strategy_gate_case": close_failure_case,
+                    })
                 log_event(event)
                 exchange_str = " [交易所✓]" if exchange_close_success else (" [交易所✗]" if pos.exchange_qty > 0 else "")
                 logger.info(

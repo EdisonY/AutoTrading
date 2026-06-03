@@ -264,6 +264,78 @@ class ReplayLiveParityAuditTests(unittest.TestCase):
         self.assertEqual(summary["status"], "ok")
         self.assertEqual(payload["strategies"][0]["scan_top_gates"][0]["name"], "score_max")
 
+    def test_close_flow_exact_cases_are_reported_separately(self):
+        tmp, db_path = self.make_db(
+            [
+                {
+                    "event_type": "CLOSE_FAILED",
+                    "stage": "execution",
+                    "layer": "execution",
+                    "payload": {
+                        "strategy_gate_case": {
+                            "name": "close-failed",
+                            "gate": "execution_result",
+                            "inputs": {
+                                "success": False,
+                                "preflight_rejected": False,
+                                "code": "close_confirmation_timeout",
+                                "reason": "position still open",
+                            },
+                            "expected_allowed": False,
+                            "expected_reason": "position still open",
+                        }
+                    },
+                }
+            ]
+        )
+        self.addCleanup(tmp.cleanup)
+
+        payload = self.tool.build_payload(db_path, days=1, limit=100)
+        summary = payload["summary"]
+
+        self.assertEqual(summary["open_flow_rows"], 0)
+        self.assertEqual(summary["close_flow_rows"], 1)
+        self.assertEqual(summary["close_rows_with_exact_cases"], 1)
+        self.assertEqual(summary["close_missing_case_rows"], 0)
+        self.assertEqual(summary["close_gate_cases"], 1)
+        self.assertEqual(summary["close_passed"], 1)
+        self.assertEqual(summary["close_mismatched"], 0)
+        self.assertEqual(summary["status"], "ok")
+        self.assertEqual(payload["strategies"][0]["close_top_gates"][0]["name"], "execution_result")
+
+    def test_duplicate_nested_raw_cases_are_counted_once(self):
+        case = {
+            "name": "close-failed",
+            "gate": "execution_result",
+            "inputs": {
+                "success": False,
+                "preflight_rejected": False,
+                "code": "close_confirmation_timeout",
+                "reason": "position still open",
+            },
+            "expected_allowed": False,
+            "expected_reason": "position still open",
+        }
+        tmp, db_path = self.make_db(
+            [
+                {
+                    "event_type": "CLOSE_FAILED",
+                    "payload": {
+                        "raw": {"strategy_gate_case": case},
+                        "raw_event": {"strategy_gate_case": case},
+                    },
+                }
+            ]
+        )
+        self.addCleanup(tmp.cleanup)
+
+        payload = self.tool.build_payload(db_path, days=1, limit=100)
+        summary = payload["summary"]
+
+        self.assertEqual(summary["close_rows_with_exact_cases"], 1)
+        self.assertEqual(summary["close_gate_cases"], 1)
+        self.assertEqual(summary["close_passed"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()

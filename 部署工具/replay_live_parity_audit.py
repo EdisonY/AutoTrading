@@ -34,6 +34,17 @@ from core.strategy_gate_cases import evaluate_strategy_gate_case
 
 CST = timezone(timedelta(hours=8))
 OPEN_FLOW_TYPES = {"SIGNAL", "OPEN", "OPEN_SKIPPED", "OPEN_FAILED"}
+CLOSE_FLOW_TYPES = {
+    "CLOSE",
+    "FORCED_CLOSE",
+    "CLOSE_FAILED",
+    "FORCED_CLOSE_FAILED",
+    "EVICT_CLOSE",
+    "EVICT_FAILED",
+    "OPEN_SIZING_MISMATCH_CLOSED",
+    "OPEN_SIZING_MISMATCH_FAILED",
+}
+EVENT_FLOW_TYPES = OPEN_FLOW_TYPES | CLOSE_FLOW_TYPES
 SCAN_GATE_STAGES = {
     "confirmation",
     "cooldown",
@@ -75,18 +86,19 @@ def query_events(db: Path, days: int, limit: int) -> list[dict[str, Any]]:
     con = sqlite3.connect(db)
     try:
         con.row_factory = sqlite3.Row
+        placeholders = ", ".join("?" for _ in EVENT_FLOW_TYPES)
         rows = con.execute(
-            """
+            f"""
             select id, ts, strategy, symbol, event_type, category, side, score,
                    stage, layer, reason, source, payload_json
             from events
             where substr(ts, 1, 10) >= ?
-              and event_type in ('SIGNAL', 'OPEN', 'OPEN_SKIPPED', 'OPEN_FAILED')
+              and event_type in ({placeholders})
               and strategy in ('A/v11', 'B/v16', 'C/v14')
             order by id desc
             limit ?
             """,
-            (cutoff, int(limit)),
+            (cutoff, *sorted(EVENT_FLOW_TYPES), int(limit)),
         ).fetchall()
     finally:
         con.close()
@@ -152,8 +164,15 @@ def _expected_from_case_or_row(case: Mapping[str, Any], row: Mapping[str, Any], 
             normalized["expected_allowed"] = bool(normalized.get(key))
             return normalized, False
     event_type = str(row.get("event_type") or "").upper()
-    if count == 1 and event_type in OPEN_FLOW_TYPES:
-        normalized["expected_allowed"] = event_type in {"SIGNAL", "OPEN"}
+    if count == 1 and event_type in OPEN_FLOW_TYPES | CLOSE_FLOW_TYPES:
+        normalized["expected_allowed"] = event_type in {
+            "SIGNAL",
+            "OPEN",
+            "CLOSE",
+            "FORCED_CLOSE",
+            "EVICT_CLOSE",
+            "OPEN_SIZING_MISMATCH_CLOSED",
+        }
         meta = dict(normalized.get("meta") or {})
         meta["expected_allowed_inferred_from_event_type"] = event_type
         normalized["meta"] = meta
@@ -163,7 +182,16 @@ def _expected_from_case_or_row(case: Mapping[str, Any], row: Mapping[str, Any], 
 
 def extract_gate_cases(row: Mapping[str, Any]) -> list[dict[str, Any]]:
     payload = parse_payload(row.get("payload_json"))
-    raw_cases = [item for item in _case_sources(payload) if isinstance(item, Mapping)]
+    raw_cases: list[Mapping[str, Any]] = []
+    seen: set[str] = set()
+    for item in _case_sources(payload):
+        if not isinstance(item, Mapping):
+            continue
+        key = json.dumps(item, ensure_ascii=False, sort_keys=True, default=str)
+        if key in seen:
+            continue
+        seen.add(key)
+        raw_cases.append(item)
     cases: list[dict[str, Any]] = []
     for item in raw_cases:
         case, inferred = _expected_from_case_or_row(item, row, len(raw_cases))
@@ -205,6 +233,14 @@ def _empty_strategy(strategy: str) -> dict[str, Any]:
         "scan_mismatched": 0,
         "scan_errors": 0,
         "_scan_gates": collections.Counter(),
+        "close_flow_rows": 0,
+        "close_rows_with_exact_cases": 0,
+        "close_missing_case_rows": 0,
+        "close_gate_cases": 0,
+        "close_passed": 0,
+        "close_mismatched": 0,
+        "close_errors": 0,
+        "_close_gates": collections.Counter(),
     }
 
 
@@ -221,8 +257,18 @@ def _process_cases(
     event_type: str,
     row_kind: str,
 ) -> None:
-    prefix = "" if row_kind == "open_flow" else "scan_"
-    gate_counter_key = "_gates" if row_kind == "open_flow" else "_scan_gates"
+    if row_kind == "open_flow":
+        prefix = ""
+        gate_counter_key = "_gates"
+        source_table = "events"
+    elif row_kind == "close_flow":
+        prefix = "close_"
+        gate_counter_key = "_close_gates"
+        source_table = "events"
+    else:
+        prefix = "scan_"
+        gate_counter_key = "_scan_gates"
+        source_table = "sentinel_scans"
     for case in cases:
         gate = str(case.get("gate") or "")
         bucket[gate_counter_key][gate or "unknown"] += 1
@@ -243,7 +289,7 @@ def _process_cases(
                 if len(mismatch_examples) < 12:
                     mismatch_examples.append(
                         {
-                            "source_table": "events" if row_kind == "open_flow" else "sentinel_scans",
+                            "source_table": source_table,
                             "row_kind": row_kind,
                             "event_id": row.get("id"),
                             "ts": row.get("ts"),
@@ -264,7 +310,7 @@ def _process_cases(
             if len(error_examples) < 12:
                 error_examples.append(
                     {
-                        "source_table": "events" if row_kind == "open_flow" else "sentinel_scans",
+                        "source_table": source_table,
                         "row_kind": row_kind,
                         "event_id": row.get("id"),
                         "ts": row.get("ts"),
@@ -322,6 +368,36 @@ def build_payload(db: Path, days: int, limit: int) -> dict[str, Any]:
             row_kind="open_flow",
         )
 
+    for row in reversed(rows):
+        event = ReplayEvent.from_event_store_row(row)
+        if event.event_type.value not in CLOSE_FLOW_TYPES:
+            continue
+        strategy = event.strategy or "unknown"
+        latest_ts = max(latest_ts, event.ts or "")
+        bucket = by_strategy.setdefault(strategy, _empty_strategy(strategy))
+        bucket["close_flow_rows"] += 1
+        totals["close_flow_rows"] += 1
+
+        cases = extract_gate_cases(row)
+        if not cases:
+            bucket["close_missing_case_rows"] += 1
+            totals["close_missing_case_rows"] += 1
+            continue
+        bucket["close_rows_with_exact_cases"] += 1
+        totals["close_rows_with_exact_cases"] += 1
+        _process_cases(
+            row=row,
+            cases=cases,
+            bucket=bucket,
+            totals=totals,
+            mismatch_examples=mismatch_examples,
+            error_examples=error_examples,
+            strategy=strategy,
+            symbol=event.symbol,
+            event_type=event.event_type.value,
+            row_kind="close_flow",
+        )
+
     for row in reversed(scan_rows):
         strategy = str(row.get("strategy") or "unknown")
         stage = str(row.get("stage") or "")
@@ -360,6 +436,9 @@ def build_payload(db: Path, days: int, limit: int) -> dict[str, Any]:
         row["scan_exact_case_coverage_pct"] = pct(row["scan_rows_with_exact_cases"], row["scan_gate_rows"])
         row["scan_pass_rate_pct"] = pct(row["scan_passed"], row["scan_gate_cases"])
         row["scan_top_gates"] = [{"name": k, "count": v} for k, v in row.pop("_scan_gates").most_common(8)]
+        row["close_exact_case_coverage_pct"] = pct(row["close_rows_with_exact_cases"], row["close_flow_rows"])
+        row["close_pass_rate_pct"] = pct(row["close_passed"], row["close_gate_cases"])
+        row["close_top_gates"] = [{"name": k, "count": v} for k, v in row.pop("_close_gates").most_common(8)]
         strategies.append(row)
 
     summary = {
@@ -383,18 +462,36 @@ def build_payload(db: Path, days: int, limit: int) -> dict[str, Any]:
         "scan_errors": int(totals["scan_errors"]),
         "scan_exact_case_coverage_pct": pct(totals["scan_rows_with_exact_cases"], totals["scan_gate_rows"]),
         "scan_pass_rate_pct": pct(totals["scan_passed"], totals["scan_gate_cases"]),
+        "close_flow_rows": int(totals["close_flow_rows"]),
+        "close_rows_with_exact_cases": int(totals["close_rows_with_exact_cases"]),
+        "close_missing_case_rows": int(totals["close_missing_case_rows"]),
+        "close_gate_cases": int(totals["close_gate_cases"]),
+        "close_passed": int(totals["close_passed"]),
+        "close_mismatched": int(totals["close_mismatched"]),
+        "close_errors": int(totals["close_errors"]),
+        "close_exact_case_coverage_pct": pct(totals["close_rows_with_exact_cases"], totals["close_flow_rows"]),
+        "close_pass_rate_pct": pct(totals["close_passed"], totals["close_gate_cases"]),
         "latest_ts": latest_ts,
     }
-    if summary["errors"] or summary["mismatched"] or summary["scan_errors"] or summary["scan_mismatched"]:
+    if (
+        summary["errors"]
+        or summary["mismatched"]
+        or summary["scan_errors"]
+        or summary["scan_mismatched"]
+        or summary["close_errors"]
+        or summary["close_mismatched"]
+    ):
         status = "bad"
         next_action = "fix_exact_gate_mismatches_before_claiming_replay_live_parity"
-    elif summary["gate_cases"] == 0 and summary["scan_gate_cases"] == 0:
+    elif summary["gate_cases"] == 0 and summary["scan_gate_cases"] == 0 and summary["close_gate_cases"] == 0:
         status = "missing_exact_cases"
         next_action = "instrument_live_scanners_to_persist_strategy_gate_cases"
     elif (
         summary["open_flow_rows"] and summary["exact_case_coverage_pct"] < 80
     ) or (
         summary["scan_gate_rows"] and summary["scan_exact_case_coverage_pct"] < 80
+    ) or (
+        summary["close_flow_rows"] and summary["close_exact_case_coverage_pct"] < 80
     ):
         status = "partial"
         next_action = "increase_strategy_gate_case_logging_coverage"
@@ -435,23 +532,30 @@ def build_markdown(payload: dict[str, Any]) -> str:
         f"- Scan rows with exact cases: `{summary.get('scan_rows_with_exact_cases')}` (`{summary.get('scan_exact_case_coverage_pct')}%`)",
         f"- Scan gate cases: `{summary.get('scan_gate_cases')}`; passed `{summary.get('scan_passed')}`; mismatched `{summary.get('scan_mismatched')}`; errors `{summary.get('scan_errors')}`",
         f"- Scan pass rate: `{summary.get('scan_pass_rate_pct')}%`",
+        f"- Close-flow rows: `{summary.get('close_flow_rows')}`",
+        f"- Close rows with exact cases: `{summary.get('close_rows_with_exact_cases')}` (`{summary.get('close_exact_case_coverage_pct')}%`)",
+        f"- Close gate cases: `{summary.get('close_gate_cases')}`; passed `{summary.get('close_passed')}`; mismatched `{summary.get('close_mismatched')}`; errors `{summary.get('close_errors')}`",
+        f"- Close pass rate: `{summary.get('close_pass_rate_pct')}%`",
         f"- Next action: `{summary.get('next_action')}`",
         "",
         "Exact parity only uses serialized `strategy_gate_case(s)` payloads. Rows without exact cases are counted as gaps, not guessed.",
-        "`Open-flow` comes from the events table; `scan-level` comes from sentinel_scans pre-open filters and is reported separately.",
+        "`Open-flow` and `close-flow` come from the events table; `scan-level` comes from sentinel_scans pre-open filters and is reported separately.",
         "",
-        "| Strategy | Open flow | Exact rows | Missing cases | Cases | Passed | Mismatch | Errors | Pass rate | Scan rows | Scan exact | Scan cases | Scan pass | Top gates | Scan gates |",
-        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |",
+        "| Strategy | Open flow | Exact rows | Missing cases | Cases | Passed | Mismatch | Errors | Pass rate | Scan rows | Scan exact | Scan cases | Scan pass | Close rows | Close exact | Close cases | Close pass | Top gates | Scan gates | Close gates |",
+        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- | --- |",
     ]
     for row in payload.get("strategies") or []:
         gates = ", ".join(f"{g['name']}:{g['count']}" for g in row.get("top_gates") or [])
         scan_gates = ", ".join(f"{g['name']}:{g['count']}" for g in row.get("scan_top_gates") or [])
+        close_gates = ", ".join(f"{g['name']}:{g['count']}" for g in row.get("close_top_gates") or [])
         lines.append(
             "| {strategy} | {open_flow_rows} | {rows_with_exact_cases} | {missing_case_rows} | {gate_cases} | "
             "{passed} | {mismatched} | {errors} | {pass_rate_pct}% | {scan_gate_rows} | "
-            "{scan_rows_with_exact_cases} | {scan_gate_cases} | {scan_pass_rate_pct}% | {gates} | {scan_gates} |".format(
+            "{scan_rows_with_exact_cases} | {scan_gate_cases} | {scan_pass_rate_pct}% | {close_flow_rows} | "
+            "{close_rows_with_exact_cases} | {close_gate_cases} | {close_pass_rate_pct}% | {gates} | {scan_gates} | {close_gates} |".format(
                 gates=gates or "-",
                 scan_gates=scan_gates or "-",
+                close_gates=close_gates or "-",
                 **row,
             )
         )
@@ -504,6 +608,9 @@ def main(argv: list[str] | None = None) -> int:
                 "scan_gate_rows": payload["summary"]["scan_gate_rows"],
                 "scan_gate_cases": payload["summary"]["scan_gate_cases"],
                 "scan_exact_case_coverage_pct": payload["summary"]["scan_exact_case_coverage_pct"],
+                "close_flow_rows": payload["summary"]["close_flow_rows"],
+                "close_gate_cases": payload["summary"]["close_gate_cases"],
+                "close_exact_case_coverage_pct": payload["summary"]["close_exact_case_coverage_pct"],
             },
             ensure_ascii=False,
         )

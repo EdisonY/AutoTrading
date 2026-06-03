@@ -22,6 +22,10 @@ class ReplayEventType(str, Enum):
     FORCED_CLOSE = "FORCED_CLOSE"
     CLOSE_FAILED = "CLOSE_FAILED"
     FORCED_CLOSE_FAILED = "FORCED_CLOSE_FAILED"
+    EVICT_CLOSE = "EVICT_CLOSE"
+    EVICT_FAILED = "EVICT_FAILED"
+    OPEN_SIZING_MISMATCH_CLOSED = "OPEN_SIZING_MISMATCH_CLOSED"
+    OPEN_SIZING_MISMATCH_FAILED = "OPEN_SIZING_MISMATCH_FAILED"
     SYSTEM = "SYSTEM"
     SENTINEL_SCANNED = "SENTINEL_SCANNED"
     UNKNOWN = "UNKNOWN"
@@ -77,6 +81,10 @@ class ReplayEvent:
             ReplayEventType.FORCED_CLOSE,
             ReplayEventType.CLOSE_FAILED,
             ReplayEventType.FORCED_CLOSE_FAILED,
+            ReplayEventType.EVICT_CLOSE,
+            ReplayEventType.EVICT_FAILED,
+            ReplayEventType.OPEN_SIZING_MISMATCH_CLOSED,
+            ReplayEventType.OPEN_SIZING_MISMATCH_FAILED,
         }
 
     def to_dict(self) -> dict[str, Any]:

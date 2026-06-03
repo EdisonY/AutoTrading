@@ -1011,6 +1011,57 @@ def log_event(event: dict):
     write_event_store({**_decision_from_event(event), "raw_event": event}, "C/v14/events")
     log_decision(_decision_from_event(event), persist_event_store=False)
 
+def _execution_result_case(name: str, exec_result, *, timeframe: str = "", phase: str = "") -> dict:
+    execution_gate = evaluate_execution_result_gate(
+        success=exec_result.success,
+        preflight_rejected=exec_result.preflight_rejected,
+        code=exec_result.code,
+        reason=exec_result.reason,
+        message=exec_result.message,
+    )
+    meta = {"strategy": "C/v14", "timeframe": timeframe}
+    if phase:
+        meta["phase"] = phase
+    return strategy_gate_case(
+        name=name,
+        gate="execution_result",
+        inputs={
+            "success": exec_result.success,
+            "preflight_rejected": exec_result.preflight_rejected,
+            "code": exec_result.code,
+            "reason": exec_result.reason,
+            "message": exec_result.message,
+        },
+        decision=execution_gate,
+        meta=meta,
+    )
+
+def _execution_exception_case(name: str, exc: Exception | str, *, timeframe: str = "", phase: str = "") -> dict:
+    message = str(exc)
+    execution_gate = evaluate_execution_result_gate(
+        success=False,
+        preflight_rejected=False,
+        code="exception",
+        reason=message,
+        message=message,
+    )
+    meta = {"strategy": "C/v14", "timeframe": timeframe}
+    if phase:
+        meta["phase"] = phase
+    return strategy_gate_case(
+        name=name,
+        gate="execution_result",
+        inputs={
+            "success": False,
+            "preflight_rejected": False,
+            "code": "exception",
+            "reason": message,
+            "message": message,
+        },
+        decision=execution_gate,
+        meta=meta,
+    )
+
 def _log_sentinel_scan_event(event: dict):
     """Log sentinel scan to dedicated sentinel_scans table (not events)."""
     write_jsonl_with_daily_shard(EVENTS_LOG, event)
@@ -1453,6 +1504,16 @@ class Scanner:
                     "failure_reason": "" if exchange_ok else close_exec.reason,
                     "exchange_status": close_exec.status,
                     "exchange_close_success": exchange_ok,
+                    **({} if exchange_ok else {
+                        "decision_stage": "execution",
+                        "filter_layer": "execution",
+                        "strategy_gate_case": _execution_result_case(
+                            "c_v14_forced_close_execution_result",
+                            close_exec,
+                            timeframe="exchange",
+                            phase="hard_stop",
+                        ),
+                    }),
                 })
                 if exchange_ok and now_dt:
                     self.sl_counts[sym] = self.sl_counts.get(sym, 0) + 1
@@ -1461,6 +1522,29 @@ class Scanner:
                         self.cooldowns[cd_tf][sym] = cooldown_end
             except Exception as e:
                 logger.error(f"  交易所硬顶平仓失败: {sym} {side} {e}")
+                log_event({
+                    "time": now_str,
+                    "event": "FORCED_CLOSE_FAILED",
+                    "symbol": sym,
+                    "side": side,
+                    "reason": f"交易所硬顶{MAX_LOSS_PCT:.0f}%",
+                    "loss_pct": round(loss_pct, 2),
+                    "entry_price": entry,
+                    "mark_price": mark,
+                    "qty": abs(amt),
+                    "side_source": side_source,
+                    "raw_position_side": p.get("positionSide", ""),
+                    "failure_reason": str(e),
+                    "exchange_close_success": False,
+                    "decision_stage": "execution",
+                    "filter_layer": "execution",
+                    "strategy_gate_case": _execution_exception_case(
+                        "c_v14_forced_close_exception",
+                        e,
+                        timeframe="exchange",
+                        phase="hard_stop",
+                    ),
+                })
 
     def _check_exits(self, now_str: str, now_dt: datetime = None):
         """检查所有持仓的止盈止损"""
@@ -1530,6 +1614,14 @@ class Scanner:
                             "exchange_status": close_exec.status,
                             "exchange_close_success": False,
                             "timeframe": tf,
+                            "decision_stage": "execution",
+                            "filter_layer": "execution",
+                            "strategy_gate_case": _execution_result_case(
+                                "c_v14_close_execution_result",
+                                close_exec,
+                                timeframe=tf,
+                                phase="normal_close",
+                            ),
                         })
                         continue
 

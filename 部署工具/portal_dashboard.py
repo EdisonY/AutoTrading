@@ -60,6 +60,8 @@ REPLAY_READINESS_JSON = ROOT / "runtime" / "replay_readiness_latest.json"
 REPLAY_READINESS_MD = REPORTS_DIR / "replay_readiness_latest.md"
 ROLLBACK_WATCH_JSON = ROOT / "runtime" / "rollback_watch_review_latest.json"
 ROLLBACK_WATCH_MD = REPORTS_DIR / "rollback_watch_review_latest.md"
+ROLLBACK_EXECUTION_JSON = ROOT / "runtime" / "rollback_execution_plan_latest.json"
+ROLLBACK_EXECUTION_MD = REPORTS_DIR / "rollback_execution_plan_latest.md"
 A_V11_ROLLOUT_JSON = ROOT / "runtime" / "a_v11_rollout_review_latest.json"
 A_V11_ROLLOUT_MD = REPORTS_DIR / "a_v11_rollout_review_latest.md"
 B_V16_ROLLOUT_JSON = ROOT / "runtime" / "b_v16_rollout_review_latest.json"
@@ -961,6 +963,31 @@ def rollback_watch_summary(path: Path | None) -> dict[str, Any]:
     }
 
 
+def rollback_execution_summary(path: Path | None) -> dict[str, Any]:
+    empty = {
+        "available": False,
+        "path": ROLLBACK_EXECUTION_MD,
+        "age": "No rollback execution plan",
+        "fresh": False,
+        "status": "missing",
+        "summary": {"plans": 0, "actionable_plans": 0},
+        "plans": [],
+    }
+    payload = read_json(path) if path else None
+    if not isinstance(payload, dict):
+        return empty
+    generated_at = parse_dt(payload.get("generated_at"))
+    return {
+        "available": True,
+        "path": ROLLBACK_EXECUTION_MD,
+        "age": age_text(generated_at),
+        "fresh": bool(generated_at and (datetime.now(CST) - generated_at).total_seconds() < 4 * 3600),
+        "status": payload.get("status") or "missing",
+        "summary": payload.get("summary") if isinstance(payload.get("summary"), dict) else empty["summary"],
+        "plans": payload.get("plans") if isinstance(payload.get("plans"), list) else [],
+    }
+
+
 def sentinel_quality_summary(path: Path | None) -> dict[str, Any]:
     empty = {
         "available": False,
@@ -1733,6 +1760,8 @@ def function_status_cards(data: dict[str, Any]) -> list[dict[str, str]]:
     replay_readiness_summary_data = replay_readiness.get("summary") or {}
     rollback_watch = data.get("rollback_watch") or {}
     rollback_watch_summary_data = rollback_watch.get("summary") or {}
+    rollback_execution = data.get("rollback_execution") or {}
+    rollback_execution_summary_data = rollback_execution.get("summary") or {}
     a_v11_rollout = data.get("a_v11_rollout") or {}
     a_v11_rollout_decision = a_v11_rollout.get("decision") or {}
     a_v11_rollout_72h = (a_v11_rollout.get("windows") or {}).get("72h") or {}
@@ -2082,6 +2111,30 @@ def function_status_cards(data: dict[str, Any]) -> list[dict[str, str]]:
                 f"updated {rollback_watch.get('age')}."
                 if rollback_watch.get("available")
                 else "P1 rollback-watch action matrix missing from report chain."
+            ),
+        },
+        {
+            "level": (
+                "warn"
+                if int(rollback_execution_summary_data.get("actionable_plans") or 0) > 0
+                else "ok"
+                if rollback_execution.get("fresh")
+                else "warn"
+            ),
+            "name": "Rollback execution",
+            "value": (
+                f"{int(rollback_execution_summary_data.get('actionable_plans') or 0)} dry-run"
+                if rollback_execution.get("available")
+                else "not built"
+            ),
+            "body": (
+                f"plans {int(rollback_execution_summary_data.get('plans') or 0)}; "
+                f"manual {int(rollback_execution_summary_data.get('manual_rollback_ready') or 0)}; "
+                f"review {int(rollback_execution_summary_data.get('rollback_review_ready') or 0)}; "
+                f"narrow/pause {int(rollback_execution_summary_data.get('narrow_or_pause_ready') or 0)}; "
+                f"apply enabled no; updated {rollback_execution.get('age')}."
+                if rollback_execution.get("available")
+                else "Rollback execution checklist missing. Governance may be ready, but dry-run command packet is not built."
             ),
         },
         {
@@ -2611,6 +2664,8 @@ def build_data() -> dict[str, Any]:
     data["replay_readiness_html"] = REPLAY_READINESS_MD
     data["rollback_watch"] = rollback_watch_summary(ROLLBACK_WATCH_JSON)
     data["rollback_watch_html"] = ROLLBACK_WATCH_MD
+    data["rollback_execution"] = rollback_execution_summary(ROLLBACK_EXECUTION_JSON)
+    data["rollback_execution_html"] = ROLLBACK_EXECUTION_MD
     data["a_v11_rollout"] = a_v11_rollout_summary(A_V11_ROLLOUT_JSON)
     data["a_v11_rollout_html"] = A_V11_ROLLOUT_MD
     data["b_v16_rollout"] = b_v16_rollout_summary(B_V16_ROLLOUT_JSON)
@@ -3236,6 +3291,23 @@ def render_html(out_dir: Path) -> str:
 """.strip()
         for r in (replay_readiness.get("blockers") or [])
     ) or '<tr><td colspan="3">当前无验收阻塞项</td></tr>'
+    rollback_execution = data.get("rollback_execution") or {}
+    rollback_execution_summary_data = rollback_execution.get("summary") or {}
+    rollback_execution_rows = "".join(
+        f"""
+<tr>
+  <td>{h(r.get('priority'))}</td>
+  <td>{h(r.get('strategy'))}</td>
+  <td>{h(r.get('candidate_id'))}</td>
+  <td>{h(r.get('execution_status'))}</td>
+  <td>{h(r.get('component'))}</td>
+  <td>{'no' if not r.get('apply_enabled') else 'yes'}</td>
+  <td>{h(compact_text('; '.join(r.get('dry_run_commands') or []), 160))}</td>
+  <td>{h(compact_text(r.get('reason') or '-', 140))}</td>
+</tr>
+""".strip()
+        for r in (rollback_execution.get("plans") or [])
+    ) or '<tr><td colspan="8">暂无 rollback execution plan</td></tr>'
 
     a_v11_rollout = data.get("a_v11_rollout") or {}
     a_v11_rollout_decision = a_v11_rollout.get("decision") or {}
@@ -3417,6 +3489,14 @@ def render_html(out_dir: Path) -> str:
             "看 P0/P1 rollback-watch 是否已有完整决策包、回滚路径、成熟度、replay readiness 和关闭失败归因。",
             data["rollback_watch_html"],
             "看回滚治理",
+            "red",
+        ),
+        route_card(
+            "回滚怎么预演",
+            "执行清单",
+            "看 operator-ready 项的 freeze、证据、dry-run release 命令和终止条件。默认只读，apply 关闭。",
+            data["rollback_execution_html"],
+            "看执行清单",
             "red",
         ),
         route_card(
@@ -3741,6 +3821,15 @@ th {{ background:#f1f5f9; color:#334155; }}
     <table class="subtable">
       <thead><tr><th>阻塞组件</th><th>状态</th><th>说明</th></tr></thead>
       <tbody>{replay_readiness_blocker_rows}</tbody>
+    </table>
+  </section>
+
+  <section class="section panel">
+    <h2>Rollback 执行预演</h2>
+    <p class="note">只读生成 operator-ready 项的 freeze、证据、dry-run release 命令和终止条件。状态 {h(rollback_execution.get('status', '-'))}；plans {int(rollback_execution_summary_data.get('plans') or 0)}；actionable {int(rollback_execution_summary_data.get('actionable_plans') or 0)}；apply enabled no；更新 {h(rollback_execution.get('age'))}。</p>
+    <table>
+      <thead><tr><th>优先级</th><th>策略</th><th>候选</th><th>状态</th><th>组件</th><th>Apply</th><th>Dry-run 命令</th><th>原因</th></tr></thead>
+      <tbody>{rollback_execution_rows}</tbody>
     </table>
   </section>
 

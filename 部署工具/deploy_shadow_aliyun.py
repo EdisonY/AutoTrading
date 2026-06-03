@@ -52,6 +52,8 @@ UPLOADS = [
     (ROOT / "部署工具" / "research_store_compaction.py", f"{REMOTE_DIR}/research_store_compaction.py"),
     (ROOT / "部署工具" / "replay_feature_dataset.py", f"{REMOTE_DIR}/replay_feature_dataset.py"),
     (ROOT / "部署工具" / "replay_readiness_review.py", f"{REMOTE_DIR}/replay_readiness_review.py"),
+    (ROOT / "部署工具" / "rollback_watch_review.py", f"{REMOTE_DIR}/rollback_watch_review.py"),
+    (ROOT / "部署工具" / "rollback_execution_plan.py", f"{REMOTE_DIR}/rollback_execution_plan.py"),
     (ROOT / "部署工具" / "research_store_export.py", f"{REMOTE_DIR}/research_store_export.py"),
     (ROOT / "部署工具" / "research_store_query.py", f"{REMOTE_DIR}/research_store_query.py"),
     (ROOT / "部署工具" / "research_review_dashboard.py", f"{REMOTE_DIR}/research_review_dashboard.py"),

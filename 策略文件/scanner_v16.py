@@ -1389,6 +1389,19 @@ class ScannerV16:
                     "filter_layer": "execution",
                     "trade_size_usdt": TRADE_SIZE,
                     "small_live_stage_guard": STAGE_GUARD_SMALL_LIVE_ENABLED,
+                    "strategy_gate_case": strategy_gate_case(
+                        name="b_v16_execution_result",
+                        gate="execution_result",
+                        inputs={
+                            "success": exec_result.success,
+                            "preflight_rejected": exec_result.preflight_rejected,
+                            "code": exec_result.code,
+                            "reason": exec_result.reason,
+                            "message": exec_result.message,
+                        },
+                        decision=execution_gate,
+                        meta={"strategy": "B/v16", "timeframe": tf},
+                    ),
                     **sentinel_fields(sym),
                 })
                 self.cooldowns[tf][sym] = max(self.cooldowns[tf].get(sym, 0), 20)
@@ -1436,6 +1449,13 @@ class ScannerV16:
             return True
         except Exception as e:
             logger.error(f"  开仓异常: {e}")
+            execution_gate = evaluate_execution_result_gate(
+                success=False,
+                preflight_rejected=False,
+                code="exception",
+                reason=f"开仓异常: {str(e)[:120]}",
+                message=str(e),
+            )
             log_event({
                 "time": str(datetime.now(CST)), "event": "OPEN_FAILED", "symbol": sym,
                 "side": side, "price": price, "score": score, "timeframe": tf,
@@ -1444,6 +1464,19 @@ class ScannerV16:
                 "filter_layer": "execution",
                 "trade_size_usdt": TRADE_SIZE,
                 "small_live_stage_guard": STAGE_GUARD_SMALL_LIVE_ENABLED,
+                "strategy_gate_case": strategy_gate_case(
+                    name="b_v16_execution_exception",
+                    gate="execution_result",
+                    inputs={
+                        "success": False,
+                        "preflight_rejected": False,
+                        "code": "exception",
+                        "reason": f"开仓异常: {str(e)[:120]}",
+                        "message": str(e),
+                    },
+                    decision=execution_gate,
+                    meta={"strategy": "B/v16", "timeframe": tf},
+                ),
                 **sentinel_fields(sym),
             })
             self.cooldowns[tf][sym] = max(self.cooldowns[tf].get(sym, 0), 20)

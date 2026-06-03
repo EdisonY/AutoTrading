@@ -2528,6 +2528,19 @@ class Scanner:
                         "reason": f"下单失败({err_code}): {err_msg[:80]}",
                         "decision_stage": "execution",
                         "filter_layer": "execution",
+                        "strategy_gate_case": strategy_gate_case(
+                            name="a_v11_execution_result",
+                            gate="execution_result",
+                            inputs={
+                                "success": exec_result.success,
+                                "preflight_rejected": exec_result.preflight_rejected,
+                                "code": exec_result.code,
+                                "reason": exec_result.reason,
+                                "message": exec_result.message,
+                            },
+                            decision=execution_gate,
+                            meta={"strategy": "A/v11", "timeframe": tf},
+                        ),
                         **sentinel_fields(inst_id),
                     }
                     log_event(event)
@@ -2555,6 +2568,19 @@ class Scanner:
                     "reason": f"下单失败({err_code}): {err_msg[:80]}",
                     "decision_stage": "execution",
                     "filter_layer": "execution",
+                    "strategy_gate_case": strategy_gate_case(
+                        name="a_v11_execution_result",
+                        gate="execution_result",
+                        inputs={
+                            "success": exec_result.success,
+                            "preflight_rejected": exec_result.preflight_rejected,
+                            "code": exec_result.code,
+                            "reason": exec_result.reason,
+                            "message": exec_result.message,
+                        },
+                        decision=execution_gate,
+                        meta={"strategy": "A/v11", "timeframe": tf},
+                    ),
                     **sentinel_fields(inst_id),
                 }
                 log_event(event)
@@ -2564,6 +2590,13 @@ class Scanner:
                 return
         except Exception as e:
             logger.error(f"  下单异常: {e}")
+            execution_gate = evaluate_execution_result_gate(
+                success=False,
+                preflight_rejected=False,
+                code="exception",
+                reason=f"下单异常: {str(e)[:80]}",
+                message=str(e),
+            )
             event = {
                 "time": now_str, "event": "OPEN_FAILED", "symbol": inst_id,
                 "side": side, "price": price, "sl": sl, "tp": tp,
@@ -2575,6 +2608,19 @@ class Scanner:
                 "reason": f"下单异常: {str(e)[:80]}",
                 "decision_stage": "execution",
                 "filter_layer": "execution",
+                "strategy_gate_case": strategy_gate_case(
+                    name="a_v11_execution_exception",
+                    gate="execution_result",
+                    inputs={
+                        "success": False,
+                        "preflight_rejected": False,
+                        "code": "exception",
+                        "reason": f"下单异常: {str(e)[:80]}",
+                        "message": str(e),
+                    },
+                    decision=execution_gate,
+                    meta={"strategy": "A/v11", "timeframe": tf},
+                ),
                 **sentinel_fields(inst_id),
             }
             log_event(event)

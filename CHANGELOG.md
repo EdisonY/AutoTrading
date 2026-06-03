@@ -2,6 +2,14 @@
 
 This is the durable reason-and-outcome ledger for every material design, code, configuration, deployment, rollback, optimization, or live operational change.
 
+## 2026-06-03 20:04 CST - Add execution failure exact parity cases
+- Trigger / reason: Continue offline-first long-term P0-B. A/B/C execution preflight skips already persisted exact `execution_result` cases, but real `OPEN_FAILED` rows still lacked replayable execution failure evidence.
+- Completed: A/v11, B/v16, and C/v14 `OPEN_FAILED` rows now persist `strategy_gate_case` payloads using the shared `execution_result` gate for non-preflight execution failures. A/v11 and B/v16 exception branches also write replayable execution exception cases. Unit coverage now includes a non-preflight `execution_result` failure case.
+- Not completed / remaining: Offline source/test/doc work only. It does not start/restart services, deploy to servers, alter thresholds, sizing, leverage, stops, order paths, automatic upgrade, or automatic rollback. P0-B still needs deeper open/close confirmation orchestration and historical event-driven same-input replay/live checks. P0-A still needs final staged fresh-run.
+- Verification: Local `PYTHONDONTWRITEBYTECODE=1 python -m unittest tests.test_strategy_gate_cases tests.test_replay_live_parity_audit tests.test_strategy_gates` passed (`25` tests). Local temp-pycache `py_compile` passed for `core\strategy_gates.py`, `core\strategy_gate_cases.py`, `部署工具\replay_live_parity_audit.py`, A/B/C scanners, and the updated tests. Local `rtk git diff --check` passed.
+- Live impact / deployment: None. Offline source/test/doc change only; no Binance-facing service, scanner, queue, user-stream, sentinel, cache, account-state, account-snapshot, system-alerts, or data-maintenance service was started or restarted.
+- Files / release / commit: `策略文件/scanner.py`, `策略文件/scanner_v16.py`, `策略文件/scanner_v14.py`, `tests/test_strategy_gate_cases.py`, `CHANGELOG.md`, `PROJECT_STATE.md`, `记忆文档/MEMORY.md`, `记忆文档/FUTURE_EXECUTION_PLAN.md`.
+
 ## 2026-06-03 19:56 CST - Add entry risk exact parity cases
 - Trigger / reason: Continue offline-first long-term P0-B. A/B/C `_can_open_new_position` risk rejects used the shared `RiskEngine`, but the resulting `OPEN_SKIPPED` rows still lacked strict replayable `strategy_gate_case` payloads for total-position, side-position, and available-balance protection.
 - Completed: Added pure `evaluate_entry_risk_gate()` to `core.strategy_gates` and registered it in `core.strategy_gate_cases`. A/v11, B/v16, and C/v14 risk-gate `OPEN_SKIPPED` rows now persist exact `entry_risk` cases with total positions, side positions, total/available balance, risk size, and configured limits. Unit coverage verifies total-position, side-position, capital-guard, and allowed outcomes.

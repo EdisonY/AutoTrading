@@ -89,6 +89,18 @@ class StrategyGateCasesTest(unittest.TestCase):
                     "expected_reason": "min notional",
                 },
                 {
+                    "name": "execution-failed",
+                    "gate": "execution_result",
+                    "inputs": {
+                        "success": False,
+                        "preflight_rejected": False,
+                        "code": "-1007",
+                        "message": "status unknown",
+                    },
+                    "expected_allowed": False,
+                    "expected_reason": "status unknown",
+                },
+                {
                     "name": "account-state-missing",
                     "gate": "account_state_available",
                     "inputs": {"account_state_available": False},
@@ -144,7 +156,7 @@ class StrategyGateCasesTest(unittest.TestCase):
             ]
         )
 
-        self.assertEqual([row["passed"] for row in results], [True, True, True, True, True, True, True, False])
+        self.assertEqual([row["passed"] for row in results], [True, True, True, True, True, True, True, True, False])
         self.assertEqual(results[-1]["reason"], "qty<=0")
 
     def test_unknown_gate_raises(self):

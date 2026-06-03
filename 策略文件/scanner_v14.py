@@ -2203,6 +2203,19 @@ class Scanner:
                 "timeframe": tf,
                 "decision_stage": "execution",
                 "filter_layer": "execution",
+                "strategy_gate_case": strategy_gate_case(
+                    name="c_v14_execution_result",
+                    gate="execution_result",
+                    inputs={
+                        "success": exec_result.success,
+                        "preflight_rejected": exec_result.preflight_rejected,
+                        "code": exec_result.code,
+                        "reason": exec_result.reason,
+                        "message": exec_result.message,
+                    },
+                    decision=execution_gate,
+                    meta={"strategy": "C/v14", "timeframe": tf},
+                ),
                 **sentinel_fields(inst_id),
             })
             return

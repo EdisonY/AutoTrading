@@ -2,6 +2,7 @@ import importlib.util
 import json
 import sqlite3
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -137,6 +138,125 @@ class AV11RolloutReviewPacketTests(unittest.TestCase):
         self.assertEqual(packet["cost_sensitivity_72h"][1]["cost_pct"], 0.25)
         self.assertIn("72h exit models: max_loss_guard(4, -130.00)", packet["risk"])
         self.assertIn("72h after-cost pnl at 0.25% cost -114.00 USDT", packet["risk"])
+
+    def test_replay_fill_comparison_uses_local_kline_cache(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            old_root = self.tool.ROOT
+            try:
+                self.tool.ROOT = Path(tmp)
+                cache_dir = Path(tmp) / "runtime" / "kline_cache"
+                cache_dir.mkdir(parents=True)
+                rows = [
+                    [int(self.tool.parse_dt("2026-06-03T10:00:00+08:00").timestamp() * 1000), "100", "103", "99", "102"],
+                    [int(self.tool.parse_dt("2026-06-03T10:15:00+08:00").timestamp() * 1000), "102", "104", "101", "103"],
+                    [int(self.tool.parse_dt("2026-06-03T10:30:00+08:00").timestamp() * 1000), "103", "105", "102", "104"],
+                ]
+                (cache_dir / "AAAUSDT_15m_100.json").write_text(
+                    json.dumps({"rows": rows}),
+                    encoding="utf-8",
+                )
+
+                con = sqlite3.connect(":memory:")
+                con.row_factory = sqlite3.Row
+                con.execute(
+                    """
+                    create table events (
+                        id integer primary key,
+                        ts text,
+                        strategy text,
+                        symbol text,
+                        event_type text,
+                        category text,
+                        side text,
+                        reason text,
+                        payload_json text
+                    )
+                    """
+                )
+                con.executemany(
+                    """
+                    insert into events (ts, strategy, symbol, event_type, category, side, reason, payload_json)
+                    values (?, 'A/v11', 'AAAUSDT', ?, '', 'long', ?, ?)
+                    """,
+                    [
+                        (
+                            "2026-06-03T10:00:00+08:00",
+                            "OPEN",
+                            "",
+                            json.dumps(
+                                {
+                                    "raw": {
+                                        "symbol": "AAAUSDT",
+                                        "side": "long",
+                                        "price": 100,
+                                        "sl": 95,
+                                        "tp": 110,
+                                        "atr": 2,
+                                        "timeframe": "15m",
+                                        "exchange_qty": 4,
+                                        "leverage": 4,
+                                    }
+                                }
+                            ),
+                        ),
+                        (
+                            "2026-06-03T10:30:00+08:00",
+                            "CLOSE",
+                            "浮动止损",
+                            json.dumps(
+                                {
+                                    "raw": {
+                                        "symbol": "AAAUSDT",
+                                        "side": "long",
+                                        "entry_time": "2026-06-03T10:00:00+08:00",
+                                        "entry_price": 100,
+                                        "exit_price": 104,
+                                        "pnl_usd": 16,
+                                        "reason": "浮动止损",
+                                        "timeframe": "15m",
+                                        "exchange_qty": 4,
+                                    }
+                                }
+                            ),
+                        ),
+                    ],
+                )
+                db_rows = list(con.execute("select * from events order by id"))
+                con.close()
+
+                comparison = self.tool.build_replay_fill_comparison(
+                    db_rows,
+                    self.tool.parse_dt("2026-06-03T09:00:00+08:00"),
+                    self.tool.parse_dt("2026-06-03T11:00:00+08:00"),
+                )
+            finally:
+                self.tool.ROOT = old_root
+
+        self.assertEqual(comparison["status"], "ready")
+        self.assertEqual(comparison["paired_trades"], 1)
+        self.assertEqual(comparison["completed"], 1)
+        self.assertEqual(comparison["status_counts"], {"complete": 1})
+        self.assertEqual(comparison["top_deltas"][0]["replay_exit_reason"], "trailing_stop")
+        self.assertIn("local kline cache only", comparison["note"])
+
+    def test_decision_packet_includes_replay_fill_comparison(self):
+        windows = {
+            "24h": {"closed_samples": 1, "pnl_after_cost_usdt": 1, "forced_close_rate": 0},
+            "72h": {"closed_samples": 1, "pnl_after_cost_usdt": 1, "forced_close_rate": 0},
+            "168h": {"closed_samples": 1, "pnl_after_cost_usdt": 1, "forced_close_rate": 0},
+        }
+        replay = {
+            "72h": {
+                "paired_trades": 2,
+                "completed": 1,
+                "pnl_delta_usdt": -3.5,
+            }
+        }
+
+        packet = self.tool.decision_packet({}, windows, self.tool.verdict(windows), replay)
+
+        self.assertEqual(packet["replay_fill_comparison_72h"]["completed"], 1)
+        self.assertIn("72h replay/fill comparison 1/2 complete, delta -3.50 USDT", packet["risk"])
 
 
 if __name__ == "__main__":

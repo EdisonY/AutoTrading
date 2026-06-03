@@ -3093,6 +3093,23 @@ def render_html(out_dir: Path) -> str:
 """.strip()
         for r in (cf_fill.get("by_exit_model") or [])[:6]
     ) or '<tr><td colspan="15">暂无 replay/fill 出场模型汇总</td></tr>'
+    counterfactual_stress_rows = "".join(
+        f"""
+<tr>
+  <td>{h(r.get('scenario'))}</td>
+  <td>{int(r.get('samples') or 0)}</td>
+  <td>{float(r.get('avg_fill_ratio') or 0):.3f}</td>
+  <td>{float(r.get('filled_quantity') or 0):.2f}</td>
+  <td>{float(r.get('unfilled_quantity') or 0):.2f}</td>
+  <td class="num {'pos' if float(r.get('net_pnl_usdt') or 0) >= 0 else 'neg'}">{float(r.get('net_pnl_usdt') or 0):+.2f}</td>
+  <td class="num {'pos' if float(r.get('net_delta_vs_base_usdt') or 0) >= 0 else 'neg'}">{float(r.get('net_delta_vs_base_usdt') or 0):+.2f}</td>
+  <td>{float(r.get('market_impact_usdt') or 0):.2f}</td>
+  <td>{float(r.get('extra_market_impact_usdt') or 0):.2f}</td>
+  <td>{int(r.get('partial_fill_count') or 0)}</td>
+</tr>
+""".strip()
+        for r in (cf_fill.get("stress_grid") or [])[:5]
+    ) or '<tr><td colspan="10">暂无 replay/fill 压力场景</td></tr>'
     cf_exit_reasons = "；".join(
         f"{row.get('name')}={int(row.get('count') or 0)}"
         for row in (cf_fill.get("exit_reason_counts") or [])[:5]
@@ -3741,6 +3758,10 @@ th {{ background:#f1f5f9; color:#334155; }}
     <table class="subtable">
       <thead><tr><th>出场模型</th><th>样本</th><th>胜率</th><th>Gross</th><th>Fee</th><th>Slippage</th><th>Depth slip</th><th>Impact</th><th>Net</th><th>OB fills</th><th>OB fill</th><th>Queue ahead</th><th>Partial</th><th>Avg fill</th><th>Avg bars</th></tr></thead>
       <tbody>{counterfactual_fill_rows}</tbody>
+    </table>
+    <table class="subtable">
+      <thead><tr><th>压力场景</th><th>样本</th><th>成交率</th><th>Filled</th><th>Unfilled</th><th>Net</th><th>vs Base</th><th>Impact</th><th>Extra impact</th><th>Partial</th></tr></thead>
+      <tbody>{counterfactual_stress_rows}</tbody>
     </table>
     <table class="subtable">
       <thead><tr><th>策略</th><th>主要否决层</th><th>样本</th><th>若放行胜率</th><th>若放行PnL</th></tr></thead>

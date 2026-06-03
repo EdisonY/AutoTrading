@@ -347,6 +347,7 @@ class CounterfactualReplayFillTests(unittest.TestCase):
                 replay_fill={
                     "exit_model": "a_v11_atr_trailing",
                     "exit_reason": "trailing_stop",
+                    "entry_price": 100.0,
                     "gross_pnl_usdt": 4.0,
                     "fee_usdt": 0.4,
                     "slippage_usdt": 0.1,
@@ -383,6 +384,7 @@ class CounterfactualReplayFillTests(unittest.TestCase):
                 replay_fill={
                     "exit_model": "fixed_pct_barrier",
                     "exit_reason": "stop_loss",
+                    "entry_price": 100.0,
                     "gross_pnl_usdt": -2.4,
                     "fee_usdt": 0.4,
                     "slippage_usdt": 0.0,
@@ -435,6 +437,15 @@ class CounterfactualReplayFillTests(unittest.TestCase):
         self.assertAlmostEqual(by_model["a_v11_atr_trailing"]["avg_order_book_queue_ahead_quantity"], 1.0)
         self.assertAlmostEqual(by_model["a_v11_atr_trailing"]["avg_fill_ratio"], 0.5)
         self.assertAlmostEqual(by_model["fixed_pct_barrier"]["net_pnl_usdt"], -2.8)
+        stress = {row["scenario"]: row for row in summary["stress_grid"]}
+        self.assertAlmostEqual(stress["base"]["net_pnl_usdt"], 0.8)
+        self.assertAlmostEqual(stress["base"]["avg_fill_ratio"], 0.75)
+        self.assertAlmostEqual(stress["conservative"]["filled_quantity"], 5.0)
+        self.assertAlmostEqual(stress["conservative"]["avg_fill_ratio"], 0.625)
+        self.assertAlmostEqual(stress["conservative"]["extra_market_impact_usdt"], 0.25)
+        self.assertAlmostEqual(stress["conservative"]["net_delta_vs_base_usdt"], 0.45)
+        self.assertAlmostEqual(stress["stress"]["avg_fill_ratio"], 0.5)
+        self.assertAlmostEqual(stress["stress"]["extra_market_impact_usdt"], 0.6)
 
 
 if __name__ == "__main__":

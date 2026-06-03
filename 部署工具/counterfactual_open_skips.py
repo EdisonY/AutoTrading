@@ -53,6 +53,26 @@ STRATEGIES = ("A/v11", "B/v16", "C/v14")
 NUMBER_RE = re.compile(r"\d+(?:\.\d+)?")
 A_V11_TRAILING_ACTIVATE_ATR = {"15m": 1.0, "30m": 1.2}
 A_V11_TRAILING_PULLBACK_ATR = {"15m": 1.0, "30m": 0.8}
+FILL_STRESS_SCENARIOS = (
+    {
+        "scenario": "base",
+        "fill_ratio_cap": 1.0,
+        "extra_market_impact_bps": 0.0,
+        "note": "current replay fill assumptions",
+    },
+    {
+        "scenario": "conservative",
+        "fill_ratio_cap": 0.75,
+        "extra_market_impact_bps": 5.0,
+        "note": "cap filled quantity at 75% of requested size and add 5bps entry impact",
+    },
+    {
+        "scenario": "stress",
+        "fill_ratio_cap": 0.50,
+        "extra_market_impact_bps": 15.0,
+        "note": "cap filled quantity at 50% of requested size and add 15bps entry impact",
+    },
+)
 
 
 @dataclass
@@ -547,6 +567,82 @@ def count_rows(counter: Counter[str]) -> list[dict[str, Any]]:
     ]
 
 
+def replay_fill_stress_grid(fills: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for scenario in FILL_STRESS_SCENARIOS:
+        fill_cap = float(scenario["fill_ratio_cap"])
+        impact_bps = float(scenario["extra_market_impact_bps"])
+        requested_total = 0.0
+        filled_total = 0.0
+        gross_total = 0.0
+        fee_total = 0.0
+        slippage_total = 0.0
+        depth_slippage_total = 0.0
+        base_impact_total = 0.0
+        extra_impact_total = 0.0
+        net_values: list[float] = []
+        partial_count = 0
+
+        for fill in fills:
+            base_qty = fill_float(fill, "quantity")
+            requested_qty = fill_float(fill, "requested_quantity") or base_qty
+            if base_qty <= 0 or requested_qty <= 0:
+                continue
+            adjusted_qty = min(base_qty, requested_qty * fill_cap)
+            if adjusted_qty <= 0:
+                continue
+            scale = adjusted_qty / base_qty
+            entry_price = abs(fill_float(fill, "entry_price"))
+            extra_impact = entry_price * adjusted_qty * impact_bps / 10_000.0
+            gross = fill_float(fill, "gross_pnl_usdt") * scale - extra_impact
+            fee = fill_float(fill, "fee_usdt") * scale
+            slippage = fill_float(fill, "slippage_usdt") * scale
+            depth_slippage = fill_float(fill, "depth_slippage_usdt") * scale
+            base_impact = fill_float(fill, "market_impact_usdt") * scale
+            net = fill_float(fill, "net_pnl_usdt") * scale - extra_impact
+
+            requested_total += requested_qty
+            filled_total += adjusted_qty
+            gross_total += gross
+            fee_total += fee
+            slippage_total += slippage
+            depth_slippage_total += depth_slippage
+            base_impact_total += base_impact
+            extra_impact_total += extra_impact
+            net_values.append(net)
+            if adjusted_qty < requested_qty:
+                partial_count += 1
+
+        rows.append(
+            {
+                "scenario": scenario["scenario"],
+                "fill_ratio_cap": fill_cap,
+                "extra_market_impact_bps": impact_bps,
+                "samples": len(net_values),
+                "requested_quantity": requested_total,
+                "filled_quantity": filled_total,
+                "unfilled_quantity": max(0.0, requested_total - filled_total),
+                "avg_fill_ratio": filled_total / requested_total if requested_total else None,
+                "partial_fill_count": partial_count,
+                "gross_pnl_usdt": gross_total if net_values else None,
+                "fee_usdt": fee_total if net_values else None,
+                "slippage_usdt": slippage_total if net_values else None,
+                "depth_slippage_usdt": depth_slippage_total if net_values else None,
+                "market_impact_usdt": (base_impact_total + extra_impact_total) if net_values else None,
+                "extra_market_impact_usdt": extra_impact_total if net_values else None,
+                "net_pnl_usdt": sum(net_values) if net_values else None,
+                "win_rate": (sum(value > 0 for value in net_values) / len(net_values) * 100) if net_values else None,
+                "note": scenario["note"],
+            }
+        )
+
+    base_net = rows[0].get("net_pnl_usdt") if rows else None
+    if base_net is not None:
+        for row in rows:
+            row["net_delta_vs_base_usdt"] = (row.get("net_pnl_usdt") or 0.0) - float(base_net)
+    return rows
+
+
 def replay_fill_summary(rows: list[Result]) -> dict[str, Any]:
     fills = [row.replay_fill for row in rows if isinstance(row.replay_fill, dict) and row.replay_fill]
     exit_model_counts: Counter[str] = Counter()
@@ -619,6 +715,7 @@ def replay_fill_summary(rows: list[Result]) -> dict[str, Any]:
         "avg_fill_ratio": mean([fill_float(fill, "fill_ratio") for fill in fills]) if fills else None,
         "net_pnl_usdt": sum(fill_float(fill, "net_pnl_usdt") for fill in fills) if fills else None,
         "avg_bars_held": mean([fill_float(fill, "bars_held") for fill in fills]) if fills else None,
+        "stress_grid": replay_fill_stress_grid(fills),
         "by_exit_model": by_model_rows,
     }
 
@@ -717,6 +814,7 @@ def report_markdown(
     fill_summary = overall.get("replay_fill") or {}
     model_rows = fill_summary.get("by_exit_model") or []
     reason_rows = fill_summary.get("exit_reason_counts") or []
+    stress_rows = fill_summary.get("stress_grid") or []
     lines.extend(
         [
             "",
@@ -753,6 +851,27 @@ def report_markdown(
         )
     if not model_rows:
         lines.append("| - | 0 | - | - | - | - | - | - | - | - | - | - | - | - | - |")
+    lines.extend(
+        [
+            "",
+            f"## Replay/fill 压力场景（{args.primary_horizon}m）",
+            "",
+            "这些场景只在已完成 fill payload 上做派生缩放，不重新拉 K 线，不请求 Binance API。",
+            "",
+            "| 场景 | 样本 | 成交率 | Filled | Unfilled | Net PnL | vs Base | Impact | Extra impact | Partial | 说明 |",
+            "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |",
+        ]
+    )
+    for row in stress_rows:
+        lines.append(
+            f"| {md(row.get('scenario'))} | {int(row.get('samples') or 0)} | {fmt(row.get('avg_fill_ratio'), 3)} | "
+            f"{fmt(row.get('filled_quantity'))} | {fmt(row.get('unfilled_quantity'))} | "
+            f"{fmt(row.get('net_pnl_usdt'), sign=True)} | {fmt(row.get('net_delta_vs_base_usdt'), sign=True)} | "
+            f"{fmt(row.get('market_impact_usdt'))} | {fmt(row.get('extra_market_impact_usdt'))} | "
+            f"{int(row.get('partial_fill_count') or 0)} | {md(row.get('note'))} |"
+        )
+    if not stress_rows:
+        lines.append("| - | 0 | - | - | - | - | - | - | - | 0 | - |")
     if reason_rows:
         reason_text = "；".join(f"{md(row.get('name'))}={int(row.get('count') or 0)}" for row in reason_rows[:8])
         lines.extend(["", f"- 出场原因分布: {reason_text}。"])

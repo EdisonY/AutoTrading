@@ -85,6 +85,7 @@ from core.strategy_gates import (
     evaluate_symbol_stop_loss_gate,
     evaluate_timeframe_position_gate,
 )
+from core.strategy_gate_cases import strategy_gate_case
 from core.strategy_engine import StrategyEngine
 
 def console_log_level() -> int:
@@ -1120,6 +1121,13 @@ class Scanner:
                     "risk_category": "account_state_unavailable",
                     "decision_stage": "risk_gate",
                     "filter_layer": "risk",
+                    "strategy_gate_case": strategy_gate_case(
+                        name="c_v14_account_state_available",
+                        gate="account_state_available",
+                        inputs={"account_state_available": False},
+                        decision=state_gate,
+                        meta={"strategy": "C/v14", "timeframe": tf},
+                    ),
                     **sentinel_fields(sym),
                 })
                 return False
@@ -1128,6 +1136,7 @@ class Scanner:
             side_count = count_side_positions(exchange_positions, side)
         except Exception as e:
             logger.debug(f"  开仓风控快照读取失败: {e}")
+            state_gate = evaluate_account_state_available_gate(account_state_available=False, read_error=True)
             log_event({
                 "time": now_str, "event": "OPEN_SKIPPED", "symbol": sym,
                 "side": side, "score": score, "timeframe": tf,
@@ -1135,6 +1144,13 @@ class Scanner:
                 "risk_category": "account_state_unavailable",
                 "decision_stage": "risk_gate",
                 "filter_layer": "risk",
+                "strategy_gate_case": strategy_gate_case(
+                    name="c_v14_account_state_read_failed",
+                    gate="account_state_available",
+                    inputs={"account_state_available": False, "read_error": True},
+                    decision=state_gate,
+                    meta={"strategy": "C/v14", "timeframe": tf, "error": str(e)[:160]},
+                ),
                 **sentinel_fields(sym),
             })
             return False
@@ -1884,6 +1900,16 @@ class Scanner:
                 "existing_exchange_qty": existing_qty,
                 "existing_exchange_side": existing_side,
                 "existing_entry_price": existing_entry,
+                "strategy_gate_case": strategy_gate_case(
+                    name="c_v14_no_same_symbol_position",
+                    gate="no_same_symbol_position",
+                    inputs={
+                        "has_exchange_position": bool(existing_exchange_pos),
+                        "has_local_position": self._has_position(inst_id),
+                    },
+                    decision=position_gate,
+                    meta={"strategy": "C/v14", "timeframe": tf},
+                ),
                 **sentinel_fields(inst_id),
             })
             return
@@ -1903,6 +1929,13 @@ class Scanner:
                 "skip_reason": stale_price_gate.reason,
                 "decision_stage": "market_data_guard",
                 "filter_layer": "market_data",
+                "strategy_gate_case": strategy_gate_case(
+                    name="c_v14_stale_entry_price",
+                    gate="c_v14_stale_entry_price",
+                    inputs={"recent_prices": recent_prices},
+                    decision=stale_price_gate,
+                    meta={"strategy": "C/v14", "timeframe": tf},
+                ),
                 **sentinel_fields(inst_id),
             })
             return
@@ -1917,6 +1950,13 @@ class Scanner:
                 "side": side, "price": price, "reason": market_gate.reason, "timeframe": tf,
                 "decision_stage": "market_microstructure",
                 "filter_layer": "market_data",
+                "strategy_gate_case": strategy_gate_case(
+                    name="c_v14_market_microstructure",
+                    gate="c_v14_market_microstructure",
+                    inputs={"atr": atr},
+                    decision=market_gate,
+                    meta={"strategy": "C/v14", "timeframe": tf},
+                ),
                 **sentinel_fields(inst_id),
             })
             return
@@ -1946,6 +1986,13 @@ class Scanner:
                 "risk_category": "execution_preflight",
                 "decision_stage": "execution_preflight",
                 "filter_layer": "execution",
+                "strategy_gate_case": strategy_gate_case(
+                    name="c_v14_positive_quantity",
+                    gate="positive_quantity",
+                    inputs={"quantity": qty},
+                    decision=quantity_gate,
+                    meta={"strategy": "C/v14", "timeframe": tf},
+                ),
                 **sentinel_fields(inst_id),
             })
             return
@@ -1984,6 +2031,19 @@ class Scanner:
                     "risk_category": "execution_preflight",
                     "decision_stage": "execution_preflight",
                     "filter_layer": "execution",
+                    "strategy_gate_case": strategy_gate_case(
+                        name="c_v14_execution_result",
+                        gate="execution_result",
+                        inputs={
+                            "success": exec_result.success,
+                            "preflight_rejected": exec_result.preflight_rejected,
+                            "code": exec_result.code,
+                            "reason": exec_result.reason,
+                            "message": exec_result.message,
+                        },
+                        decision=execution_gate,
+                        meta={"strategy": "C/v14", "timeframe": tf},
+                    ),
                     **sentinel_fields(inst_id),
                 })
                 return

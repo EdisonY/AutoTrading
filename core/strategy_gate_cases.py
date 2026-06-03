@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import date, datetime
 from typing import Any, Callable, Iterable, Mapping
 
 from core.strategy_gates import (
@@ -73,6 +74,42 @@ GATE_EVALUATORS: dict[str, GateEvaluator] = {
     "tradability": evaluate_tradability_gate,
     "watchlist_score_adjustment": evaluate_watchlist_score_adjustment,
 }
+
+
+def _json_safe(value: Any) -> Any:
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+    if isinstance(value, Mapping):
+        return {str(k): _json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return [_json_safe(v) for v in value]
+    return str(value)
+
+
+def strategy_gate_case(
+    *,
+    name: str,
+    gate: str,
+    inputs: Mapping[str, Any],
+    decision: StrategyGateDecision,
+    meta: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build a serializable exact-case payload for replay/live parity audits."""
+    return {
+        "name": str(name),
+        "gate": str(gate),
+        "inputs": _json_safe(dict(inputs)),
+        "expected_allowed": bool(decision.allowed),
+        "expected_reason": decision.reason,
+        "meta": {
+            "decision_gate": decision.gate,
+            "threshold": decision.threshold,
+            "adjusted_score": decision.adjusted_score,
+            **_json_safe(dict(meta or {})),
+        },
+    }
 
 
 @dataclass(frozen=True)

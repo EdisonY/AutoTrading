@@ -1,6 +1,9 @@
+import json
 import unittest
+from datetime import datetime
 
-from core.strategy_gate_cases import evaluate_strategy_gate_case, evaluate_strategy_gate_cases
+from core.strategy_gate_cases import evaluate_strategy_gate_case, evaluate_strategy_gate_cases, strategy_gate_case
+from core.strategy_gates import evaluate_symbol_blacklist_gate
 
 
 class StrategyGateCasesTest(unittest.TestCase):
@@ -136,6 +139,36 @@ class StrategyGateCasesTest(unittest.TestCase):
     def test_unknown_gate_raises(self):
         with self.assertRaises(KeyError):
             evaluate_strategy_gate_case({"gate": "missing", "inputs": {}})
+
+    def test_strategy_gate_case_is_json_safe_and_replayable(self):
+        decision = evaluate_symbol_blacklist_gate(
+            symbol="BTCUSDT",
+            blacklisted_symbols={"BTCUSDT", "ETHUSDT"},
+            reason="blocked",
+        )
+
+        case = strategy_gate_case(
+            name="blacklist-case",
+            gate="symbol_blacklist",
+            inputs={
+                "symbol": "BTCUSDT",
+                "blacklisted_symbols": {"BTCUSDT", "ETHUSDT"},
+                "reason": "blocked",
+            },
+            decision=decision,
+            meta={"seen_at": datetime(2026, 6, 3, 10, 30), "tags": {"live", "parity"}},
+        )
+
+        json.dumps(case, ensure_ascii=False)
+        replayed = evaluate_strategy_gate_case(case)
+
+        self.assertFalse(replayed.allowed)
+        self.assertEqual(replayed.reason, "blocked")
+        self.assertFalse(case["expected_allowed"])
+        self.assertEqual(case["expected_reason"], "blocked")
+        self.assertEqual(case["meta"]["seen_at"], "2026-06-03T10:30:00")
+        self.assertIsInstance(case["inputs"]["blacklisted_symbols"], list)
+        self.assertIsInstance(case["meta"]["tags"], list)
 
 
 if __name__ == "__main__":

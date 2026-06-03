@@ -54,6 +54,7 @@ from core.strategy_gates import (
     evaluate_timeframe_position_gate,
     evaluate_watchlist_score_adjustment,
 )
+from core.strategy_gate_cases import strategy_gate_case
 from core.strategy_engine import StrategyEngine
 
 def console_log_level() -> int:
@@ -859,6 +860,13 @@ class ScannerV16:
                     "risk_category": "account_state_unavailable",
                     "decision_stage": "risk_gate",
                     "filter_layer": "risk",
+                    "strategy_gate_case": strategy_gate_case(
+                        name="b_v16_account_state_available",
+                        gate="account_state_available",
+                        inputs={"account_state_available": False},
+                        decision=state_gate,
+                        meta={"strategy": "B/v16", "timeframe": tf},
+                    ),
                     **sentinel_fields(sym),
                 })
                 return False
@@ -867,6 +875,7 @@ class ScannerV16:
             side_count = count_side_positions(exchange_positions, side)
         except Exception as e:
             logger.debug(f"开仓风控快照读取失败: {e}")
+            state_gate = evaluate_account_state_available_gate(account_state_available=False, read_error=True)
             log_event({
                 "time": str(datetime.now(CST)), "event": "OPEN_SKIPPED",
                 "symbol": sym, "side": side, "score": score, "timeframe": tf,
@@ -874,6 +883,13 @@ class ScannerV16:
                 "risk_category": "account_state_unavailable",
                 "decision_stage": "risk_gate",
                 "filter_layer": "risk",
+                "strategy_gate_case": strategy_gate_case(
+                    name="b_v16_account_state_read_failed",
+                    gate="account_state_available",
+                    inputs={"account_state_available": False, "read_error": True},
+                    decision=state_gate,
+                    meta={"strategy": "B/v16", "timeframe": tf, "error": str(e)[:160]},
+                ),
                 **sentinel_fields(sym),
             })
             return False
@@ -1025,6 +1041,16 @@ class ScannerV16:
                         "timeframe": tf, "skip_reason": active_gate.reason,
                         "decision_stage": "risk_gate",
                         "filter_layer": "risk",
+                        "strategy_gate_case": strategy_gate_case(
+                            name="b_v16_active_position_limit",
+                            gate="active_position_limit",
+                            inputs={
+                                "open_positions": open_positions,
+                                "max_active_positions": MAX_ACTIVE_NEW_POSITIONS,
+                            },
+                            decision=active_gate,
+                            meta={"strategy": "B/v16", "timeframe": tf},
+                        ),
                         **sentinel_fields(sym),
                     })
                     continue
@@ -1127,6 +1153,16 @@ class ScannerV16:
                 "existing_exchange_side": existing_side,
                 "existing_entry_price": existing_entry,
                 "trade_size_usdt": TRADE_SIZE,
+                "strategy_gate_case": strategy_gate_case(
+                    name="b_v16_no_same_symbol_position",
+                    gate="no_same_symbol_position",
+                    inputs={
+                        "has_exchange_position": bool(existing_exchange_pos),
+                        "has_local_position": local_holding,
+                    },
+                    decision=position_gate,
+                    meta={"strategy": "B/v16", "timeframe": tf},
+                ),
                 **sentinel_fields(sym),
             })
             return False
@@ -1142,7 +1178,15 @@ class ScannerV16:
                 "time": str(datetime.now(CST)), "event": "OPEN_SKIPPED",
                 "symbol": sym, "side": side, "timeframe": tf,
                 "skip_reason": "qty<=0", "decision_stage": "execution",
-                "filter_layer": "execution", **sentinel_fields(sym),
+                "filter_layer": "execution",
+                "strategy_gate_case": strategy_gate_case(
+                    name="b_v16_positive_quantity",
+                    gate="positive_quantity",
+                    inputs={"quantity": size_qty},
+                    decision=quantity_gate,
+                    meta={"strategy": "B/v16", "timeframe": tf},
+                ),
+                **sentinel_fields(sym),
             })
             return False
         logger.info(f"  开仓[{tf}]: {sym} {side} @{price:.4f} 分数={score} 原因={'+'.join(sig[f'reasons_{side}'][:2])}")
@@ -1185,6 +1229,19 @@ class ScannerV16:
                         "filter_layer": "execution",
                         "trade_size_usdt": TRADE_SIZE,
                         "small_live_stage_guard": STAGE_GUARD_SMALL_LIVE_ENABLED,
+                        "strategy_gate_case": strategy_gate_case(
+                            name="b_v16_execution_result",
+                            gate="execution_result",
+                            inputs={
+                                "success": exec_result.success,
+                                "preflight_rejected": exec_result.preflight_rejected,
+                                "code": exec_result.code,
+                                "reason": exec_result.reason,
+                                "message": exec_result.message,
+                            },
+                            decision=execution_gate,
+                            meta={"strategy": "B/v16", "timeframe": tf},
+                        ),
                         **sentinel_fields(sym),
                     })
                     self.cooldowns[tf][sym] = max(self.cooldowns[tf].get(sym, 0), 5)

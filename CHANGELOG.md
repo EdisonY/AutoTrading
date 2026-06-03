@@ -2,6 +2,14 @@
 
 This is the durable reason-and-outcome ledger for every material design, code, configuration, deployment, rollback, optimization, or live operational change.
 
+## 2026-06-04 07:18 CST - Stage market-data-cache public producer
+- Trigger / reason: After P0-A queue/account/user-stream foundation passed, staged validation moved to the first public producer before sentinel or scanners.
+- Completed: Started only `crypto-market-data-cache.service` at `07:11:20 CST`. It stayed `active/running` and produced two clean cache cycles at `07:12:19` and `07:17:20`, each reporting `{"status":"ok","symbols":564,"top":180,"spikes":0}`. The central queue executed two `market-data-cache` public `/fapi/v1/ticker/24hr` requests with `result_status=200`.
+- Not completed / remaining: Sentinel, A/B/C scanners, fresh post-instrumentation parity rows, staged Kline/depth submit+ingest, replay readiness, rollout/recovery samples, browser ack service verification, final dirty-data archive/reset, and zero-run are still open.
+- Verification: `crypto-market-data-cache.service` was `active/running` with `ExecMainStatus=0`; queue `active_cooldowns=[]`; queue counts since cache start showed two `public` `/fapi/v1/ticker/24hr` rows `done/200`; journal grep for `418`, `429`, `-1003`, `Too many`, `Way too many`, and `cooldown` since `07:11 CST` found no active rate-limit error.
+- Live impact / deployment: Started one public-data cache service and made two queued Binance Testnet public ticker calls. No sentinel, scanner, account-snapshot polling, order, close, strategy threshold/config change, rollback, Kline/depth backfill, browser ack mutation, dirty-data reset, or zero-run occurred.
+- Files / release / commit: `CHANGELOG.md`, `PROJECT_STATE.md`, `记忆文档/MEMORY.md`, `记忆文档/FUTURE_EXECUTION_PLAN.md`.
+
 ## 2026-06-04 07:05 CST - Stage API queue and user streams
 - Trigger / reason: After Tencent skeleton and false P0 validation passed, staged validation moved to the P0-A foundation layer before starting public-data producers or scanners.
 - Completed: Started `crypto-binance-api-queue.service`, ran `crypto-account-state.service` as a oneshot baseline, then started A/B/C user-stream services one account at a time. The queue executed A/B/C balance and positionRisk baseline requests and A/B/C listenKey starts under the 60s executor cadence. Account state became fresh for all three accounts with `fresh_accounts=3`, `partial_error_count=0`, wallet `13416.5073`, unrealized PnL `+103.5886`, and `2` open positions. A/B/C user-stream services were active and idle-touching central account state.

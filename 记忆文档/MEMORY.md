@@ -42,7 +42,8 @@
 
 ## 2026-06-03 10:15 CST - P0-A public fresh-run blocker + P0-B execution gate
 - 长期目标继续按 `FUTURE_EXECUTION_PLAN.md` canonical P0/P1/P2 推进，P0-A 仍未验收。腾讯最新 staged fresh-run 中，A/v11 Kline 公共请求触发 Binance Testnet `HTTP 418/-1003`，queue public cooldown 到 `2026-06-03T10:31:59.888+08:00`。10:06 已再次停止 A/B/C scanner、sentinel、market-data-cache，只保留 API queue + A/B/C user-stream active。
-- 当前判断：fail-closed 队列避免了冷却期间继续入队，但 public producer 不能在 cooldown 内继续跑，否则 journal 会持续出现 blocked-by-cooldown 噪声，且 fresh-run 不能算 clean。下一轮必须等 cooldown 过期后更慢分阶段：先单 public producer，稳定后再 A，B/C 最后。
+- 当前判断：fail-closed 队列避免了冷却期间继续入队，但 public producer 不能在 cooldown 内继续跑，否则 journal 会持续出现 blocked-by-cooldown 噪声，且 fresh-run 不能算 clean。cooldown 过期后，market-data-cache 单独运行 5+ 分钟 clean，新增 ticker 请求均为 `200`。为避免 60s executor 被多个 15s producer 堆爆，下一步把 market-data-cache 和 sentinel 施工期 systemd interval 统一放慢到 `300s`，再按 cache -> sentinel -> A -> B -> C 继续。
+- 用户随后要求不要继续边测边改，先离线把优化目标尽量落地后再启动服务器验收。已在 `10:57 CST` 停止所有 Binance-facing/test 服务：API queue、A/B/C user-stream、market-data-cache、sentinel、A/B/C scanners、account-state、account-snapshot、system-alerts、data-maintenance 均 inactive。后续先离线推进 P0/P1，最终再统一 staged fresh-run。
 - 冷却期间继续 P0-B：新增 shared `evaluate_execution_result_gate()`，A/v11、B/v16、C/v14 的 execution preflight-vs-failure 分支已接入同一纯 gate；不改事件 payload、阈值、仓位、杠杆、止损、下单或冷却分钟。已通过 no-restart disk deploy 上传到腾讯：`20260603-101942-strategy-a-7885a45`、`20260603-102046-strategy-b-7885a45`、`20260603-102149-strategy-c-7885a45`。
 
 ## 2026-06-02 N6 watchlist 历史持久化

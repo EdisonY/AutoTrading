@@ -2,6 +2,7 @@ import importlib.util
 import json
 import sqlite3
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -23,6 +24,107 @@ class BV16RolloutReviewTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.tool = load_tool()
+
+    def write_research_klines(self, root: Path, symbol: str, interval: str, rows: list[list[object]]) -> None:
+        out = root / "research_store" / "klines" / "date=2026-06-03" / "data.jsonl"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        records = []
+        for row in rows:
+            open_time_ms = int(row[0])
+            records.append(
+                {
+                    "symbol": symbol,
+                    "interval": interval,
+                    "open_time_ms": open_time_ms,
+                    "open": row[1],
+                    "high": row[2],
+                    "low": row[3],
+                    "close": row[4],
+                    "volume": row[5] if len(row) > 5 else 0,
+                    "close_time_ms": open_time_ms + 60 * 60_000 - 1,
+                    "quote_volume": row[7] if len(row) > 7 else 0,
+                }
+            )
+        out.write_text("\n".join(json.dumps(item) for item in records) + "\n", encoding="utf-8")
+
+    def write_research_depth_snapshot(self, root: Path, symbol: str, snapshot_time: str) -> None:
+        out = root / "research_store" / "depth_snapshots" / "date=2026-06-03" / "data.jsonl"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        row = {
+            "symbol": symbol,
+            "snapshot_time": snapshot_time,
+            "bids_json": json.dumps([["99.9", "10"]]),
+            "asks_json": json.dumps([["100", "1"], ["101", "3"]]),
+            "source": "test_research_depth_snapshot",
+        }
+        out.write_text(json.dumps(row) + "\n", encoding="utf-8")
+
+    def replay_db_rows(self) -> list[sqlite3.Row]:
+        con = sqlite3.connect(":memory:")
+        con.row_factory = sqlite3.Row
+        con.execute(
+            """
+            create table events (
+                id integer primary key,
+                ts text,
+                strategy text,
+                symbol text,
+                event_type text,
+                category text,
+                side text,
+                reason text,
+                payload_json text
+            )
+            """
+        )
+        con.executemany(
+            """
+            insert into events (ts, strategy, symbol, event_type, category, side, reason, payload_json)
+            values (?, 'B/v16', 'AAAUSDT', ?, '', 'long', ?, ?)
+            """,
+            [
+                (
+                    "2026-06-03T10:00:00+08:00",
+                    "OPEN",
+                    "",
+                    json.dumps(
+                        {
+                            "symbol": "AAAUSDT",
+                            "side": "long",
+                            "price": 100,
+                            "sl": 95,
+                            "tp": 110,
+                            "atr": 2,
+                            "timeframe": "1h",
+                            "exchange_qty": 4,
+                            "leverage": 4,
+                            "trade_size_usdt": 100,
+                        }
+                    ),
+                ),
+                (
+                    "2026-06-03T12:00:00+08:00",
+                    "CLOSE",
+                    "浮动止损",
+                    json.dumps(
+                        {
+                            "symbol": "AAAUSDT",
+                            "side": "long",
+                            "entry_time": "2026-06-03T10:00:00+08:00",
+                            "entry_price": 100,
+                            "exit_price": 104,
+                            "pnl_usd": 16,
+                            "reason": "浮动止损",
+                            "timeframe": "1h",
+                            "exchange_qty": 4,
+                        }
+                    ),
+                ),
+            ],
+        )
+        rows = list(con.execute("select * from events order by id"))
+        con.close()
+        return rows
 
     def db_rows(self) -> list[sqlite3.Row]:
         con = sqlite3.connect(":memory:")
@@ -186,6 +288,78 @@ class BV16RolloutReviewTests(unittest.TestCase):
         self.assertIn("## 72h Open Failure Reasons", md)
         self.assertIn("min_notional", md)
         self.assertIn("## 72h Cost Sensitivity", md)
+        self.assertIn("## 72h Replay Fill Comparison", md)
+
+    def test_replay_fill_comparison_uses_local_kline_cache(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            old_root = self.tool.ROOT
+            try:
+                self.tool.ROOT = Path(tmp)
+                cache_dir = Path(tmp) / "runtime" / "kline_cache"
+                cache_dir.mkdir(parents=True)
+                rows = [
+                    [int(self.tool.parse_dt("2026-06-03T10:00:00+08:00").timestamp() * 1000), "100", "103", "99", "102"],
+                    [int(self.tool.parse_dt("2026-06-03T11:00:00+08:00").timestamp() * 1000), "102", "105", "101", "104"],
+                    [int(self.tool.parse_dt("2026-06-03T12:00:00+08:00").timestamp() * 1000), "104", "106", "102", "103"],
+                ]
+                (cache_dir / "AAAUSDT_1h_100.json").write_text(json.dumps({"rows": rows}), encoding="utf-8")
+
+                comparison = self.tool.build_replay_fill_comparison(
+                    self.replay_db_rows(),
+                    self.tool.parse_dt("2026-06-03T09:00:00+08:00"),
+                    self.tool.parse_dt("2026-06-03T13:00:00+08:00"),
+                )
+            finally:
+                self.tool.ROOT = old_root
+
+        self.assertEqual(comparison["status"], "ready")
+        self.assertEqual(comparison["paired_trades"], 1)
+        self.assertEqual(comparison["completed"], 1)
+        self.assertEqual(comparison["status_counts"], {"complete": 1})
+        self.assertEqual(comparison["top_deltas"][0]["replay_exit_reason"], "trailing_stop")
+        self.assertIn("hard-bottom", comparison["note"])
+
+    def test_replay_fill_comparison_uses_research_store_and_depth(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            old_root = self.tool.ROOT
+            try:
+                self.tool.ROOT = Path(tmp)
+                rows = [
+                    [int(self.tool.parse_dt("2026-06-03T10:00:00+08:00").timestamp() * 1000), "100", "103", "99", "102"],
+                    [int(self.tool.parse_dt("2026-06-03T11:00:00+08:00").timestamp() * 1000), "102", "105", "101", "104"],
+                    [int(self.tool.parse_dt("2026-06-03T12:00:00+08:00").timestamp() * 1000), "104", "106", "102", "103"],
+                ]
+                self.write_research_klines(Path(tmp), "AAAUSDT", "1h", rows)
+                self.write_research_depth_snapshot(Path(tmp), "AAAUSDT", "2026-06-03T10:00:00+08:00")
+
+                comparison = self.tool.build_replay_fill_comparison(
+                    self.replay_db_rows(),
+                    self.tool.parse_dt("2026-06-03T09:00:00+08:00"),
+                    self.tool.parse_dt("2026-06-03T13:00:00+08:00"),
+                )
+            finally:
+                self.tool.ROOT = old_root
+
+        top = comparison["top_deltas"][0]
+        self.assertEqual(comparison["status"], "ready")
+        self.assertEqual(comparison["order_book_fill_count"], 1)
+        self.assertEqual(top["entry_fill_source"], "order_book")
+        self.assertEqual(top["order_book_levels_used"], 2)
+        self.assertIn("research_store", top["kline_source"])
+        self.assertIn("depth_snapshots", top["depth_snapshot_source"])
+
+    def test_decision_packet_includes_replay_fill_comparison(self):
+        windows = {
+            "24h": {"closed_samples": 1, "pnl_after_cost_usdt": 1, "forced_close_rate": 0},
+            "72h": {"closed_samples": 1, "pnl_after_cost_usdt": 1, "forced_close_rate": 0},
+            "168h": {"closed_samples": 1, "pnl_after_cost_usdt": 1, "forced_close_rate": 0},
+        }
+        replay = {"72h": {"paired_trades": 2, "completed": 1, "pnl_delta_usdt": -3.5}}
+
+        packet = self.tool.decision_packet({}, windows, self.tool.verdict(windows), replay)
+
+        self.assertEqual(packet["replay_fill_comparison_72h"]["completed"], 1)
+        self.assertIn("72h replay/fill comparison 1/2 complete, delta -3.50 USDT", packet["risk"])
 
 
 if __name__ == "__main__":

@@ -9,10 +9,12 @@ from __future__ import annotations
 import argparse
 import collections
 import json
+import re
 import sqlite3
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from statistics import median
 from typing import Any
 
 if sys.platform == "win32":
@@ -24,6 +26,13 @@ if sys.platform == "win32":
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 ROOT = SCRIPT_DIR.parent if (SCRIPT_DIR.parent / "PROJECT_STATE.md").exists() else SCRIPT_DIR
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from core.replay_depth_cache import default_depth_cache_dirs, load_depth_snapshot
+from core.replay_fill import ReplayFillRequest, simulate_replay_fill
+from core.replay_kline_source import load_research_store_kline_rows
+
 CST = timezone(timedelta(hours=8))
 WINDOWS_HOURS = (24, 72, 168)
 DEFAULT_APPROVED_AT = "2026-05-31T02:00:00+08:00"
@@ -31,6 +40,11 @@ FEE_SLIPPAGE_PCT = 0.15
 NOTIONAL_PER_TRADE = 400.0
 ROLLBACK_REVIEW_LOSS_USDT = 80.0
 COST_SENSITIVITY_PCTS = (0.10, 0.15, 0.25, 0.35)
+B_V16_TRAILING_ACTIVATE_ATR = 1.0
+B_V16_TRAILING_PULLBACK_ATR = 1.0
+KLINE_CACHE_LIMITS = (100, 200, 500, 1000)
+DEPTH_CACHE_MAX_AGE_SEC = 300.0
+TIMEFRAME_RE = re.compile(r"^(\d+)([mh])$")
 
 
 def parse_dt(value: Any) -> datetime | None:
@@ -149,6 +163,317 @@ def profit_factor(profit: float, loss: float) -> float | None:
     if profit > 0:
         return None
     return 0.0
+
+
+def nested_payload_dicts(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    items = [payload]
+    for key in ("raw", "raw_event", "raw_signal", "signal"):
+        value = payload.get(key)
+        if isinstance(value, dict):
+            items.append(value)
+    raw = payload.get("raw")
+    if isinstance(raw, dict):
+        for key in ("raw_event", "raw_signal", "signal"):
+            value = raw.get(key)
+            if isinstance(value, dict):
+                items.append(value)
+    return items
+
+
+def payload_value(payload: dict[str, Any], *keys: str) -> Any:
+    for item in nested_payload_dicts(payload):
+        for key in keys:
+            value = item.get(key)
+            if value not in (None, ""):
+                return value
+    return None
+
+
+def payload_num(payload: dict[str, Any], *keys: str) -> float:
+    return to_float(payload_value(payload, *keys))
+
+
+def normalize_timeframe(value: Any) -> str:
+    text = str(value or "").strip().lower()
+    if not text:
+        return ""
+    if text.isdigit():
+        return f"{text}m"
+    return text
+
+
+def timeframe_ms(timeframe: str) -> int:
+    match = TIMEFRAME_RE.match(normalize_timeframe(timeframe))
+    if not match:
+        return 0
+    amount = int(match.group(1))
+    unit = match.group(2)
+    return amount * (60_000 if unit == "m" else 3_600_000)
+
+
+def kline_cache_paths(symbol: str, timeframe: str) -> list[Path]:
+    safe_symbol = str(symbol or "").upper()
+    tf = normalize_timeframe(timeframe)
+    paths: list[Path] = []
+    for base in (ROOT, ROOT / "server_logs_tencent"):
+        for limit in KLINE_CACHE_LIMITS:
+            paths.append(base / "runtime" / "kline_cache" / f"{safe_symbol}_{tf}_{limit}.json")
+    return paths
+
+
+def load_cached_kline_rows(symbol: str, timeframe: str) -> tuple[list[list[Any]], str]:
+    for path in kline_cache_paths(symbol, timeframe):
+        if not path.exists():
+            continue
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8", errors="replace"))
+        except Exception:
+            continue
+        rows = payload.get("rows") if isinstance(payload, dict) else payload
+        if isinstance(rows, list) and rows:
+            return rows, str(path)
+    return [], ""
+
+
+def load_replay_kline_rows(symbol: str, timeframe: str, start: datetime, end: datetime) -> tuple[list[list[Any]], str]:
+    rows, source = load_research_store_kline_rows(ROOT, symbol, timeframe, start=start, end=end)
+    if rows:
+        return rows, source
+    return load_cached_kline_rows(symbol, timeframe)
+
+
+def row_open_ms(row: list[Any]) -> int:
+    try:
+        return int(float(row[0]))
+    except Exception:
+        return 0
+
+
+def rows_between(rows: list[list[Any]], timeframe: str, start: datetime, end: datetime) -> list[list[Any]]:
+    step_ms = timeframe_ms(timeframe)
+    if step_ms <= 0:
+        return []
+    start_ms = int(start.timestamp() * 1000)
+    end_ms = int(end.timestamp() * 1000)
+    first_ms = (start_ms // step_ms) * step_ms
+    return [row for row in rows if first_ms <= row_open_ms(row) <= end_ms]
+
+
+def replay_bars(rows: list[list[Any]]) -> list[dict[str, Any]]:
+    bars: list[dict[str, Any]] = []
+    for row in rows:
+        try:
+            bars.append(
+                {
+                    "ts": datetime.fromtimestamp(int(float(row[0])) / 1000, tz=CST).isoformat(timespec="seconds"),
+                    "open": float(row[1]),
+                    "high": float(row[2]),
+                    "low": float(row[3]),
+                    "close": float(row[4]),
+                }
+            )
+        except Exception:
+            continue
+    return bars
+
+
+def quantity_from_payload(open_payload: dict[str, Any], close_payload: dict[str, Any], entry_price: float) -> float:
+    qty = payload_num(close_payload, "exchange_qty", "quantity", "qty")
+    if qty > 0:
+        return qty
+    qty = payload_num(open_payload, "exchange_qty", "quantity", "qty")
+    if qty > 0:
+        return qty
+    trade_size = payload_num(open_payload, "trade_size_usdt") or payload_num(close_payload, "trade_size_usdt") or 100.0
+    leverage = payload_num(open_payload, "leverage") or payload_num(close_payload, "leverage") or 4.0
+    if entry_price > 0:
+        return trade_size * leverage / max(entry_price, 1e-12)
+    return NOTIONAL_PER_TRADE / max(entry_price, 1.0)
+
+
+def pair_open_close_rows(rows: list[sqlite3.Row], start: datetime, end: datetime) -> list[dict[str, Any]]:
+    pending: dict[tuple[str, str, str], list[dict[str, Any]]] = collections.defaultdict(list)
+    pairs: list[dict[str, Any]] = []
+    for row in rows:
+        event_dt = parse_dt(row["ts"])
+        if not event_dt:
+            continue
+        try:
+            payload = json.loads(row["payload_json"] or "{}")
+        except Exception:
+            payload = {}
+        event_type = str(row["event_type"] or "")
+        symbol = str(row["symbol"] or payload_value(payload, "symbol") or "").upper()
+        side = str(row["side"] or payload_value(payload, "side") or "").lower()
+        timeframe = normalize_timeframe(payload_value(payload, "timeframe", "tf"))
+        key = (symbol, side, timeframe)
+        if event_type == "OPEN":
+            pending[key].append({"row": row, "payload": payload, "ts": event_dt})
+        elif event_type in {"CLOSE", "FORCED_CLOSE"} and start <= event_dt <= end:
+            candidates = pending.get(key) or []
+            matched_index = None
+            entry_time = parse_dt(payload_value(payload, "entry_time"))
+            for idx in range(len(candidates) - 1, -1, -1):
+                candidate_ts = candidates[idx]["ts"]
+                if candidate_ts <= event_dt and (entry_time is None or abs((candidate_ts - entry_time).total_seconds()) <= 600):
+                    matched_index = idx
+                    break
+            if matched_index is None:
+                for idx in range(len(candidates) - 1, -1, -1):
+                    if candidates[idx]["ts"] <= event_dt:
+                        matched_index = idx
+                        break
+            if matched_index is None:
+                pairs.append({"status": "missing_open", "close_row": row, "close_payload": payload, "close_ts": event_dt})
+                continue
+            open_item = candidates.pop(matched_index)
+            pairs.append(
+                {
+                    "status": "paired",
+                    "open_row": open_item["row"],
+                    "open_payload": open_item["payload"],
+                    "open_ts": open_item["ts"],
+                    "close_row": row,
+                    "close_payload": payload,
+                    "close_ts": event_dt,
+                }
+            )
+    return pairs
+
+
+def replay_trade_pair(pair: dict[str, Any]) -> dict[str, Any]:
+    if pair.get("status") != "paired":
+        return {"status": pair.get("status") or "unpaired"}
+    open_payload = pair.get("open_payload") or {}
+    close_payload = pair.get("close_payload") or {}
+    close_row = pair.get("close_row")
+    symbol = str(getattr(close_row, "__getitem__", lambda _: "")("symbol") or payload_value(close_payload, "symbol") or "").upper()
+    side = str(getattr(close_row, "__getitem__", lambda _: "")("side") or payload_value(close_payload, "side") or "").lower()
+    timeframe = normalize_timeframe(payload_value(close_payload, "timeframe", "tf") or payload_value(open_payload, "timeframe", "tf"))
+    if timeframe_ms(timeframe) <= 0:
+        return {"status": "unsupported_timeframe", "symbol": symbol, "side": side, "timeframe": timeframe}
+    entry_ts = parse_dt(payload_value(close_payload, "entry_time")) or pair.get("open_ts")
+    close_ts = pair.get("close_ts")
+    entry_price = payload_num(close_payload, "entry_price") or payload_num(open_payload, "price", "entry_price")
+    atr = payload_num(open_payload, "atr", "atr_at_entry")
+    if not entry_ts or not close_ts:
+        return {"status": "missing_time", "symbol": symbol, "side": side, "timeframe": timeframe}
+    if entry_price <= 0:
+        return {"status": "missing_entry_price", "symbol": symbol, "side": side, "timeframe": timeframe}
+    if atr <= 0:
+        return {"status": "missing_atr", "symbol": symbol, "side": side, "timeframe": timeframe}
+    rows, source = load_replay_kline_rows(symbol, timeframe, entry_ts, close_ts)
+    if not rows:
+        return {"status": "missing_kline_data", "symbol": symbol, "side": side, "timeframe": timeframe}
+    bars = replay_bars(rows_between(rows, timeframe, entry_ts, close_ts))
+    if not bars:
+        return {"status": "missing_bars", "symbol": symbol, "side": side, "timeframe": timeframe, "kline_source": source}
+    stop_loss = payload_num(open_payload, "sl", "stop_loss")
+    take_profit = payload_num(open_payload, "tp", "take_profit")
+    quantity = quantity_from_payload(open_payload, close_payload, entry_price)
+    if quantity <= 0:
+        return {"status": "missing_quantity", "symbol": symbol, "side": side, "timeframe": timeframe, "kline_source": source}
+    depth_snapshot = load_depth_snapshot(
+        symbol,
+        entry_ts,
+        side=side,
+        cache_dirs=default_depth_cache_dirs(ROOT),
+        max_age_seconds=DEPTH_CACHE_MAX_AGE_SEC,
+    )
+    try:
+        fill = simulate_replay_fill(
+            ReplayFillRequest(
+                symbol=symbol,
+                side=side,
+                entry_price=entry_price,
+                quantity=quantity,
+                stop_loss=stop_loss or None,
+                take_profit=take_profit or None,
+                atr=atr,
+                trailing_activation_atr=B_V16_TRAILING_ACTIVATE_ATR,
+                trailing_stop_atr=B_V16_TRAILING_PULLBACK_ATR,
+                fee_bps=FEE_SLIPPAGE_PCT * 50.0,
+                slippage_bps=0.0,
+                entry_order_book=depth_snapshot.order_book if depth_snapshot else None,
+            ),
+            bars,
+        )
+    except Exception as exc:
+        return {"status": "replay_error", "symbol": symbol, "side": side, "timeframe": timeframe, "error": str(exc)[:160]}
+    actual_pnl = payload_num(close_payload, "pnl_usd", "pnl_usdt", "realized_pnl_usdt", "pnl")
+    actual_exit = payload_num(close_payload, "exit_price")
+    delta = fill.net_pnl_usdt - actual_pnl
+    return {
+        "status": "complete",
+        "symbol": symbol,
+        "side": side,
+        "timeframe": timeframe,
+        "entry_ts": entry_ts.isoformat(timespec="seconds"),
+        "close_ts": close_ts.isoformat(timespec="seconds"),
+        "entry_price": round(entry_price, 8),
+        "actual_exit_price": round(actual_exit, 8),
+        "replay_exit_price": fill.exit_price,
+        "actual_pnl_usdt": round(actual_pnl, 4),
+        "replay_pnl_usdt": round(fill.net_pnl_usdt, 4),
+        "pnl_delta_usdt": round(delta, 4),
+        "exit_reason": str(payload_text(close_payload, "reason", "close_reason") or ""),
+        "replay_exit_reason": fill.exit_reason,
+        "entry_fill_source": fill.entry_fill_source,
+        "depth_slippage_usdt": fill.depth_slippage_usdt,
+        "order_book_levels_used": fill.order_book_levels_used,
+        "order_book_available_quantity": fill.order_book_available_quantity,
+        "order_book_fill_ratio": fill.order_book_fill_ratio,
+        "bars_held": fill.bars_held,
+        "kline_source": source,
+        "depth_snapshot_source": depth_snapshot.source if depth_snapshot else "",
+        "depth_snapshot_age_seconds": round(depth_snapshot.age_seconds, 3) if depth_snapshot else None,
+        "trailing_activation_atr": B_V16_TRAILING_ACTIVATE_ATR,
+        "trailing_stop_atr": B_V16_TRAILING_PULLBACK_ATR,
+    }
+
+
+def mean_fill_ratio(rows: list[dict[str, Any]]) -> float:
+    values = [float(item.get("order_book_fill_ratio") or 0.0) for item in rows]
+    return sum(values) / len(values) if values else 0.0
+
+
+def build_replay_fill_comparison(rows: list[sqlite3.Row], start: datetime, end: datetime) -> dict[str, Any]:
+    pairs = pair_open_close_rows(rows, start, end)
+    results = [replay_trade_pair(pair) for pair in pairs]
+    status_counts = collections.Counter(str(item.get("status") or "unknown") for item in results)
+    completed = [item for item in results if item.get("status") == "complete"]
+    deltas = [float(item.get("pnl_delta_usdt") or 0.0) for item in completed]
+    replay_pnl = sum(float(item.get("replay_pnl_usdt") or 0.0) for item in completed)
+    actual_pnl = sum(float(item.get("actual_pnl_usdt") or 0.0) for item in completed)
+    by_exit_reason: collections.Counter[str] = collections.Counter(str(item.get("replay_exit_reason") or "") for item in completed)
+    top_delta = sorted(completed, key=lambda item: abs(float(item.get("pnl_delta_usdt") or 0.0)), reverse=True)[:8]
+    order_book_rows = [item for item in completed if item.get("entry_fill_source") == "order_book"]
+    depth_ages = [float(item.get("depth_snapshot_age_seconds") or 0.0) for item in order_book_rows if item.get("depth_snapshot_age_seconds") is not None]
+    return {
+        "status": "ready" if completed else "missing_data",
+        "window_since": start.isoformat(timespec="seconds"),
+        "window_until": end.isoformat(timespec="seconds"),
+        "paired_trades": len(pairs),
+        "completed": len(completed),
+        "completion_rate": round(len(completed) / max(1, len(pairs)), 4),
+        "status_counts": dict(status_counts),
+        "actual_pnl_usdt": round(actual_pnl, 4),
+        "replay_pnl_usdt": round(replay_pnl, 4),
+        "pnl_delta_usdt": round(replay_pnl - actual_pnl, 4),
+        "median_abs_delta_usdt": round(median([abs(v) for v in deltas]), 4) if deltas else 0.0,
+        "replay_exit_reasons": [{"reason": k, "count": v} for k, v in by_exit_reason.most_common(8)],
+        "order_book_fill_count": len(order_book_rows),
+        "depth_snapshot_count": len(order_book_rows),
+        "depth_slippage_usdt": round(sum(float(item.get("depth_slippage_usdt") or 0.0) for item in completed), 4),
+        "avg_order_book_fill_ratio": round(mean_fill_ratio(order_book_rows), 4),
+        "avg_depth_snapshot_age_seconds": round(sum(depth_ages) / len(depth_ages), 3) if depth_ages else 0.0,
+        "top_deltas": top_delta,
+        "note": (
+            "Uses local research_store/klines when available, then local kline cache; optional local "
+            "runtime/depth_cache or research_store/depth_snapshots for entry fill; models B/v16 SL/TP "
+            "+ ATR trailing only, while hard-bottom and profit-retrace guards remain live-rule gaps; no Binance API call is made."
+        ),
+    }
 
 
 def find_db(explicit: str = "") -> Path | None:
@@ -349,7 +674,12 @@ def verdict(windows: dict[str, dict[str, Any]]) -> dict[str, Any]:
     return {"priority": priority, "status": label, "recommended_actions": actions}
 
 
-def decision_packet(approval: dict[str, Any], windows: dict[str, dict[str, Any]], decision: dict[str, Any]) -> dict[str, Any]:
+def decision_packet(
+    approval: dict[str, Any],
+    windows: dict[str, dict[str, Any]],
+    decision: dict[str, Any],
+    replay_comparisons: dict[str, dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     three = windows.get("72h", {})
     week = windows.get("168h", {})
     closed72 = int(three.get("closed_samples") or 0)
@@ -396,6 +726,16 @@ def decision_packet(approval: dict[str, Any], windows: dict[str, dict[str, Any]]
                 pnl=float(top_loser.get("pnl_usdt") or 0),
             )
         )
+    replay_comparisons = replay_comparisons or {}
+    replay72 = replay_comparisons.get("72h") or {}
+    if replay72:
+        risks.append(
+            "72h replay/fill comparison {completed}/{paired} complete, delta {delta:+.2f} USDT".format(
+                completed=int(replay72.get("completed") or 0),
+                paired=int(replay72.get("paired_trades") or 0),
+                delta=float(replay72.get("pnl_delta_usdt") or 0),
+            )
+        )
     return {
         "change": "B/v16 approved ATR stop bands + overheat score cap rollout",
         "live_parameter": approval.get("selected_live_parameter") or {},
@@ -405,6 +745,7 @@ def decision_packet(approval: dict[str, Any], windows: dict[str, dict[str, Any]]
         "exit_model_summary_72h": three.get("exit_models") or [],
         "open_failed_reasons_72h": three.get("open_failed_reasons") or [],
         "cost_sensitivity_72h": cost_sensitivity,
+        "replay_fill_comparison_72h": replay72,
         "rollback_path": [
             "keep automatic rollback disabled",
             "if operator approves, revert B/v16 score_max/ATR stop bands to previous stable config",
@@ -423,6 +764,13 @@ def build_payload(db: Path, approval: dict[str, Any]) -> dict[str, Any]:
     for hours in WINDOWS_HOURS:
         start = max(approved_at, now - timedelta(hours=hours))
         windows[f"{hours}h"] = summarize_window(rows, start, now)
+    replay_comparisons = {
+        f"{hours}h": build_replay_fill_comparison(rows, max(approved_at, now - timedelta(hours=hours)), now)
+        for hours in WINDOWS_HOURS
+    }
+    for label, comparison in replay_comparisons.items():
+        if label in windows:
+            windows[label]["replay_fill_comparison"] = comparison
     decision = verdict(windows)
     return {
         "generated_at": now.isoformat(timespec="seconds"),
@@ -432,7 +780,8 @@ def build_payload(db: Path, approval: dict[str, Any]) -> dict[str, Any]:
         "candidate_ids": approval.get("candidate_ids") or [],
         "selected_live_parameter": approval.get("selected_live_parameter") or {},
         "decision": decision,
-        "decision_packet": decision_packet(approval, windows, decision),
+        "decision_packet": decision_packet(approval, windows, decision, replay_comparisons),
+        "replay_fill_comparison": replay_comparisons,
         "windows": windows,
     }
 
@@ -491,6 +840,32 @@ def render_md(payload: dict[str, Any]) -> str:
         lines.append(
             f"| {float(item.get('cost_pct') or 0):.2f}% | {float(item.get('estimated_cost_usdt') or 0):.2f} | "
             f"{float(item.get('pnl_after_cost_usdt') or 0):+.2f} | {bool(item.get('rollback_review_loss_hit'))} |"
+        )
+    replay72 = ((payload.get("replay_fill_comparison") or {}).get("72h") or {})
+    lines.extend(
+        [
+            "",
+            "## 72h Replay Fill Comparison",
+            "",
+            f"- Status: `{replay72.get('status') or 'missing_data'}`",
+            f"- Paired/completed: `{int(replay72.get('paired_trades') or 0)}/{int(replay72.get('completed') or 0)}`",
+            f"- Actual vs replay PnL: `{float(replay72.get('actual_pnl_usdt') or 0):+.2f}` / `{float(replay72.get('replay_pnl_usdt') or 0):+.2f}` USDT",
+            f"- Delta: `{float(replay72.get('pnl_delta_usdt') or 0):+.2f}` USDT; median abs delta `{float(replay72.get('median_abs_delta_usdt') or 0):.2f}`",
+            f"- Depth entry fills: `{int(replay72.get('order_book_fill_count') or 0)}`; depth slippage `{float(replay72.get('depth_slippage_usdt') or 0):.2f}` USDT; avg depth age `{float(replay72.get('avg_depth_snapshot_age_seconds') or 0):.1f}s`",
+            f"- Status counts: `{json.dumps(replay72.get('status_counts') or {}, ensure_ascii=False)}`",
+            f"- Note: {replay72.get('note') or 'local Kline/depth replay only; no Binance API call'}",
+            "",
+            "| Symbol | Side | TF | Fill | Actual PnL | Replay PnL | Delta | Actual exit | Replay exit | Replay reason |",
+            "| --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | --- |",
+        ]
+    )
+    for item in replay72.get("top_deltas") or []:
+        lines.append(
+            f"| {item.get('symbol') or '-'} | {item.get('side') or '-'} | {item.get('timeframe') or '-'} | "
+            f"{item.get('entry_fill_source') or 'synthetic'} | "
+            f"{float(item.get('actual_pnl_usdt') or 0):+.2f} | {float(item.get('replay_pnl_usdt') or 0):+.2f} | "
+            f"{float(item.get('pnl_delta_usdt') or 0):+.2f} | {float(item.get('actual_exit_price') or 0):.6g} | "
+            f"{float(item.get('replay_exit_price') or 0):.6g} | {item.get('replay_exit_reason') or '-'} |"
         )
     lines.extend(["", "## Top Losers"])
     for item in ((payload.get("windows") or {}).get("72h") or {}).get("top_losers") or []:

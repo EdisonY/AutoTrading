@@ -819,7 +819,7 @@ def build_recovery_bar_replay_evidence(pos: dict[str, Any]) -> dict[str, Any]:
             "trailing_stop_pct": round(trailing_pct, 4),
             "thresholds_on_margin": profile,
             "automation": "disabled_report_only",
-            "note": "local research_store/klines when available, then kline cache; optional local depth_cache for entry fill; no Binance API call; recovery entry time is first-seen snapshot, not original exchange open time",
+            "note": "local research_store/klines when available, then kline cache; optional local runtime/depth_cache or research_store/depth_snapshots for entry fill; no Binance API call; recovery entry time is first-seen snapshot, not original exchange open time",
         }
     return {
         "status": "missing_data",
@@ -827,7 +827,7 @@ def build_recovery_bar_replay_evidence(pos: dict[str, Any]) -> dict[str, Any]:
         "attempts": attempts[:6],
         "thresholds_on_margin": profile,
         "automation": "disabled_report_only",
-        "note": "local research_store/klines when available, then kline/depth cache; no Binance API call",
+        "note": "local research_store/klines when available, then kline cache plus runtime/depth_cache or research_store/depth_snapshots; no Binance API call",
     }
 
 

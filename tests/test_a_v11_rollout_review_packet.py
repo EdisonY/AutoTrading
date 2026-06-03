@@ -47,6 +47,18 @@ class AV11RolloutReviewPacketTests(unittest.TestCase):
             )
         out.write_text("\n".join(json.dumps(item) for item in records) + "\n", encoding="utf-8")
 
+    def write_research_depth_snapshot(self, root: Path, symbol: str, snapshot_time: str) -> None:
+        out = root / "research_store" / "depth_snapshots" / "date=2026-06-03" / "data.jsonl"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        row = {
+            "symbol": symbol,
+            "snapshot_time": snapshot_time,
+            "bids_json": json.dumps([["99.9", "10"]]),
+            "asks_json": json.dumps([["100", "1"], ["101", "3"]]),
+            "source": "test_research_depth_snapshot",
+        }
+        out.write_text(json.dumps(row) + "\n", encoding="utf-8")
+
     def replay_db_rows(self) -> list[sqlite3.Row]:
         con = sqlite3.connect(":memory:")
         con.row_factory = sqlite3.Row
@@ -328,6 +340,35 @@ class AV11RolloutReviewPacketTests(unittest.TestCase):
         self.assertEqual(top["entry_fill_source"], "order_book")
         self.assertEqual(top["order_book_levels_used"], 2)
         self.assertIn("depth_cache", top["depth_snapshot_source"])
+
+    def test_replay_fill_comparison_uses_research_depth_snapshot_without_cache(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            old_root = self.tool.ROOT
+            try:
+                self.tool.ROOT = Path(tmp)
+                rows = [
+                    [int(self.tool.parse_dt("2026-06-03T10:00:00+08:00").timestamp() * 1000), "100", "103", "99", "102"],
+                    [int(self.tool.parse_dt("2026-06-03T10:15:00+08:00").timestamp() * 1000), "102", "104", "101", "103"],
+                    [int(self.tool.parse_dt("2026-06-03T10:30:00+08:00").timestamp() * 1000), "103", "105", "102", "104"],
+                ]
+                self.write_research_klines(Path(tmp), "AAAUSDT", "15m", rows)
+                self.write_research_depth_snapshot(Path(tmp), "AAAUSDT", "2026-06-03T10:00:00+08:00")
+
+                comparison = self.tool.build_replay_fill_comparison(
+                    self.replay_db_rows(),
+                    self.tool.parse_dt("2026-06-03T09:00:00+08:00"),
+                    self.tool.parse_dt("2026-06-03T11:00:00+08:00"),
+                )
+            finally:
+                self.tool.ROOT = old_root
+
+        top = comparison["top_deltas"][0]
+        self.assertEqual(comparison["order_book_fill_count"], 1)
+        self.assertEqual(comparison["depth_snapshot_count"], 1)
+        self.assertEqual(top["entry_fill_source"], "order_book")
+        self.assertEqual(top["order_book_levels_used"], 2)
+        self.assertIn("research_store", top["depth_snapshot_source"])
+        self.assertIn("depth_snapshots", top["depth_snapshot_source"])
 
     def test_decision_packet_includes_replay_fill_comparison(self):
         windows = {

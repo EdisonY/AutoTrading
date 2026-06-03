@@ -1774,7 +1774,7 @@ def function_status_cards(data: dict[str, Any]) -> list[dict[str, str]]:
                 f"ingested rows {int(depth_backfill_ingest.get('backfill_rows') or 0)}; "
                 f"cache files {int(depth_backfill_cache.get('files_written') or 0)}; 更新 {depth_backfill.get('age')}。默认只生成计划，不直接请求 Binance。"
                 if depth_backfill.get("available")
-                else "深度采样计划尚未生成；盘口 replay 只能使用已有 runtime/depth_cache。"
+                else "深度采样计划尚未生成；盘口 replay 只能使用已有 runtime/depth_cache 或 research_store/depth_snapshots。"
             ),
         },
         {

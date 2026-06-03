@@ -681,7 +681,7 @@ def report_markdown(
             if args.max_fill_quantity is not None or args.max_fill_notional_usdt is not None or args.reject_partial_fill
             else "- 流动性近似未启用：默认按目标仓位完整成交，保持旧反事实口径。"
         ),
-        f"- 深度盘口：只读取本地/镜像 `runtime/depth_cache`；若 {args.depth_max_age_sec:.0f}s 内存在同币种快照，则 entry fill 使用订单簿深度，否则保持 synthetic entry，不调用 Binance API。"
+        f"- 深度盘口：只读取本地/镜像 `runtime/depth_cache` 与 `research_store/depth_snapshots`；若 {args.depth_max_age_sec:.0f}s 内存在同币种快照，则 entry fill 使用订单簿深度，否则保持 synthetic entry，不调用 Binance API。"
         f"深度假设 max_levels={args.depth_max_levels or '-'}，visible_liquidity_factor={args.depth_liquidity_factor:.2f}，"
         f"queue_ahead_qty={fmt(args.depth_queue_ahead_quantity)}，entry_market_impact_bps={fmt(args.entry_market_impact_bps)}。",
         f"- `MFE/MAE` 为顺向/逆向最大价格波动；`TP/SL first` 统计共享 fill kernel 的 `{args.tp_pct:.1f}% / {args.sl_pct:.1f}%` 固定障碍。A/v11 事件若带正 ATR 与 15m/30m 周期，会叠加 approved ATR trailing 出场参数。",
@@ -841,7 +841,7 @@ def write_json_report(path: Path, events: list[SkipEvent], results: list[Result]
             "liquidity_factor": args.depth_liquidity_factor,
             "queue_ahead_quantity": args.depth_queue_ahead_quantity,
             "entry_market_impact_bps": args.entry_market_impact_bps,
-            "note": "local/mirrored runtime/depth_cache only; no Binance API call",
+            "note": "local/mirrored runtime/depth_cache plus research_store/depth_snapshots; no Binance API call",
         },
         "events": len(events),
         "complete_primary_samples": len(primary),

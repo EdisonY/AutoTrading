@@ -1,4 +1,8 @@
-"""Local depth-cache lookup for report-only replay fills."""
+"""Local depth snapshot lookup for report-only replay fills.
+
+The loader is read-only and never calls Binance. It can consume the latest
+runtime depth cache plus accumulated research_store/depth_snapshots partitions.
+"""
 
 from __future__ import annotations
 
@@ -27,6 +31,10 @@ TIME_KEYS = (
     "captured_at",
     "updated_at",
     "last_update_time",
+    "snapshot_time",
+    "snapshotTime",
+    "snapshot_time_ms",
+    "time_ms",
     "E",
     "T",
 )
@@ -44,6 +52,8 @@ def default_depth_cache_dirs(root: Path, extra_dirs: Iterable[Path] | None = Non
         [
             Path(root) / "runtime" / "depth_cache",
             Path(root) / "server_logs_tencent" / "runtime" / "depth_cache",
+            Path(root) / "research_store",
+            Path(root) / "server_logs_tencent" / "research_store",
         ]
     )
     out: list[Path] = []
@@ -107,14 +117,27 @@ def has_fillable_side(book: dict[str, Any], side: str) -> bool:
     return False
 
 
+def parse_json_levels(value: Any) -> Any:
+    if isinstance(value, str):
+        try:
+            return json.loads(value)
+        except Exception:
+            return value
+    return value
+
+
 def normalize_order_book(payload: dict[str, Any]) -> dict[str, Any] | None:
-    bids = payload.get("bids")
-    asks = payload.get("asks")
+    bids = parse_json_levels(payload.get("bids"))
+    asks = parse_json_levels(payload.get("asks"))
+    if not isinstance(bids, list):
+        bids = parse_json_levels(payload.get("bids_json"))
+    if not isinstance(asks, list):
+        asks = parse_json_levels(payload.get("asks_json"))
     if not isinstance(bids, list) and not isinstance(asks, list):
         data = payload.get("data")
         if isinstance(data, dict):
-            bids = data.get("bids")
-            asks = data.get("asks")
+            bids = parse_json_levels(data.get("bids"))
+            asks = parse_json_levels(data.get("asks"))
     if not isinstance(bids, list) and not isinstance(asks, list):
         return None
     return {
@@ -163,6 +186,110 @@ def candidate_paths(symbol: str, cache_dirs: Iterable[Path]) -> list[Path]:
     return paths
 
 
+def partition_day(path: Path) -> str:
+    for part in path.parts:
+        if part.startswith("date="):
+            return part.split("=", 1)[1]
+    return ""
+
+
+def research_depth_files(store_or_table: Path, entry_ts: datetime, max_age_seconds: float) -> list[Path]:
+    table = store_or_table if store_or_table.name == "depth_snapshots" else store_or_table / "depth_snapshots"
+    if not table.exists():
+        return []
+    files = sorted([*table.glob("date=*/data.jsonl"), *table.glob("date=*/data.parquet")])
+    if not files:
+        return []
+    day_window = max(1, int(float(max_age_seconds) // 86_400) + 2)
+    start_day = entry_ts.date().toordinal() - day_window
+    end_day = entry_ts.date().toordinal() + day_window
+    filtered: list[Path] = []
+    for path in files:
+        day = partition_day(path)
+        if not day:
+            filtered.append(path)
+            continue
+        try:
+            ordinal = datetime.fromisoformat(day).date().toordinal()
+        except Exception:
+            filtered.append(path)
+            continue
+        if start_day <= ordinal <= end_day:
+            filtered.append(path)
+    return filtered
+
+
+def read_jsonl_payloads(path: Path) -> Iterable[dict[str, Any]]:
+    try:
+        with path.open("r", encoding="utf-8", errors="replace") as handle:
+            for line in handle:
+                try:
+                    item = json.loads(line)
+                except Exception:
+                    continue
+                if isinstance(item, dict):
+                    yield item
+    except OSError:
+        return
+
+
+def read_parquet_payloads(path: Path) -> Iterable[dict[str, Any]]:
+    try:
+        import pandas as pd
+    except ImportError:
+        return
+    try:
+        frame = pd.read_parquet(path)
+    except Exception:
+        return
+    if frame.empty:
+        return
+    frame = frame.where(pd.notnull(frame), None)
+    for row in frame.to_dict(orient="records"):
+        if isinstance(row, dict):
+            yield row
+
+
+def iter_research_snapshot_payloads(cache_dirs: Iterable[Path], entry_ts: datetime, max_age_seconds: float) -> Iterable[tuple[Path, dict[str, Any]]]:
+    seen: set[Path] = set()
+    for cache_dir in cache_dirs:
+        for path in research_depth_files(Path(cache_dir), entry_ts, max_age_seconds):
+            if path in seen:
+                continue
+            seen.add(path)
+            reader = read_parquet_payloads if path.suffix == ".parquet" else read_jsonl_payloads
+            for item in reader(path):
+                yield path, item
+
+
+def apply_snapshot_candidate(
+    best: DepthSnapshot | None,
+    *,
+    sym: str,
+    side: str,
+    entry_utc: datetime,
+    path: Path,
+    item: dict[str, Any],
+    max_age_seconds: float,
+) -> DepthSnapshot | None:
+    item_symbol = normalize_symbol(item.get("symbol") or item.get("s") or sym)
+    if item_symbol and item_symbol != sym:
+        return best
+    book = normalize_order_book(item)
+    if book is None or not has_fillable_side(book, side):
+        return best
+    ts = snapshot_time(item, path)
+    if ts is None:
+        return best
+    age = abs((entry_utc - ts.astimezone(timezone.utc)).total_seconds())
+    if age > float(max_age_seconds):
+        return best
+    snapshot = DepthSnapshot(symbol=sym, ts=ts.astimezone(timezone.utc), order_book=book, source=str(path), age_seconds=age)
+    if best is None or snapshot.age_seconds < best.age_seconds:
+        return snapshot
+    return best
+
+
 def load_depth_snapshot(
     symbol: str,
     entry_ts: datetime,
@@ -182,19 +309,23 @@ def load_depth_snapshot(
         except Exception:
             continue
         for item in iter_snapshot_payloads(payload):
-            item_symbol = normalize_symbol(item.get("symbol") or item.get("s") or sym)
-            if item_symbol and item_symbol != sym:
-                continue
-            book = normalize_order_book(item)
-            if book is None or not has_fillable_side(book, side):
-                continue
-            ts = snapshot_time(item, path)
-            if ts is None:
-                continue
-            age = abs((entry_utc - ts.astimezone(timezone.utc)).total_seconds())
-            if age > float(max_age_seconds):
-                continue
-            snapshot = DepthSnapshot(symbol=sym, ts=ts.astimezone(timezone.utc), order_book=book, source=str(path), age_seconds=age)
-            if best is None or snapshot.age_seconds < best.age_seconds:
-                best = snapshot
+            best = apply_snapshot_candidate(
+                best,
+                sym=sym,
+                side=side,
+                entry_utc=entry_utc,
+                path=path,
+                item=item,
+                max_age_seconds=max_age_seconds,
+            )
+    for path, item in iter_research_snapshot_payloads(cache_dirs, entry_utc, max_age_seconds):
+        best = apply_snapshot_candidate(
+            best,
+            sym=sym,
+            side=side,
+            entry_utc=entry_utc,
+            path=path,
+            item=item,
+            max_age_seconds=max_age_seconds,
+        )
     return best

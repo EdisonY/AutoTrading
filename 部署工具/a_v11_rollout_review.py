@@ -433,7 +433,7 @@ def build_replay_fill_comparison(rows: list[sqlite3.Row], start: datetime, end: 
         "avg_order_book_fill_ratio": round(mean_fill_ratio(order_book_rows), 4),
         "avg_depth_snapshot_age_seconds": round(sum(depth_ages) / len(depth_ages), 3) if depth_ages else 0.0,
         "top_deltas": top_delta,
-        "note": "Uses local research_store/klines when available, then local kline cache; optional local depth_cache for entry fill; no Binance API call is made.",
+        "note": "Uses local research_store/klines when available, then local kline cache; optional local runtime/depth_cache or research_store/depth_snapshots for entry fill; no Binance API call is made.",
     }
 
 

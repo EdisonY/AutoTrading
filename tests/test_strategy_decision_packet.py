@@ -1,5 +1,8 @@
 import importlib.util
+import json
+import sqlite3
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -98,6 +101,80 @@ class StrategyDecisionPacketTests(unittest.TestCase):
         rendered = self.rollback.render_md({"generated_at": "now", "summary": {"items": 1, "decision_packets": 1}, "items": [item]})
         self.assertIn("## Decision Packets", rendered)
         self.assertIn("tighten exit", rendered)
+
+    def test_close_failed_attribution_flows_to_rollback_review(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "events.sqlite3"
+            con = sqlite3.connect(db_path)
+            con.execute(
+                """
+                create table events (
+                    id integer primary key,
+                    ts text,
+                    strategy text,
+                    symbol text,
+                    event_type text,
+                    category text,
+                    side text,
+                    payload_json text
+                )
+                """
+            )
+            con.execute(
+                """
+                insert into events (ts, strategy, symbol, event_type, category, side, payload_json)
+                values (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "2026-06-03T16:00:00+08:00",
+                    "B/v16",
+                    "BTCUSDT",
+                    "CLOSE_FAILED",
+                    "order",
+                    "long",
+                    json.dumps({"reason": "close_confirm_failed remaining position still open"}),
+                ),
+            )
+            con.commit()
+            con.close()
+
+            approvals = {
+                "EXP-B": {
+                    "base_strategy": "B/v16",
+                    "approved_at": "2026-06-03T15:00:00+08:00",
+                }
+            }
+            account_snapshot = {
+                "accounts": [
+                    {
+                        "strategy": "B/v16",
+                        "positions": [{"symbol": "BTCUSDT", "side": "long", "qty": 1}],
+                    }
+                ]
+            }
+
+            windows = self.evolution.summarize_post_approval_windows(db_path, approvals, account_snapshot)
+            day = windows["EXP-B"]["windows"]["24h"]
+
+            self.assertEqual(day["raw_close_failed"], 1)
+            self.assertEqual(day["close_failed"], 1)
+            self.assertEqual(day["resolved_close_failed"], 0)
+            self.assertEqual(day["close_failed_reasons"][0]["reason"], "position_still_open_after_close")
+
+            decision = {
+                "candidate_id": "EXP-B",
+                "strategy": "B/v16",
+                "priority": "P0",
+                "status": "rollback_required",
+                "post_approval_live": windows["EXP-B"],
+            }
+            item = self.rollback.extract_item(decision)
+            self.assertEqual(item["window_24h"]["close_failed"], 1)
+            self.assertEqual(item["window_24h"]["close_failed_reasons"][0]["reason"], "position_still_open_after_close")
+            payload = self.rollback.build_payload(Path(tmp) / "missing.json")
+            self.assertEqual(payload["summary"]["items"], 0)
+            rendered = self.rollback.render_md({"generated_at": "now", "summary": {"items": 1}, "items": [item]})
+            self.assertIn("position_still_open_after_close", rendered)
 
 
 if __name__ == "__main__":

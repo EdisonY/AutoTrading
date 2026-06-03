@@ -510,6 +510,45 @@ def resolved_open_failed_reason(payload: dict[str, Any]) -> str:
     return ""
 
 
+def close_failed_reason(payload: dict[str, Any]) -> str:
+    raw = (
+        payload.get("reason")
+        or payload.get("close_failure_reason")
+        or payload.get("error")
+        or payload.get("msg")
+        or payload.get("message")
+        or payload.get("detail")
+        or payload.get("status")
+    )
+    raw_payload = payload.get("raw")
+    if isinstance(raw_payload, dict):
+        raw = (
+            raw
+            or raw_payload.get("reason")
+            or raw_payload.get("error")
+            or raw_payload.get("msg")
+            or raw_payload.get("message")
+            or raw_payload.get("detail")
+            or raw_payload.get("status")
+        )
+    text = str(raw or "unknown")
+    match = BINANCE_CODE_RE.search(text)
+    if match:
+        code = match.group(1) or match.group(2)
+        return f"binance_code_{code}"
+    code = payload.get("code")
+    if code:
+        return f"code_{code}"
+    lower = text.lower()
+    if "account state" in lower or "central account" in lower or "confirm_account_state" in lower:
+        return "confirmation_state_unavailable"
+    if "remaining" in lower or "still open" in lower or "not closed" in lower:
+        return "position_still_open_after_close"
+    if "timeout" in lower:
+        return "close_confirmation_timeout"
+    return compact_reason(text, 80) or "unknown"
+
+
 def classify_regime(metrics: dict[str, Any]) -> dict[str, Any]:
     event_count = max(1, to_int(metrics.get("event_count")))
     avg_abs_change = to_float(metrics.get("abs_change_sum")) / event_count
@@ -644,6 +683,8 @@ def summarize_post_approval_windows(
                     "close_failed": 0,
                     "raw_close_failed": 0,
                     "resolved_close_failed": 0,
+                    "close_failed_reasons": collections.Counter(),
+                    "resolved_close_failed_reasons": collections.Counter(),
                     "open_skipped": 0,
                     "realized_pnl_usdt": 0.0,
                     "latest_event_ts": "",
@@ -708,10 +749,13 @@ def summarize_post_approval_windows(
                             metrics["open_failed_reasons"][open_failed_reason(payload)] += 1
                     elif event_type in {"CLOSE_FAILED", "FORCED_CLOSE_FAILED"}:
                         metrics["raw_close_failed"] += 1
+                        reason = close_failed_reason(payload)
                         if close_failed_still_open(open_positions_by_strategy, strategy, row["symbol"], row["side"]):
                             metrics["close_failed"] += 1
+                            metrics["close_failed_reasons"][reason] += 1
                         else:
                             metrics["resolved_close_failed"] += 1
+                            metrics["resolved_close_failed_reasons"][reason] += 1
                     elif event_type == "OPEN_SKIPPED":
                         metrics["open_skipped"] += 1
                     if event_type in {"CLOSE", "FORCED_CLOSE"}:
@@ -728,6 +772,18 @@ def summarize_post_approval_windows(
                     metrics["resolved_open_failed_reasons"] = [
                         {"reason": reason, "count": count}
                         for reason, count in resolved_counter.most_common(5)
+                    ]
+                close_failed_counter = metrics.get("close_failed_reasons")
+                if isinstance(close_failed_counter, collections.Counter):
+                    metrics["close_failed_reasons"] = [
+                        {"reason": reason, "count": count}
+                        for reason, count in close_failed_counter.most_common(5)
+                    ]
+                resolved_close_counter = metrics.get("resolved_close_failed_reasons")
+                if isinstance(resolved_close_counter, collections.Counter):
+                    metrics["resolved_close_failed_reasons"] = [
+                        {"reason": reason, "count": count}
+                        for reason, count in resolved_close_counter.most_common(5)
                     ]
                 metrics["regime"] = classify_regime(metrics)
                 metrics["quality"] = classify_window_quality(metrics)

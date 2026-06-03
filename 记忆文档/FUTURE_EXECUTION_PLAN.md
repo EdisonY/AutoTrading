@@ -38,8 +38,8 @@
    - 验收：每个实盘 OPEN_SKIPPED 能回答“若放行，按同一出场规则会怎样”。
 
 4. **P1-D 灰度/回滚门禁增强**
-   - 已完成：2026-06-03 `strategy_evolution_gate.py` 已为 decision 输出 `decision_packet`，包含改动、预期优势、风险、证据成熟度、回滚路径、operator action 和 `disabled_report_only` 自动化状态；`rollback_watch_review.py` 已在 P0/P1 rollback-watch 报告中渲染这些 packet。
-   - 未完成：更细 regime、关闭确认失败归因、窗口 PF 阈值、更完整 paper fill/slippage simulation、自动 rollback plan。
+   - 已完成：2026-06-03 `strategy_evolution_gate.py` 已为 decision 输出 `decision_packet`，包含改动、预期优势、风险、证据成熟度、回滚路径、operator action 和 `disabled_report_only` 自动化状态；`rollback_watch_review.py` 已在 P0/P1 rollback-watch 报告中渲染这些 packet；同日新增 close-failure attribution，拆 raw/resolved/unresolved close failures 和 compact reason buckets，并在 rollback-watch/portal 中显示。
+   - 未完成：更细 regime、窗口 PF 阈值、更完整 paper fill/slippage simulation、自动 rollback plan。
    - 验收：每个 P0/P1 策略候选必须包含改动、优势、风险、回滚路径；自动升级/回滚仍默认关闭，直到验收充分。
 
 5. **P1-E 长历史 K线/研究仓增强**

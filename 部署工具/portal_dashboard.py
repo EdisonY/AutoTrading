@@ -468,13 +468,21 @@ def rollback_watch_brief(evolution: dict[str, Any]) -> str:
             if isinstance(row, dict)
         )
         failed_note = f"，失败原因 {failed_reasons}" if failed_reasons else ""
+        close_reasons = ", ".join(
+            f"{row.get('reason')}x{int(row.get('count') or 0)}"
+            for row in (window.get("close_failed_reasons") or [])[:3]
+            if isinstance(row, dict)
+        )
+        close_failed_note = f" close_failed_reasons {close_reasons}" if close_reasons else ""
         metrics = (
             f"24h开仓 {int(window.get('opens') or 0)}，"
             f"平仓 {int((quality.get('closed_samples') or window.get('closes') or 0))}，"
             f"OPEN_FAILED {int(window.get('open_failed') or 0)}，"
+            f"CLOSE_FAILED {int(window.get('close_failed') or 0)}; "
             f"强平 {int(window.get('forced_closes') or 0)}，"
             f"扣费后PnL {float(quality.get('realized_pnl_after_cost') or 0):+.2f}"
             f"{failed_note}"
+            f"{close_failed_note}"
         )
         parts.append(f"{d.get('strategy') or '-'} {d.get('candidate_id') or '-'}：{blockers}；{metrics}")
     return "回滚观察明细：" + " | ".join(parts)
@@ -1671,6 +1679,8 @@ def function_status_cards(data: dict[str, Any]) -> list[dict[str, str]]:
                 f"items {int(rollback_watch_summary_data.get('items') or 0)}; "
                 f"worst {rollback_watch_summary_data.get('worst_candidate') or '-'} "
                 f"{float(rollback_watch_summary_data.get('worst_pnl_after_cost_24h') or 0):+.2f}; "
+                f"close failed {int(rollback_watch_summary_data.get('close_failed_24h') or 0)} "
+                f"(resolved {int(rollback_watch_summary_data.get('resolved_close_failed_24h') or 0)}); "
                 f"updated {rollback_watch.get('age')}."
                 if rollback_watch.get("available")
                 else "P1 rollback-watch action matrix missing from report chain."

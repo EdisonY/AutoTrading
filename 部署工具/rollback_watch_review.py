@@ -96,6 +96,10 @@ def extract_item(decision: dict[str, Any]) -> dict[str, Any] | None:
             "forced_closes": int(w24.get("forced_closes") or 0),
             "open_failed": int(w24.get("open_failed") or 0),
             "close_failed": int(w24.get("close_failed") or 0),
+            "raw_close_failed": int(w24.get("raw_close_failed") or 0),
+            "resolved_close_failed": int(w24.get("resolved_close_failed") or 0),
+            "close_failed_reasons": w24.get("close_failed_reasons") or [],
+            "resolved_close_failed_reasons": w24.get("resolved_close_failed_reasons") or [],
             "regime": (w24.get("regime") or {}).get("label") or "",
         },
         "quality_24h": w24.get("quality") or {},
@@ -131,6 +135,8 @@ def build_payload(evolution_path: Path) -> dict[str, Any]:
             "worst_candidate": worst.get("candidate_id") or "",
             "worst_pnl_after_cost_24h": as_float((worst.get("quality_24h") or {}).get("realized_pnl_after_cost")) if worst else 0.0,
             "decision_packets": sum(1 for item in items if item.get("decision_packet")),
+            "close_failed_24h": sum(int((item.get("window_24h") or {}).get("close_failed") or 0) for item in items),
+            "resolved_close_failed_24h": sum(int((item.get("window_24h") or {}).get("resolved_close_failed") or 0) for item in items),
         },
         "items": items,
     }
@@ -148,15 +154,21 @@ def render_md(payload: dict[str, Any]) -> str:
         "",
         "## Items",
         "",
-        "| Priority | Strategy | Candidate | Maturity | 24h closed | 24h PnL after cost | Forced rate | Open fail rate | Regime | Action |",
-        "| --- | --- | --- | --- | ---: | ---: | ---: | ---: | --- | --- |",
+        "| Priority | Strategy | Candidate | Maturity | 24h closed | 24h PnL after cost | Forced rate | Open fail rate | Close failed | Close failure reason | Regime | Action |",
+        "| --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | --- | --- | --- |",
     ]
     for item in payload.get("items") or []:
         q24 = item.get("quality_24h") or {}
         packet = item.get("decision_packet") or {}
         maturity = (packet.get("evidence_maturity") or {}).get("label") or "-"
+        window = item.get("window_24h") or {}
+        close_reasons = ", ".join(
+            f"{row.get('reason')} x{int(row.get('count') or 0)}"
+            for row in (window.get("close_failed_reasons") or [])[:2]
+            if isinstance(row, dict)
+        ) or "-"
         lines.append(
-            "| {priority} | {strategy} | {candidate} | {maturity} | {closed} | {pnl:+.2f} | {forced:.1%} | {open_failed:.1%} | {regime} | {action} |".format(
+            "| {priority} | {strategy} | {candidate} | {maturity} | {closed} | {pnl:+.2f} | {forced:.1%} | {open_failed:.1%} | {close_failed} | {close_reasons} | {regime} | {action} |".format(
                 priority=item.get("priority") or "",
                 strategy=item.get("strategy") or "",
                 candidate=item.get("candidate_id") or "",
@@ -165,6 +177,8 @@ def render_md(payload: dict[str, Any]) -> str:
                 pnl=as_float(q24.get("realized_pnl_after_cost")),
                 forced=as_float(q24.get("forced_close_rate")),
                 open_failed=as_float(q24.get("open_failed_rate")),
+                close_failed=int(window.get("close_failed") or 0),
+                close_reasons=close_reasons,
                 regime=(item.get("window_24h") or {}).get("regime") or "",
                 action=item.get("action") or "",
             )

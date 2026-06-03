@@ -26,7 +26,8 @@
    - 2026-06-03 21:38 补充：A/v11 成功 `OPEN` 事件现在写入第一版 open-success orchestration chain。普通 Hanmuxia 开仓包含 entry-threshold、resonance-required（如适用）、pool-capacity、market/tradability/position/sizing/account-state/risk 和 execution；VPB 开仓不伪装成 Hanmuxia threshold pass，只带 shared pool/safety/risk/sizing/execution context；replacement 成功开仓会把 release cases 并入最终 `OPEN`。同时修复 A/v11 成功执行后 `min_notional_adjustment` 与 margin bounds 未定义的旧隐患。
    - 2026-06-03 21:50 补充：B/v16 成功 `OPEN` 事件现在把 runtime pass context 扩到 duplicate-position、central account-state、entry-risk、positive-quantity；C/v14 成功 `OPEN` 事件现在把 runtime pass context 扩到 duplicate-position、central account-state、entry-risk、stale-price、market-microstructure、positive-quantity。B/C 成功开仓 risk/position/quantity/market context gap 已补第一版。
    - 2026-06-03 21:56 补充：A/v11 post-open sizing cleanup 成功/失败事件现在写入 `[confirmed a_v11_margin_sizing fail, close execution_result]` exact chain，成功撤销也不再是 close-flow missing-case gap。
-   - 未完成：历史事件驱动的同输入 replay/live 结论一致性测试仍需扩大；没有 exact case 的行只能算 coverage gap，不能算 replay/live parity 已通过。
+   - 2026-06-03 22:04 补充：`replay_live_parity_audit.py` 现在输出 historical same-input acceptance conclusion，按 open-flow、scan-flow、close-flow 分别给出 `accepted/coverage_gap/blocked_by_mismatch/missing_exact_cases/not_applicable`，整体输出 `acceptance_status`、`acceptance_conclusion`、`readiness_score_pct`、`blocking_flows`、`fresh_run_required` 和下一步动作。
+   - 未完成：最终 staged fresh-run 仍需生成新数据来证明部署后的 exact coverage/pass rate；没有 exact case 的旧历史行只能算 coverage gap，不能算 replay/live parity 已通过。
    - 验收：给定同一时间、币种、上下文，replay 与 live 入场/否决结论一致；关键 OPEN_SKIPPED/OPEN_FAILED 无未知 gate。
 
 ### Long-term P1 - P0 稳住后并行推进

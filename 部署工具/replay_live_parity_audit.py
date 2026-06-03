@@ -64,6 +64,8 @@ SCAN_GATE_STAGES = {
 }
 CASE_LIST_KEYS = ("strategy_gate_cases", "gate_cases", "parity_cases")
 CASE_SINGLE_KEYS = ("strategy_gate_case", "gate_case", "parity_case")
+ACCEPTANCE_MIN_EXACT_COVERAGE_PCT = 80.0
+ACCEPTANCE_MIN_PASS_RATE_PCT = 99.9
 
 
 def now_cst() -> datetime:
@@ -241,6 +243,171 @@ def _empty_strategy(strategy: str) -> dict[str, Any]:
         "close_mismatched": 0,
         "close_errors": 0,
         "_close_gates": collections.Counter(),
+    }
+
+
+def _flow_acceptance(
+    summary: Mapping[str, Any],
+    *,
+    label: str,
+    row_key: str,
+    exact_rows_key: str,
+    missing_rows_key: str,
+    cases_key: str,
+    passed_key: str,
+    mismatched_key: str,
+    errors_key: str,
+    coverage_key: str,
+    pass_rate_key: str,
+) -> dict[str, Any]:
+    rows = int(summary.get(row_key) or 0)
+    exact_rows = int(summary.get(exact_rows_key) or 0)
+    missing_rows = int(summary.get(missing_rows_key) or 0)
+    cases = int(summary.get(cases_key) or 0)
+    passed = int(summary.get(passed_key) or 0)
+    mismatched = int(summary.get(mismatched_key) or 0)
+    errors = int(summary.get(errors_key) or 0)
+    coverage = float(summary.get(coverage_key) or 0.0)
+    pass_rate = float(summary.get(pass_rate_key) or 0.0)
+    readiness = round((coverage / 100.0) * (pass_rate / 100.0) * 100.0, 2) if rows and cases else 0.0
+
+    if rows <= 0:
+        status = "not_applicable"
+        accepted = True
+        next_action = "wait_for_flow_rows_after_fresh_run"
+    elif cases <= 0:
+        status = "missing_exact_cases"
+        accepted = False
+        next_action = "persist_strategy_gate_cases_for_this_flow"
+    elif errors or mismatched:
+        status = "blocked_by_mismatch"
+        accepted = False
+        next_action = "fix_exact_gate_mismatches_before_claiming_parity"
+    elif coverage < ACCEPTANCE_MIN_EXACT_COVERAGE_PCT:
+        status = "coverage_gap"
+        accepted = False
+        next_action = "increase_exact_case_coverage_or_collect_fresh_run_rows"
+    elif pass_rate < ACCEPTANCE_MIN_PASS_RATE_PCT:
+        status = "pass_rate_gap"
+        accepted = False
+        next_action = "investigate_non_passing_exact_cases"
+    else:
+        status = "accepted"
+        accepted = True
+        next_action = "keep_monitoring"
+
+    return {
+        "label": label,
+        "status": status,
+        "accepted": accepted,
+        "rows": rows,
+        "rows_with_exact_cases": exact_rows,
+        "missing_case_rows": missing_rows,
+        "gate_cases": cases,
+        "passed": passed,
+        "mismatched": mismatched,
+        "errors": errors,
+        "coverage_pct": coverage,
+        "pass_rate_pct": pass_rate,
+        "readiness_score_pct": readiness,
+        "next_action": next_action,
+    }
+
+
+def build_acceptance(summary: Mapping[str, Any]) -> dict[str, Any]:
+    flows = {
+        "open_flow": _flow_acceptance(
+            summary,
+            label="open_flow",
+            row_key="open_flow_rows",
+            exact_rows_key="rows_with_exact_cases",
+            missing_rows_key="missing_case_rows",
+            cases_key="gate_cases",
+            passed_key="passed",
+            mismatched_key="mismatched",
+            errors_key="errors",
+            coverage_key="exact_case_coverage_pct",
+            pass_rate_key="pass_rate_pct",
+        ),
+        "scan_flow": _flow_acceptance(
+            summary,
+            label="scan_flow",
+            row_key="scan_gate_rows",
+            exact_rows_key="scan_rows_with_exact_cases",
+            missing_rows_key="scan_missing_case_rows",
+            cases_key="scan_gate_cases",
+            passed_key="scan_passed",
+            mismatched_key="scan_mismatched",
+            errors_key="scan_errors",
+            coverage_key="scan_exact_case_coverage_pct",
+            pass_rate_key="scan_pass_rate_pct",
+        ),
+        "close_flow": _flow_acceptance(
+            summary,
+            label="close_flow",
+            row_key="close_flow_rows",
+            exact_rows_key="close_rows_with_exact_cases",
+            missing_rows_key="close_missing_case_rows",
+            cases_key="close_gate_cases",
+            passed_key="close_passed",
+            mismatched_key="close_mismatched",
+            errors_key="close_errors",
+            coverage_key="close_exact_case_coverage_pct",
+            pass_rate_key="close_pass_rate_pct",
+        ),
+    }
+    active_flows = [flow for flow in flows.values() if flow["rows"] > 0]
+    blocking_flows = [flow for flow in active_flows if not flow["accepted"]]
+    has_cases = any(flow["gate_cases"] > 0 for flow in active_flows)
+    total_rows = sum(flow["rows"] for flow in active_flows)
+    readiness = (
+        round(sum(flow["rows"] * flow["readiness_score_pct"] for flow in active_flows) / total_rows, 2)
+        if total_rows
+        else 0.0
+    )
+
+    if not active_flows:
+        overall_status = "no_historical_rows"
+        conclusion = "historical_same_input_parity_not_measurable"
+        next_action = "run_final_staged_fresh_run_after_offline_work"
+    elif not has_cases:
+        overall_status = "missing_exact_cases"
+        conclusion = "historical_same_input_parity_not_measurable"
+        next_action = "persist_strategy_gate_cases_or_collect_fresh_run_rows"
+    elif blocking_flows:
+        overall_status = "partial" if all(flow["status"] == "coverage_gap" for flow in blocking_flows) else "blocked"
+        conclusion = (
+            "historical_same_input_parity_partial_coverage"
+            if overall_status == "partial"
+            else "historical_same_input_parity_blocked"
+        )
+        next_action = blocking_flows[0]["next_action"]
+    else:
+        overall_status = "accepted"
+        conclusion = "historical_same_input_parity_accepted_for_available_rows"
+        next_action = "continue_fresh_run_monitoring"
+
+    return {
+        "accepted": overall_status == "accepted",
+        "overall_status": overall_status,
+        "conclusion": conclusion,
+        "readiness_score_pct": readiness,
+        "min_exact_case_coverage_pct": ACCEPTANCE_MIN_EXACT_COVERAGE_PCT,
+        "min_pass_rate_pct": ACCEPTANCE_MIN_PASS_RATE_PCT,
+        "fresh_run_required": overall_status != "accepted",
+        "next_action": next_action,
+        "blocking_flows": [
+            {
+                "label": flow["label"],
+                "status": flow["status"],
+                "rows": flow["rows"],
+                "coverage_pct": flow["coverage_pct"],
+                "pass_rate_pct": flow["pass_rate_pct"],
+                "next_action": flow["next_action"],
+            }
+            for flow in blocking_flows
+        ],
+        "flows": flows,
     }
 
 
@@ -500,6 +667,10 @@ def build_payload(db: Path, days: int, limit: int) -> dict[str, Any]:
         next_action = "continue_historical_same_input_expansion"
     summary["status"] = status
     summary["next_action"] = next_action
+    acceptance = build_acceptance(summary)
+    summary["acceptance_status"] = acceptance["overall_status"]
+    summary["acceptance_conclusion"] = acceptance["conclusion"]
+    summary["readiness_score_pct"] = acceptance["readiness_score_pct"]
 
     return {
         "generated_at": now_cst().isoformat(),
@@ -507,6 +678,7 @@ def build_payload(db: Path, days: int, limit: int) -> dict[str, Any]:
         "days": int(days),
         "limit": int(limit),
         "summary": summary,
+        "acceptance": acceptance,
         "strategies": strategies,
         "mismatch_examples": mismatch_examples,
         "error_examples": error_examples,
@@ -516,6 +688,8 @@ def build_payload(db: Path, days: int, limit: int) -> dict[str, Any]:
 
 def build_markdown(payload: dict[str, Any]) -> str:
     summary = payload.get("summary") or {}
+    acceptance = payload.get("acceptance") or {}
+    flows = acceptance.get("flows") or {}
     lines = [
         "# Replay/Live Parity Audit",
         "",
@@ -523,6 +697,11 @@ def build_markdown(payload: dict[str, Any]) -> str:
         f"- DB: `{payload.get('db')}`",
         f"- Window: `{payload.get('days')}` day(s), limit `{payload.get('limit')}` rows",
         f"- Status: `{summary.get('status')}`",
+        f"- Acceptance: `{acceptance.get('overall_status')}`",
+        f"- Conclusion: `{acceptance.get('conclusion')}`",
+        f"- Readiness score: `{acceptance.get('readiness_score_pct')}%`",
+        f"- Acceptance thresholds: exact coverage >= `{acceptance.get('min_exact_case_coverage_pct')}%`, pass rate >= `{acceptance.get('min_pass_rate_pct')}%`",
+        f"- Fresh-run required: `{acceptance.get('fresh_run_required')}`",
         f"- Open-flow rows: `{summary.get('open_flow_rows')}`",
         f"- Rows with exact cases: `{summary.get('rows_with_exact_cases')}` (`{summary.get('exact_case_coverage_pct')}%`)",
         f"- Gate cases: `{summary.get('gate_cases')}`; passed `{summary.get('passed')}`; mismatched `{summary.get('mismatched')}`; errors `{summary.get('errors')}`",
@@ -541,9 +720,38 @@ def build_markdown(payload: dict[str, Any]) -> str:
         "Exact parity only uses serialized `strategy_gate_case(s)` payloads. Rows without exact cases are counted as gaps, not guessed.",
         "`Open-flow` and `close-flow` come from the events table; `scan-level` comes from sentinel_scans pre-open filters and is reported separately.",
         "",
+        "## Acceptance By Flow",
+        "",
+        "| Flow | Status | Accepted | Rows | Exact rows | Missing | Cases | Pass rate | Coverage | Readiness | Next action |",
+        "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |",
+    ]
+    for flow_name in ("open_flow", "scan_flow", "close_flow"):
+        flow = flows.get(flow_name) or {}
+        lines.append(
+            "| {label} | {status} | {accepted} | {rows} | {rows_with_exact_cases} | {missing_case_rows} | "
+            "{gate_cases} | {pass_rate_pct}% | {coverage_pct}% | {readiness_score_pct}% | {next_action} |".format(
+                label=flow.get("label", flow_name),
+                status=flow.get("status", ""),
+                accepted=str(flow.get("accepted")),
+                rows=flow.get("rows", 0),
+                rows_with_exact_cases=flow.get("rows_with_exact_cases", 0),
+                missing_case_rows=flow.get("missing_case_rows", 0),
+                gate_cases=flow.get("gate_cases", 0),
+                pass_rate_pct=flow.get("pass_rate_pct", 0),
+                coverage_pct=flow.get("coverage_pct", 0),
+                readiness_score_pct=flow.get("readiness_score_pct", 0),
+                next_action=flow.get("next_action", ""),
+            )
+        )
+    lines.extend(
+        [
+            "",
+            "## Strategy Detail",
+            "",
         "| Strategy | Open flow | Exact rows | Missing cases | Cases | Passed | Mismatch | Errors | Pass rate | Scan rows | Scan exact | Scan cases | Scan pass | Close rows | Close exact | Close cases | Close pass | Top gates | Scan gates | Close gates |",
         "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- | --- |",
-    ]
+        ]
+    )
     for row in payload.get("strategies") or []:
         gates = ", ".join(f"{g['name']}:{g['count']}" for g in row.get("top_gates") or [])
         scan_gates = ", ".join(f"{g['name']}:{g['count']}" for g in row.get("scan_top_gates") or [])
@@ -611,6 +819,9 @@ def main(argv: list[str] | None = None) -> int:
                 "close_flow_rows": payload["summary"]["close_flow_rows"],
                 "close_gate_cases": payload["summary"]["close_gate_cases"],
                 "close_exact_case_coverage_pct": payload["summary"]["close_exact_case_coverage_pct"],
+                "acceptance_status": payload["acceptance"]["overall_status"],
+                "acceptance_conclusion": payload["acceptance"]["conclusion"],
+                "readiness_score_pct": payload["acceptance"]["readiness_score_pct"],
             },
             ensure_ascii=False,
         )

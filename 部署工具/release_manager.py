@@ -135,6 +135,7 @@ TENCENT_COMPONENTS: dict[str, dict[str, Any]] = {
         "files": [
             file_pair("部署工具/decision_attention.py", "decision_attention.py"),
             file_pair("部署工具/acknowledge_attention_items.py", "acknowledge_attention_items.py"),
+            file_pair("部署工具/long_term_skeleton_review.py", "long_term_skeleton_review.py"),
             file_pair("部署工具/portal_dashboard.py", "portal_dashboard.py"),
             file_pair("部署工具/portal_refresh_service.py", "portal_refresh_service.py"),
             file_pair("部署工具/system_alerts.py", "system_alerts.py"),
@@ -144,6 +145,7 @@ TENCENT_COMPONENTS: dict[str, dict[str, Any]] = {
         "services": ["crypto-system-alerts.service"],
         "post": [
             "{python} decision_attention.py || true",
+            "{python} long_term_skeleton_review.py --runtime-dir {root}/runtime --reports-dir {root}/reports || true",
             "{python} portal_dashboard.py --out-dir {root}/reports",
         ],
     },
@@ -272,6 +274,7 @@ TENCENT_COMPONENTS: dict[str, dict[str, Any]] = {
             file_pair("部署工具/rollback_watch_review.py", "rollback_watch_review.py"),
             file_pair("部署工具/rollback_execution_plan.py", "rollback_execution_plan.py"),
             file_pair("部署工具/rollback_automation_guard.py", "rollback_automation_guard.py"),
+            file_pair("部署工具/long_term_skeleton_review.py", "long_term_skeleton_review.py"),
             file_pair("部署工具/runtime_data_reset.py", "runtime_data_reset.py"),
             file_pair("部署工具/research_store_export.py", "research_store_export.py"),
             file_pair("部署工具/research_store_query.py", "research_store_query.py"),
@@ -331,6 +334,7 @@ ALIYUN_COMPONENTS: dict[str, dict[str, Any]] = {
             file_pair("部署工具/rollback_watch_review.py", "rollback_watch_review.py"),
             file_pair("部署工具/rollback_execution_plan.py", "rollback_execution_plan.py"),
             file_pair("部署工具/rollback_automation_guard.py", "rollback_automation_guard.py"),
+            file_pair("部署工具/long_term_skeleton_review.py", "long_term_skeleton_review.py"),
             file_pair("部署工具/runtime_data_reset.py", "runtime_data_reset.py"),
             file_pair("部署工具/research_store_export.py", "research_store_export.py"),
             file_pair("部署工具/research_store_query.py", "research_store_query.py"),

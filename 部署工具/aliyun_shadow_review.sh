@@ -83,6 +83,9 @@ $PYTHON decision_attention.py || true
 echo "--- Step 9: Research review dashboard ---"
 $PYTHON research_review_dashboard.py --memory-dir $REMOTE_DIR/research_memory --experiment-results $REMOTE_DIR/experiments/results/latest.jsonl --out-dir $REMOTE_DIR/reports
 
+echo "--- Step 9.5: Long-term skeleton review ---"
+$PYTHON long_term_skeleton_review.py --runtime-dir $REMOTE_DIR/runtime --reports-dir $REMOTE_DIR/reports || true
+
 echo "--- Step 10: Portal dashboard ---"
 $PYTHON portal_dashboard.py --out-dir $REMOTE_DIR/reports
 

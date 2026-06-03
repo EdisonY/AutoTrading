@@ -64,6 +64,8 @@ ROLLBACK_EXECUTION_JSON = ROOT / "runtime" / "rollback_execution_plan_latest.jso
 ROLLBACK_EXECUTION_MD = REPORTS_DIR / "rollback_execution_plan_latest.md"
 ROLLBACK_AUTOMATION_JSON = ROOT / "runtime" / "rollback_automation_guard_latest.json"
 ROLLBACK_AUTOMATION_MD = REPORTS_DIR / "rollback_automation_guard_latest.md"
+LONG_TERM_SKELETON_JSON = ROOT / "runtime" / "long_term_skeleton_latest.json"
+LONG_TERM_SKELETON_MD = REPORTS_DIR / "long_term_skeleton_latest.md"
 A_V11_ROLLOUT_JSON = ROOT / "runtime" / "a_v11_rollout_review_latest.json"
 A_V11_ROLLOUT_MD = REPORTS_DIR / "a_v11_rollout_review_latest.md"
 B_V16_ROLLOUT_JSON = ROOT / "runtime" / "b_v16_rollout_review_latest.json"
@@ -1023,6 +1025,47 @@ def rollback_automation_summary(path: Path | None) -> dict[str, Any]:
     }
 
 
+def long_term_skeleton_summary(path: Path | None) -> dict[str, Any]:
+    empty = {
+        "available": False,
+        "path": LONG_TERM_SKELETON_MD,
+        "age": "No long-term skeleton review",
+        "fresh": False,
+        "status": "missing",
+        "next_action": "run_long_term_skeleton_review",
+        "summary": {
+            "modules": 0,
+            "skeleton_ready": 0,
+            "missing_skeleton": 0,
+            "blocked_by_staged_validation": 0,
+            "ready_bones": 0,
+            "total_bones": 0,
+            "ready_pct": 0,
+            "validation_blockers": 0,
+            "post_launch_backlog": 0,
+        },
+        "modules": [],
+        "validation_blockers": [],
+        "post_launch_backlog": [],
+    }
+    payload = read_json(path) if path else None
+    if not isinstance(payload, dict):
+        return empty
+    generated_at = parse_dt(payload.get("generated_at"))
+    return {
+        "available": True,
+        "path": LONG_TERM_SKELETON_MD,
+        "age": age_text(generated_at),
+        "fresh": bool(generated_at and (datetime.now(CST) - generated_at).total_seconds() < 4 * 3600),
+        "status": payload.get("status") or "missing",
+        "next_action": payload.get("next_action") or "",
+        "summary": payload.get("summary") if isinstance(payload.get("summary"), dict) else empty["summary"],
+        "modules": payload.get("modules") if isinstance(payload.get("modules"), list) else [],
+        "validation_blockers": payload.get("validation_blockers") if isinstance(payload.get("validation_blockers"), list) else [],
+        "post_launch_backlog": payload.get("post_launch_backlog") if isinstance(payload.get("post_launch_backlog"), list) else [],
+    }
+
+
 def sentinel_quality_summary(path: Path | None) -> dict[str, Any]:
     empty = {
         "available": False,
@@ -1405,6 +1448,7 @@ def alert_summary() -> dict[str, Any]:
         "disk": payload.get("disk") or {},
         "timers": payload.get("timers") or {},
         "api_rate_limits": payload.get("api_rate_limits") or {},
+        "api_guard": payload.get("api_guard") or {},
     }
 
 
@@ -1759,6 +1803,7 @@ def function_status_cards(data: dict[str, Any]) -> list[dict[str, str]]:
     realtime_account = data.get("realtime_account") or {}
     alerts = data.get("alerts") or {}
     api_rate_limits = alerts.get("api_rate_limits") or {}
+    api_guard = alerts.get("api_guard") or {}
     api_rate_total = int(api_rate_limits.get("total") or 0)
     api_rate_sources = ", ".join(
         f"{name}:{count}"
@@ -1799,6 +1844,8 @@ def function_status_cards(data: dict[str, Any]) -> list[dict[str, str]]:
     rollback_execution_summary_data = rollback_execution.get("summary") or {}
     rollback_automation = data.get("rollback_automation") or {}
     rollback_automation_summary_data = rollback_automation.get("summary") or {}
+    long_term_skeleton = data.get("long_term_skeleton") or {}
+    long_term_skeleton_summary_data = long_term_skeleton.get("summary") or {}
     a_v11_rollout = data.get("a_v11_rollout") or {}
     a_v11_rollout_decision = a_v11_rollout.get("decision") or {}
     a_v11_rollout_72h = (a_v11_rollout.get("windows") or {}).get("72h") or {}
@@ -1917,6 +1964,19 @@ def function_status_cards(data: dict[str, Any]) -> list[dict[str, str]]:
                 f"最近巡检 {alerts.get('age', '无')}；磁盘已用 {alerts.get('disk', {}).get('used_pct', '-')}%，剩余 {alerts.get('disk', {}).get('free_gb', '-')}GB{api_rate_note}。"
                 if alerts.get("available")
                 else "告警巡检尚未生成。"
+            ),
+        },
+        {
+            "level": "bad" if api_guard.get("in_cooldown") else "warn" if api_rate_total else "ok" if alerts.get("available") else "warn",
+            "name": "API queue/cooldown",
+            "value": "cooldown" if api_guard.get("in_cooldown") else f"{api_rate_total} rate-limit",
+            "body": (
+                f"cooldown until {api_guard.get('banned_until') or '-'}; "
+                f"last source {api_guard.get('last_error_account') or api_guard.get('last_account') or '-'} "
+                f"{api_guard.get('last_error_path') or api_guard.get('last_path') or '-'}; "
+                f"top sources {api_rate_sources or '-'}."
+                if alerts.get("available")
+                else "API cooldown/source/top-path report missing."
             ),
         },
         {
@@ -2198,6 +2258,33 @@ def function_status_cards(data: dict[str, Any]) -> list[dict[str, str]]:
                 f"auto allowed no; apply enabled no; updated {rollback_automation.get('age')}."
                 if rollback_automation.get("available")
                 else "Automatic rollback guard missing. Automation policy cannot be audited from the portal."
+            ),
+        },
+        {
+            "level": (
+                "bad"
+                if int(long_term_skeleton_summary_data.get("missing_skeleton") or 0)
+                else "warn"
+                if int(long_term_skeleton_summary_data.get("blocked_by_staged_validation") or 0)
+                else "ok"
+                if long_term_skeleton.get("fresh")
+                else "warn"
+            ),
+            "name": "长期任务骨架",
+            "value": (
+                f"{int(long_term_skeleton_summary_data.get('ready_bones') or 0)}/"
+                f"{int(long_term_skeleton_summary_data.get('total_bones') or 0)} bones"
+                if long_term_skeleton.get("available")
+                else "not built"
+            ),
+            "body": (
+                f"modules {int(long_term_skeleton_summary_data.get('modules') or 0)}; "
+                f"missing {int(long_term_skeleton_summary_data.get('missing_skeleton') or 0)}; "
+                f"staged blockers {int(long_term_skeleton_summary_data.get('blocked_by_staged_validation') or 0)}; "
+                f"backlog {int(long_term_skeleton_summary_data.get('post_launch_backlog') or 0)}; "
+                f"next {long_term_skeleton.get('next_action') or '-'}; updated {long_term_skeleton.get('age')}."
+                if long_term_skeleton.get("available")
+                else "Long-term skeleton matrix missing. P0/P1/P2 landing state is not visible."
             ),
         },
         {
@@ -2731,6 +2818,8 @@ def build_data() -> dict[str, Any]:
     data["rollback_execution_html"] = ROLLBACK_EXECUTION_MD
     data["rollback_automation"] = rollback_automation_summary(ROLLBACK_AUTOMATION_JSON)
     data["rollback_automation_html"] = ROLLBACK_AUTOMATION_MD
+    data["long_term_skeleton"] = long_term_skeleton_summary(LONG_TERM_SKELETON_JSON)
+    data["long_term_skeleton_html"] = LONG_TERM_SKELETON_MD
     data["a_v11_rollout"] = a_v11_rollout_summary(A_V11_ROLLOUT_JSON)
     data["a_v11_rollout_html"] = A_V11_ROLLOUT_MD
     data["b_v16_rollout"] = b_v16_rollout_summary(B_V16_ROLLOUT_JSON)
@@ -2911,6 +3000,8 @@ def render_html(out_dir: Path) -> str:
     quality_rows = "".join(quality_rows_parts) or '<tr><td colspan="9">暂无真相台账数据</td></tr>'
     recovery_review = truth.get("recovery_review") or {}
     recovery_strategy_exit = truth.get("recovery_strategy_exit_evidence") or {}
+    # Marker for long-term skeleton review: recovery_replay_evidence is rendered
+    # through recovery_bar_replay_evidence rows below.
     recovery_risk = recovery_review.get("risk_counts") or {}
     recovery_positions = recovery_review.get("positions") or []
     recovery_review_rows = "".join(
@@ -3373,6 +3464,32 @@ def render_html(out_dir: Path) -> str:
 """.strip()
         for r in (replay_readiness.get("blockers") or [])
     ) or '<tr><td colspan="3">当前无验收阻塞项</td></tr>'
+    long_term_skeleton = data.get("long_term_skeleton") or {}
+    long_term_skeleton_summary_data = long_term_skeleton.get("summary") or {}
+    long_term_skeleton_rows = "".join(
+        f"""
+<tr>
+  <td>{h(r.get('priority'))}</td>
+  <td>{h(r.get('id'))}</td>
+  <td>{h(r.get('name'))}</td>
+  <td>{h(r.get('status'))}</td>
+  <td>{int(r.get('ready_bones') or 0)}/{int(r.get('total_bones') or 0)}</td>
+  <td>{h(r.get('next_action'))}</td>
+  <td>{h(compact_text('; '.join(str(item) for item in (r.get('missing_bones') or [])) or '-', 160))}</td>
+</tr>
+""".strip()
+        for r in (long_term_skeleton.get("modules") or [])
+    ) or '<tr><td colspan="7">暂无长期任务骨架矩阵</td></tr>'
+    long_term_backlog_rows = "".join(
+        f"""
+<tr>
+  <td>{h(r.get('id'))}</td>
+  <td>{h(r.get('name'))}</td>
+  <td>{h(compact_text(r.get('item') or '-', 180))}</td>
+</tr>
+""".strip()
+        for r in (long_term_skeleton.get("post_launch_backlog") or [])
+    ) or '<tr><td colspan="3">暂无上线后 backlog</td></tr>'
     rollback_execution = data.get("rollback_execution") or {}
     rollback_execution_summary_data = rollback_execution.get("summary") or {}
     rollback_execution_rows = "".join(
@@ -3552,6 +3669,14 @@ def render_html(out_dir: Path) -> str:
             "看 DuckDB/Parquet 汇总后的开仓、跳过、失败、哨兵贡献，用来判断策略进化样本是否足够。",
             data["research_store_html"],
             "看研究仓摘要",
+            "blue",
+        ),
+        route_card(
+            "长期目标骨架",
+            "先看落地骨头",
+            "看 P0/P1/P2 每块是否已有输入、主处理、输出、入口、同步、测试；优化细节只进上线后 backlog。",
+            data["long_term_skeleton_html"],
+            "看骨架矩阵",
             "blue",
         ),
         route_card(
@@ -3921,6 +4046,19 @@ th {{ background:#f1f5f9; color:#334155; }}
     <table>
       <thead><tr><th>策略</th><th>开仓流</th><th>OPEN</th><th>SIGNAL</th><th>否决</th><th>失败</th><th>未知门控</th><th>覆盖率</th><th>主要 gate</th></tr></thead>
       <tbody>{replay_gate_rows}</tbody>
+    </table>
+  </section>
+
+  <section class="section panel">
+    <h2>长期任务骨架矩阵</h2>
+    <p class="note">骨架优先，不扩细节。状态 {h(long_term_skeleton.get('status', '-'))}；bones {int(long_term_skeleton_summary_data.get('ready_bones') or 0)}/{int(long_term_skeleton_summary_data.get('total_bones') or 0)}；missing {int(long_term_skeleton_summary_data.get('missing_skeleton') or 0)}；staged blockers {int(long_term_skeleton_summary_data.get('blocked_by_staged_validation') or 0)}；上线后 backlog {int(long_term_skeleton_summary_data.get('post_launch_backlog') or 0)}；next {h(long_term_skeleton.get('next_action') or '-')}；更新 {h(long_term_skeleton.get('age'))}。</p>
+    <table>
+      <thead><tr><th>优先级</th><th>ID</th><th>模块</th><th>状态</th><th>骨头</th><th>下一步</th><th>缺口</th></tr></thead>
+      <tbody>{long_term_skeleton_rows}</tbody>
+    </table>
+    <table class="subtable">
+      <thead><tr><th>ID</th><th>模块</th><th>上线后 backlog</th></tr></thead>
+      <tbody>{long_term_backlog_rows}</tbody>
     </table>
   </section>
 

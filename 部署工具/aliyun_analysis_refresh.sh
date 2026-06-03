@@ -53,6 +53,9 @@ $PYTHON rollback_automation_guard.py --runtime-dir $REMOTE_DIR/runtime --reports
 echo "--- Step 4: Decision attention ledger ---"
 $PYTHON decision_attention.py || echo "[WARN] attention ledger failed"
 
+echo "--- Step 4.5: Long-term skeleton review ---"
+$PYTHON long_term_skeleton_review.py --runtime-dir $REMOTE_DIR/runtime --reports-dir $REMOTE_DIR/reports || echo "[WARN] long-term skeleton review failed"
+
 echo "--- Step 5: Portal dashboard ---"
 $PYTHON portal_dashboard.py --out-dir $REMOTE_DIR/reports || echo "[WARN] portal generation failed"
 

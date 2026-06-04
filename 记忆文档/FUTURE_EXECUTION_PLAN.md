@@ -12,6 +12,8 @@
 
 2026-06-04 staged scanner 观察补充：为避免 scanner 验收阶段误下单/平仓/改 leverage/margin，新增 `SCANNER_ORDER_ENABLED=0` 禁单观察开关。默认仍为 order-enabled；显式关闭时 `ExecutionEngine` 在 open/close/cancel/confirmation 前返回 `scanner_order_disabled` preflight，C/v14 也跳过开仓前 leverage/margin。下一步部署后，先在 cache-only + 小宇宙 + queue/cooldown/journal clean 的条件下用该开关做 bounded scanner observation。该开关只降低 staged 风险，不改变 B/C account-state stale 事实，不替代真实 live-order 验收。
 
+2026-06-04 staged scanner 观察结果补充：`SCANNER_ORDER_ENABLED=0` 已部署到 Tencent A/B/C scanner drop-ins，A/B/C bounded observation clean。A/v11 新增一个 public ticker `200`；B/v16、C/v14 未新增 Binance queue rows；最终 queue `active_status=[]`、`active_cooldowns=[]`、`max_rowid=549`，journal 无 `418/429/-1003`。按用户“测试服可大胆推进，但避免 API 冷却”规则，下一步进入 order-enabled staged test：先小范围、短窗口、单 producer，逐步打开，任一步出现 cooldown 立即停。
+
 ### Long-term P0 - 必须先完成
 
 1. **P0-A Binance API 根治**

@@ -60,7 +60,7 @@ from core.exchange_state import count_active_positions, count_side_positions, fi
 from core.event_store import EventStoreWriter
 from core.market_watchlist import load_sentinel_context
 from core.market_data_cache import cached_available_symbols, cached_top_symbols
-from core.kline_cache import load_cached_klines, save_cached_klines
+from core.kline_cache import kline_network_enabled, load_cached_klines, save_cached_klines
 from core.binance_api_guard import record_public_response, wait_before_public_request
 from core.binance_api_queue_client import api_queue_client_enabled, queued_api_request
 from core.position_utils import infer_position_side, leveraged_loss_pct
@@ -537,6 +537,9 @@ def fetch_klines(symbol: str, bar: str = "15m", limit: int = 100) -> list[list]:
     cached = load_cached_klines(PROJECT_ROOT, symbol, bar, limit)
     if cached:
         return cached
+    if not kline_network_enabled():
+        logger.warning(f"fetch_klines {symbol}: staged cache-only mode, no cached {bar}/{limit} rows")
+        return []
     url = "https://testnet.binancefuture.com/fapi/v1/klines?symbol=%s&interval=%s&limit=%d" % (symbol, bar, limit)
     raw = fetch_json(url)
     rows = []

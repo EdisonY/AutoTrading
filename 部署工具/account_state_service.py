@@ -32,6 +32,7 @@ if (ROOT / "交易客户端").exists():
     sys.path.insert(0, str(ROOT / "交易客户端"))
 
 from account_snapshot_service import (
+    ACCOUNTS,
     EVENT_STORE_DB,
     _snapshot_payload,
     collect_accounts_resilient,
@@ -46,6 +47,49 @@ from core.account_state import atomic_write_json, utc_now_iso
 
 CST = timezone(timedelta(hours=8))
 STREAM_OFFSET_FILENAME = "account_state_stream_offsets.json"
+
+
+def bootstrap_empty_state(*, root: str | Path = ROOT) -> dict[str, Any]:
+    """Write stale placeholder rows without calling Binance.
+
+    This is for post-reset zero-run bootstrapping. User-stream events may turn a
+    row fresh later, but an idle websocket must not make this placeholder look
+    like a verified exchange snapshot.
+    """
+    now = utc_now_iso()
+    rows = []
+    errors = []
+    for key, version, desc, _module_name, _class_name, _hard in ACCOUNTS:
+        strategy = f"{key}/{version}"
+        reason = f"{strategy} bootstrap_empty_no_signed_rest_waiting_for_user_stream"
+        errors.append(reason)
+        rows.append(
+            {
+                "ts": now,
+                "account": key,
+                "strategy": strategy,
+                "version": version,
+                "desc": desc,
+                "stale": True,
+                "snapshot_error": reason,
+                "wallet_usdt": 0.0,
+                "available_usdt": 0.0,
+                "margin_usdt": 0.0,
+                "unrealized_pnl_usdt": 0.0,
+                "open_positions": 0,
+                "longs": 0,
+                "shorts": 0,
+                "notional_usdt": 0.0,
+                "used_margin_usdt": 0.0,
+                "hard_stop_risk_count": 0,
+                "positions": [],
+            }
+        )
+    payload = build_account_state_payload(rows, status="stale", source="bootstrap_empty_no_signed_rest", errors=errors)
+    path = write_account_state(root, payload)
+    result = {"status": "stale", "path": str(path), "summary": payload["summary"], "ts": payload["generated_at"]}
+    print(json.dumps(result, ensure_ascii=False), flush=True)
+    return payload
 
 
 def collect_state_once(*, write_legacy_snapshot: bool = False, write_db: bool = False) -> dict[str, Any]:
@@ -181,6 +225,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--once", action="store_true")
     parser.add_argument("--write-legacy-snapshot", action="store_true")
     parser.add_argument("--write-db", action="store_true")
+    parser.add_argument("--bootstrap-empty", action="store_true", help="Write stale zero placeholders without signed REST")
     parser.add_argument("--stream-events", help="Apply newline-delimited user-data-stream events to central account state")
     parser.add_argument("--stream-strategy", default="", help="Default strategy for raw stream events")
     parser.add_argument("--stream-offset-state", default="", help="Offset/dedup state path for stream events")
@@ -189,6 +234,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
+    if args.bootstrap_empty:
+        bootstrap_empty_state()
+        return 0
     if args.stream_events:
         if not args.stream_strategy:
             print(json.dumps({"status": "error", "error": "--stream-strategy is required with --stream-events"}, ensure_ascii=False), flush=True)

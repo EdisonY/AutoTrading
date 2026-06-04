@@ -26,19 +26,13 @@ class BinanceUserStreamServiceTest(unittest.TestCase):
 
             self.assertEqual(float(state.balance["totalWalletBalance"]), 1500.0)
 
-    def test_touch_account_state_row_refreshes_strategy_timestamp(self):
+    def test_touch_account_state_row_refreshes_verified_strategy_timestamp(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             payload = build_account_state_payload([
                 {"account": "A", "strategy": "A/v11", "wallet_usdt": 1000, "positions": []}
             ])
             payload["accounts"][0]["ts"] = "2000-01-01T00:00:00+00:00"
-            payload["accounts"][0]["stale"] = True
-            payload["accounts"][0]["snapshot_error"] = "old snapshot stale"
-            payload["summary"]["fresh_accounts"] = 0
-            payload["summary"]["stale_accounts"] = ["A"]
-            payload["summary"]["partial_error_count"] = 1
-            payload["errors"] = ["old snapshot stale"]
             write_account_state(root, payload)
 
             self.assertFalse(load_central_account_state(root, "A/v11", max_age_seconds=60, allow_legacy=False))
@@ -50,6 +44,25 @@ class BinanceUserStreamServiceTest(unittest.TestCase):
             self.assertEqual(refreshed["summary"]["fresh_accounts"], 1)
             self.assertEqual(refreshed["summary"]["stale_accounts"], [])
             self.assertEqual(refreshed["summary"]["partial_error_count"], 0)
+
+    def test_touch_account_state_row_does_not_refresh_stale_placeholder(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            payload = build_account_state_payload([
+                {"account": "A", "strategy": "A/v11", "wallet_usdt": 0, "positions": []}
+            ])
+            payload["accounts"][0]["ts"] = "2000-01-01T00:00:00+00:00"
+            payload["accounts"][0]["stale"] = True
+            payload["accounts"][0]["snapshot_error"] = "bootstrap_empty_no_signed_rest_waiting_for_user_stream"
+            payload["summary"]["fresh_accounts"] = 0
+            payload["summary"]["stale_accounts"] = ["A"]
+            payload["summary"]["partial_error_count"] = 1
+            payload["errors"] = ["bootstrap_empty_no_signed_rest_waiting_for_user_stream"]
+            write_account_state(root, payload)
+
+            touched = touch_account_state_row(root=root, strategy="A/v11")
+            self.assertFalse(touched)
+            self.assertIsNone(load_central_account_state(root, "A/v11", max_age_seconds=60, allow_legacy=False))
 
 
 if __name__ == "__main__":

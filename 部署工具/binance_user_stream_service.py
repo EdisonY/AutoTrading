@@ -66,7 +66,7 @@ def run_messages(
 
 
 def touch_account_state_row(*, root: str | Path, strategy: str) -> str:
-    """Mark a strategy account-state row fresh while its websocket stays connected."""
+    """Refresh a verified strategy row while its websocket stays connected."""
     payload = read_account_state_payload(root, allow_legacy=False)
     if not payload:
         return ""
@@ -77,9 +77,9 @@ def touch_account_state_row(*, root: str | Path, strategy: str) -> str:
             continue
         if str(row.get("strategy") or "").upper() != str(strategy or "").upper():
             continue
+        if row.get("stale") or row.get("snapshot_error"):
+            continue
         row["ts"] = now
-        row["stale"] = False
-        row.pop("snapshot_error", None)
         changed = True
     if not changed:
         return ""

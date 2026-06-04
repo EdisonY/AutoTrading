@@ -5,10 +5,23 @@ import unittest
 from pathlib import Path
 
 from core.account_state import build_account_state_payload, load_central_account_state, write_account_state
-from 部署工具.account_state_service import apply_stream_events_once
+from 部署工具.account_state_service import apply_stream_events_once, bootstrap_empty_state
 
 
 class AccountStateServiceStreamTest(unittest.TestCase):
+    def test_bootstrap_empty_state_writes_stale_placeholders_without_signed_rest(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+
+            payload = bootstrap_empty_state(root=root)
+
+            self.assertEqual(payload["status"], "stale")
+            self.assertEqual(payload["summary"]["fresh_accounts"], 0)
+            self.assertEqual(payload["summary"]["stale_accounts"], ["A", "B", "C"])
+            self.assertEqual(payload["summary"]["partial_error_count"], 3)
+            self.assertIsNone(load_central_account_state(root, "A/v11", max_age_seconds=60, allow_legacy=False))
+            self.assertTrue((root / "runtime" / "account_state_latest.json").exists())
+
     def test_apply_stream_events_updates_written_state(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -36,6 +49,31 @@ class AccountStateServiceStreamTest(unittest.TestCase):
             self.assertIsNotNone(state)
             self.assertEqual(float(state.balance["totalWalletBalance"]), 1300.0)
             self.assertEqual(state.positions[0]["symbol"], "SOLUSDT")
+
+    def test_apply_stream_events_turns_bootstrap_placeholder_fresh(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            bootstrap_empty_state(root=root)
+            events = root / "events.jsonl"
+            events.write_text(
+                json.dumps({
+                    "e": "ACCOUNT_UPDATE",
+                    "E": int(time.time() * 1000),
+                    "a": {"B": [{"a": "USDT", "wb": "1600", "cw": "1500"}], "P": []},
+                })
+                + "\n",
+                encoding="utf-8",
+            )
+
+            apply_stream_events_once(events_path=events, strategy="A/v11", root=root)
+            state = load_central_account_state(root, "A/v11", max_age_seconds=60 * 60, allow_legacy=False)
+
+            self.assertIsNotNone(state)
+            self.assertEqual(float(state.balance["totalWalletBalance"]), 1600.0)
+            refreshed = json.loads((root / "runtime" / "account_state_latest.json").read_text(encoding="utf-8"))
+            self.assertEqual(refreshed["summary"]["fresh_accounts"], 1)
+            self.assertEqual(refreshed["summary"]["stale_accounts"], ["B", "C"])
+            self.assertEqual(refreshed["summary"]["partial_error_count"], 0)
 
     def test_apply_stream_events_skips_duplicate_event(self):
         with tempfile.TemporaryDirectory() as tmp:

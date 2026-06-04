@@ -9,7 +9,7 @@ User=ubuntu
 WorkingDirectory=/opt/crypto-auto-trader
 EnvironmentFile=/etc/crypto-auto-trader/trading.env
 Environment=PYTHONUNBUFFERED=1
-ExecStart=/opt/crypto-auto-trader/.venv/bin/python -u /opt/crypto-auto-trader/account_state_service.py --once --write-legacy-snapshot --write-db
+ExecStart=/opt/crypto-auto-trader/.venv/bin/python -u /opt/crypto-auto-trader/account_state_service.py --bootstrap-empty
 
 [Install]
 WantedBy=multi-user.target

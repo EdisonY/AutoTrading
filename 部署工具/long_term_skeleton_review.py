@@ -385,7 +385,9 @@ DEFAULT_SPECS: list[dict[str, Any]] = [
         portal=[bone("long-term matrix records final gate", "部署工具/long_term_skeleton_review.py", contains="FINAL-ZERO-RUN")],
         sync=[bone("reset tool release", "部署工具/release_manager.py", contains="runtime_data_reset.py")],
         tests=[bone("reset preview mode", "部署工具/runtime_data_reset.py", contains="only previews")],
-        validation_blockers=["Reset pre-checks must show queue/services safe before dirty-data archive/reset and zero-run."],
+        validation_blockers=[
+            "Dirty-data reset is archived/applied; wait for signed cooldown to clear, deploy bootstrap fix, then run minimal zero-run cleanly."
+        ],
     ),
 ]
 

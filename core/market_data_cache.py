@@ -1,12 +1,20 @@
 from __future__ import annotations
 
 import json
+import os
 import time
 from pathlib import Path
 from typing import Any
 
 
 DEFAULT_CACHE = Path("runtime/market_data_cache.json")
+
+
+def market_cache_max_age_seconds(default: int = 45) -> int:
+    try:
+        return max(0, int(float(os.environ.get("SCANNER_MARKET_CACHE_MAX_AGE_SEC", str(default)))))
+    except Exception:
+        return int(default)
 
 
 def load_market_cache(path: Path | None = None, *, max_age_seconds: int = 45) -> dict[str, Any]:
@@ -16,7 +24,8 @@ def load_market_cache(path: Path | None = None, *, max_age_seconds: int = 45) ->
     except Exception:
         return {}
     ts = float(payload.get("unix_ts") or 0)
-    if ts <= 0 or time.time() - ts > max_age_seconds:
+    max_age = market_cache_max_age_seconds(max_age_seconds)
+    if ts <= 0 or time.time() - ts > max_age:
         return {}
     return payload if isinstance(payload, dict) else {}
 

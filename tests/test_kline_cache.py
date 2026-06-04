@@ -10,17 +10,20 @@ from core.kline_cache import (
     load_cached_klines,
     save_cached_klines,
 )
+from core.market_data_cache import cached_top_symbols, market_cache_max_age_seconds
 
 
 class KlineCacheTest(unittest.TestCase):
     def setUp(self):
         self._old_network = os.environ.get("SCANNER_KLINE_NETWORK_ENABLED")
         self._old_age = os.environ.get("SCANNER_KLINE_CACHE_MAX_AGE_SEC")
+        self._old_market_age = os.environ.get("SCANNER_MARKET_CACHE_MAX_AGE_SEC")
 
     def tearDown(self):
         for key, value in {
             "SCANNER_KLINE_NETWORK_ENABLED": self._old_network,
             "SCANNER_KLINE_CACHE_MAX_AGE_SEC": self._old_age,
+            "SCANNER_MARKET_CACHE_MAX_AGE_SEC": self._old_market_age,
         }.items():
             if value is None:
                 os.environ.pop(key, None)
@@ -49,6 +52,22 @@ class KlineCacheTest(unittest.TestCase):
             os.environ["SCANNER_KLINE_CACHE_MAX_AGE_SEC"] = "7200"
             self.assertEqual(rows, load_cached_klines(root, "BTCUSDT", "1h", 200))
             self.assertEqual(7200, kline_cache_max_age_sec())
+
+    def test_market_cache_age_can_be_extended_for_staged_runs(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            cache = root / "runtime" / "market_data_cache.json"
+            cache.parent.mkdir(parents=True, exist_ok=True)
+            cache.write_text(
+                '{"unix_ts": %.3f, "top_symbols": ["btcusdt", "ethusdt"]}' % (time.time() - 3600),
+                encoding="utf-8",
+            )
+
+            self.assertEqual([], cached_top_symbols(cache, 2))
+
+            os.environ["SCANNER_MARKET_CACHE_MAX_AGE_SEC"] = "7200"
+            self.assertEqual(["BTCUSDT", "ETHUSDT"], cached_top_symbols(cache, 2))
+            self.assertEqual(7200, market_cache_max_age_seconds())
 
 
 if __name__ == "__main__":

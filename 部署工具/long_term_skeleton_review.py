@@ -354,8 +354,11 @@ DEFAULT_SPECS: list[dict[str, Any]] = [
             bone("attention script release", "部署工具/release_manager.py", contains="acknowledge_attention_items.py"),
         ],
         tests=[bone("attention API tests", "tests/test_attention_api_server.py")],
-        validation_blockers=["Browser-side ack still needs server-side service verification after staged portal restart."],
-        post_launch_backlog=["Remote CI enforcement for git_change_guard.py."],
+        validation_blockers=[],
+        post_launch_backlog=[
+            "Remote CI enforcement for git_change_guard.py.",
+            "Optional public-portal visual click-through polish after full staged restart.",
+        ],
     ),
     module_spec(
         item_id="FINAL-ZERO-RUN",

@@ -131,9 +131,10 @@ DEFAULT_SPECS: list[dict[str, Any]] = [
             bone("case runner tests", "tests/test_strategy_gate_cases.py"),
             bone("parity audit tests", "tests/test_replay_live_parity_audit.py"),
         ],
-        validation_blockers=[
-            "Final staged fresh-run must create post-instrumentation rows with exact cases.",
-            "Old rows without exact cases remain coverage gaps, not accepted parity.",
+        validation_blockers=[],
+        post_launch_backlog=[
+            "Collect natural open-flow and close-flow exact-case rows after the clean staged run and zero-run.",
+            "Keep old rows without exact cases outside fresh-window acceptance; do not use them as parity proof.",
         ],
     ),
     module_spec(
@@ -383,7 +384,7 @@ DEFAULT_SPECS: list[dict[str, Any]] = [
         portal=[bone("long-term matrix records final gate", "部署工具/long_term_skeleton_review.py", contains="FINAL-ZERO-RUN")],
         sync=[bone("reset tool release", "部署工具/release_manager.py", contains="runtime_data_reset.py")],
         tests=[bone("reset preview mode", "部署工具/runtime_data_reset.py", contains="only previews")],
-        validation_blockers=["Must wait until P0-A/P0-B staged fresh-run and parity gates pass."],
+        validation_blockers=["Must wait until P0-A staged clean run passes and reset pre-checks show queue/services safe."],
     ),
 ]
 

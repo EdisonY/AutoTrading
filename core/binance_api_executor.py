@@ -116,6 +116,13 @@ def _rate_limit_cooldown_ms(status: int, body: str, *, fallback_ms: int) -> int:
     return now_ms() + max(60_000, int(fallback_ms))
 
 
+def _cooldown_scope(status: int, body: str, request: ApiQueueRequest) -> tuple[str, str, str]:
+    lowered = body.lower()
+    if status == 418 or BAN_UNTIL_RE.search(body) or ("ip(" in lowered and "banned" in lowered):
+        return "global", "", f"HTTP {status} global"
+    return request.scope, request.account, f"HTTP {status}"
+
+
 def execute_api_queue_request(
     queue: BinanceApiQueue,
     request: ApiQueueRequest,
@@ -142,7 +149,8 @@ def execute_api_queue_request(
         decoded = _decode_body(raw_body)
         cooldown = _rate_limit_cooldown_ms(status, raw_body, fallback_ms=rate_limit_fallback_ms)
         if cooldown:
-            queue.set_cooldown(scope=request.scope, account=request.account, until_ms=cooldown, reason=f"HTTP {status}")
+            cooldown_scope, cooldown_account, reason = _cooldown_scope(status, raw_body, request)
+            queue.set_cooldown(scope=cooldown_scope, account=cooldown_account, until_ms=cooldown, reason=reason)
             return queue.fail_request(request.request_id, error=f"HTTP {status}: {raw_body[:500]}", retry=True, defer_ms=max(60_000, cooldown - now_ms()))
         if status >= 400:
             return queue.fail_request(request.request_id, error=f"HTTP {status}: {raw_body[:500]}", retry=False)

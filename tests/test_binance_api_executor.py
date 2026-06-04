@@ -79,6 +79,34 @@ class BinanceApiExecutorTest(unittest.TestCase):
         self.assertGreater(cooldown_until, req.earliest_ms)
         self.assertEqual(reason, "HTTP 429")
 
+    def test_ip_ban_sets_global_cooldown(self):
+        old = {name: os.environ.get(name) for name in ("BINANCE_B_API_KEY", "BINANCE_B_API_SECRET")}
+        os.environ["BINANCE_B_API_KEY"] = "key-b"
+        os.environ["BINANCE_B_API_SECRET"] = "secret-b"
+        try:
+            queue = self.make_queue()
+            req = queue.submit_request(scope="signed", account="B/v16", method="GET", path="/fapi/v2/balance")
+            transport = FakeTransport(
+                status=418,
+                body='{"code":-1003,"msg":"Way too many requests; IP(1.2.3.4) banned until 1893456000000."}',
+            )
+
+            result = execute_next_api_queue_request(queue, transport=transport)
+
+            self.assertEqual(result.status, STATUS_DEFERRED)
+            signed_until, signed_reason = queue.active_cooldown(scope="signed", account="C/v14")
+            public_until, public_reason = queue.active_cooldown(scope="public", account="")
+            self.assertGreater(signed_until, req.earliest_ms)
+            self.assertEqual(signed_reason, "HTTP 418 global")
+            self.assertEqual(public_until, signed_until)
+            self.assertEqual(public_reason, "HTTP 418 global")
+        finally:
+            for name, value in old.items():
+                if value is None:
+                    os.environ.pop(name, None)
+                else:
+                    os.environ[name] = value
+
     def test_non_rate_limit_http_error_fails_request(self):
         queue = self.make_queue()
         queue.submit_request(scope="public", method="GET", path="/bad")

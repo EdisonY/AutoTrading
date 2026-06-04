@@ -11,6 +11,7 @@ from core.kline_cache import (
     save_cached_klines,
 )
 from core.market_data_cache import cached_top_symbols, market_cache_max_age_seconds
+from core.market_data_cache import market_data_network_enabled
 
 
 class KlineCacheTest(unittest.TestCase):
@@ -18,12 +19,14 @@ class KlineCacheTest(unittest.TestCase):
         self._old_network = os.environ.get("SCANNER_KLINE_NETWORK_ENABLED")
         self._old_age = os.environ.get("SCANNER_KLINE_CACHE_MAX_AGE_SEC")
         self._old_market_age = os.environ.get("SCANNER_MARKET_CACHE_MAX_AGE_SEC")
+        self._old_market_network = os.environ.get("SCANNER_MARKET_DATA_NETWORK_ENABLED")
 
     def tearDown(self):
         for key, value in {
             "SCANNER_KLINE_NETWORK_ENABLED": self._old_network,
             "SCANNER_KLINE_CACHE_MAX_AGE_SEC": self._old_age,
             "SCANNER_MARKET_CACHE_MAX_AGE_SEC": self._old_market_age,
+            "SCANNER_MARKET_DATA_NETWORK_ENABLED": self._old_market_network,
         }.items():
             if value is None:
                 os.environ.pop(key, None)
@@ -68,6 +71,20 @@ class KlineCacheTest(unittest.TestCase):
             os.environ["SCANNER_MARKET_CACHE_MAX_AGE_SEC"] = "7200"
             self.assertEqual(["BTCUSDT", "ETHUSDT"], cached_top_symbols(cache, 2))
             self.assertEqual(7200, market_cache_max_age_seconds())
+
+    def test_market_data_network_flag_follows_kline_cache_only_staging(self):
+        os.environ.pop("SCANNER_MARKET_DATA_NETWORK_ENABLED", None)
+        os.environ.pop("SCANNER_KLINE_NETWORK_ENABLED", None)
+        self.assertTrue(market_data_network_enabled())
+
+        os.environ["SCANNER_KLINE_NETWORK_ENABLED"] = "0"
+        self.assertFalse(market_data_network_enabled())
+
+        os.environ["SCANNER_MARKET_DATA_NETWORK_ENABLED"] = "1"
+        self.assertTrue(market_data_network_enabled())
+
+        os.environ["SCANNER_MARKET_DATA_NETWORK_ENABLED"] = "false"
+        self.assertFalse(market_data_network_enabled())
 
 
 if __name__ == "__main__":

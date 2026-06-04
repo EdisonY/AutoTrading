@@ -17,6 +17,13 @@ def market_cache_max_age_seconds(default: int = 45) -> int:
         return int(default)
 
 
+def market_data_network_enabled() -> bool:
+    raw = os.environ.get("SCANNER_MARKET_DATA_NETWORK_ENABLED")
+    if raw is None:
+        raw = os.environ.get("SCANNER_KLINE_NETWORK_ENABLED", "1")
+    return str(raw).strip().lower() not in {"0", "false", "no", "off"}
+
+
 def load_market_cache(path: Path | None = None, *, max_age_seconds: int = 45) -> dict[str, Any]:
     cache_path = path or DEFAULT_CACHE
     try:

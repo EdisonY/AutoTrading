@@ -31,7 +31,7 @@ from core.execution_engine import CloseRequest, ExecutionEngine, OpenRequest
 from core.exchange_state import count_active_positions, count_side_positions, find_symbol_position, usdt_balance_summary
 from core.event_store import EventStoreWriter
 from core.market_watchlist import load_sentinel_context
-from core.market_data_cache import cached_available_symbols, cached_top_symbols
+from core.market_data_cache import cached_available_symbols, cached_top_symbols, market_data_network_enabled
 from core.kline_cache import kline_network_enabled, load_cached_klines, save_cached_klines
 from core.binance_api_guard import record_public_response, wait_before_public_request
 from core.binance_api_queue_client import api_queue_client_enabled, queued_api_request
@@ -555,6 +555,9 @@ def fetch_top_symbols(n=50):
     cached = cached_top_symbols(PROJECT_ROOT / "runtime" / "market_data_cache.json", n)
     if cached:
         return cached
+    if not market_data_network_enabled():
+        logger.warning("fetch_top_symbols: staged cache-only mode, no cached market symbols")
+        return []
     url = "https://testnet.binancefuture.com/fapi/v1/ticker/24hr"
     try:
         raw = fetch_json(url)
@@ -571,6 +574,9 @@ def fetch_available_symbols():
     cached = cached_available_symbols(PROJECT_ROOT / "runtime" / "market_data_cache.json")
     if cached:
         return cached
+    if not market_data_network_enabled():
+        logger.warning("fetch_available_symbols: staged cache-only mode, no cached available symbols")
+        return set()
     url = "https://testnet.binancefuture.com/fapi/v1/ticker/24hr"
     try:
         raw = fetch_json(url)

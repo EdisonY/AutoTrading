@@ -16,6 +16,8 @@
 
 2026-06-04 A order-enabled 与 B/C 加速规则补充：A/v11 已完成一个 order-disabled 90 秒窗口和一个 order-enabled 120 秒窗口；两次都保持小宇宙/cache-only，A 随后停止，queue 到 row `565` 仍无 pending/cooldown，A ticker rows `561/564` 都是 `done/200`，journal 无 `418/429/-1003`。B/C 不再尝试 signed baseline 加速，避免重现 B/v16 baseline cooldown；新增默认关闭的 `BINANCE_ACCOUNT_STATE_ALLOW_STALE_EMPTY_TESTNET=1` 只用于 Testnet staged。启用后，入场前风险 cache 可以把 stale 且空仓的 placeholder 当作空账户并注入测试余额；确认路径仍使用严格 central account-state，必须有真实 order 后 user-stream/ACCOUNT_UPDATE 才可通过。下一步 B/C staged 顺序：先部署代码和 drop-in，B order-disabled 短窗口，查 queue/cooldown/journal；再 C order-disabled；若干净，再逐个临时 order-enabled 小窗口。任一步出现 pending 堆积、cooldown 或 418/429/-1003，立即停 scanner 并记录。
 
+2026-06-04 B/C order-enabled 与 account-snapshot 恢复规则补充：B/v16 `18:55:18-18:56:48 CST` 与 C/v14 `18:57:27-18:58:58 CST` 已逐个完成 order-enabled staged 小窗口，期间 cache/sentinel/account-snapshot 停止，窗口后 scanner 立停；queue 仍为 row `572`，pending/cooldowns 空，无新增 Binance queue row，journal 无 `418/429/-1003/Traceback/ImportError/SyntaxError`。account-snapshot 恢复不可回到 signed balance/positionRisk 轮询；新增 `ACCOUNT_SNAPSHOT_SOURCE=central`，只读 `runtime/account_state_latest.json` 生成 `account_snapshot_latest.json` 与 HTML，不调用 Binance。该模式用于第一版状态面恢复；full signed snapshot polling 只能在 post-launch 扩量阶段另行小窗验收。
+
 ### Long-term P0 - 必须先完成
 
 1. **P0-A Binance API 根治**

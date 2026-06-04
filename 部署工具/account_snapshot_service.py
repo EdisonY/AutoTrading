@@ -29,8 +29,10 @@ if (ROOT / "交易客户端").exists():
 
 from account_snapshot_html import ACCOUNTS, api_error_payload, build_html, parse_balance, position_row
 from core.audit_log import write_jsonl_with_daily_shard
+from core.account_state import normalize_account_row, read_account_state_payload
 from core.binance_api_guard import current_cooldown_seconds
 from core.event_store import insert_account_snapshot
+from core.position_utils import leveraged_loss_pct
 
 
 CST = timezone(timedelta(hours=8))
@@ -44,6 +46,112 @@ A_V11_MARGIN_TOLERANCE_PCT = 0.05
 BAN_UNTIL_RE = re.compile(r"banned until\s+(\d{12,})", re.IGNORECASE)
 BAN_RESUME_PADDING_SECONDS = 5 * 60
 ACCOUNT_COLLECTION_GAP_SECONDS = max(0.0, float(os.environ.get("ACCOUNT_SNAPSHOT_ACCOUNT_GAP_SEC", "65")))
+
+
+def central_snapshot_source_enabled() -> bool:
+    value = os.environ.get("ACCOUNT_SNAPSHOT_SOURCE", "").strip().lower()
+    return value in {"central", "central-only", "central_only", "account-state", "account_state"}
+
+
+def _spec_by_strategy() -> dict[str, tuple[str, str, str, float]]:
+    return {f"{key}/{version}".upper(): (key, version, desc, hard) for key, version, desc, *_rest, hard in ACCOUNTS}
+
+
+def _position_from_central(row: dict[str, Any]) -> dict[str, Any]:
+    qty = abs(float(row.get("qty") or row.get("positionAmt") or 0))
+    side = str(row.get("side") or row.get("positionSide") or "").upper()
+    if side not in {"LONG", "SHORT"}:
+        side = "SHORT" if float(row.get("positionAmt") or 0) < 0 else "LONG"
+    entry = float(row.get("entry") or row.get("entryPrice") or 0)
+    mark = float(row.get("mark") or row.get("markPrice") or 0)
+    lev = float(row.get("lev") or row.get("leverage") or 0)
+    notional = abs(float(row.get("notional") or row.get("notionalValue") or 0))
+    if notional <= 0 and qty > 0 and mark > 0:
+        notional = qty * mark
+    normalized = {
+        "symbol": str(row.get("symbol") or "").upper(),
+        "side": side,
+        "raw_side": str(row.get("raw_position_side") or row.get("positionSide") or side).upper(),
+        "side_source": str(row.get("side_source") or "central_account_state"),
+        "side_mismatch": False,
+        "upnl_source": str(row.get("upnl_source") or "central_account_state"),
+        "qty": qty,
+        "entry": entry,
+        "mark": mark,
+        "upnl": float(row.get("upnl") or row.get("unrealizedProfit") or 0),
+        "lev": lev,
+        "notional": notional,
+        "margin": (notional / lev) if lev > 0 else float(row.get("margin") or 0),
+    }
+    position_risk_like = {
+        "positionAmt": str(-qty if side == "SHORT" else qty),
+        "positionSide": side,
+        "entryPrice": str(entry),
+        "markPrice": str(mark),
+        "leverage": str(lev),
+        "unrealizedProfit": str(normalized["upnl"]),
+        "notional": str(-notional if side == "SHORT" else notional),
+    }
+    normalized["loss"] = leveraged_loss_pct(position_risk_like, side)
+    return normalized
+
+
+def _account_from_central_state(row: dict[str, Any]) -> dict[str, Any]:
+    normalized = normalize_account_row(row)
+    specs = _spec_by_strategy()
+    key, version, desc, hard = specs.get(
+        str(normalized.get("strategy") or "").upper(),
+        (
+            str(normalized.get("account") or ""),
+            str(normalized.get("version") or ""),
+            str(normalized.get("desc") or ""),
+            0.0,
+        ),
+    )
+    positions = [
+        _position_from_central(pos)
+        for pos in normalized.get("positions") or []
+        if isinstance(pos, dict) and str(pos.get("symbol") or "")
+    ]
+    positions.sort(key=lambda item: item["upnl"])
+    return {
+        "key": key,
+        "version": version,
+        "desc": desc or str(normalized.get("desc") or ""),
+        "hard": hard,
+        "wallet": float(normalized.get("wallet_usdt") or 0),
+        "available": float(normalized.get("available_usdt") or 0),
+        "margin": float(normalized.get("margin_usdt") or 0),
+        "positions": positions,
+        "upnl": float(normalized.get("unrealized_pnl_usdt") or sum(pos["upnl"] for pos in positions)),
+        "longs": int(normalized.get("longs") or sum(1 for pos in positions if pos["side"] == "LONG")),
+        "shorts": int(normalized.get("shorts") or sum(1 for pos in positions if pos["side"] == "SHORT")),
+        "notional": float(normalized.get("notional_usdt") or sum(pos["notional"] for pos in positions)),
+        "used_margin": float(normalized.get("used_margin_usdt") or sum(pos["margin"] for pos in positions)),
+        "over_hard": int(normalized.get("hard_stop_risk_count") or sum(1 for pos in positions if pos["loss"] >= hard)),
+        "stale": bool(normalized.get("stale")),
+        "snapshot_ts": normalized.get("ts"),
+        "snapshot_error": normalized.get("snapshot_error") or ("central account state stale" if normalized.get("stale") else ""),
+    }
+
+
+def collect_accounts_from_central_state() -> tuple[list[dict[str, Any]], list[str]]:
+    payload = read_account_state_payload(ROOT, allow_legacy=False)
+    if not payload:
+        raise RuntimeError("central account state missing for account snapshot central source")
+    accounts = [_account_from_central_state(row) for row in payload.get("accounts") or [] if isinstance(row, dict)]
+    expected = {key for key, *_rest in ACCOUNTS}
+    present = {str(account.get("key") or "") for account in accounts}
+    for key, version, desc, _module_name, _class_name, hard in ACCOUNTS:
+        if key not in present:
+            accounts.append(_empty_error_account(key, version, desc, hard, "central account state row missing"))
+    accounts.sort(key=lambda account: ["A", "B", "C"].index(str(account.get("key"))) if str(account.get("key")) in expected else 99)
+    errors = [
+        str(account.get("snapshot_error") or f"{account.get('key')}/{account.get('version')} central account state stale")
+        for account in accounts
+        if account.get("stale") or account.get("snapshot_error")
+    ]
+    return accounts, errors
 
 
 def _sizing_violations(account: dict[str, Any], positions: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -292,7 +400,10 @@ def all_failures_are_missing_env(errors: list[str], rows: list[dict[str, Any]]) 
 
 def collect_once() -> list[dict[str, Any]]:
     ts = datetime.now(CST)
-    accounts, errors = collect_accounts_resilient()
+    if central_snapshot_source_enabled():
+        accounts, errors = collect_accounts_from_central_state()
+    else:
+        accounts, errors = collect_accounts_resilient()
     rows = [_snapshot_payload(account, ts) for account in accounts]
     if all_failures_are_missing_env(errors, rows):
         write_snapshot_error(RuntimeError("; ".join(errors)))

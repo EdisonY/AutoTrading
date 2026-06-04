@@ -19,7 +19,7 @@ import json
 import sqlite3
 import sys
 from datetime import datetime, timezone, timedelta
-from http.server import HTTPServer, BaseHTTPRequestHandler
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -352,6 +352,11 @@ class AttentionHandler(BaseHTTPRequestHandler):
         print(f"[{now_iso()}] {format % args}", flush=True)
 
 
+class AttentionHTTPServer(ThreadingHTTPServer):
+    daemon_threads = True
+    request_queue_size = 64
+
+
 def main(argv: list[str] | None = None) -> int:
     import argparse
     parser = argparse.ArgumentParser(description="Attention API Server")
@@ -363,7 +368,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.db:
         EVENT_STORE_DB = Path(args.db)
 
-    server = HTTPServer(("0.0.0.0", args.port), AttentionHandler)
+    server = AttentionHTTPServer(("0.0.0.0", args.port), AttentionHandler)
     print(f"Attention API server listening on port {args.port}", flush=True)
     print(f"Database: {EVENT_STORE_DB}", flush=True)
     try:

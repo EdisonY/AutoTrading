@@ -364,6 +364,7 @@ ALIYUN_COMPONENTS: dict[str, dict[str, Any]] = {
             file_pair("部署工具/aliyun_shadow_review.sh", "run_shadow_review.sh"),
             file_pair("部署工具/systemd/crypto-decision-portal-refresh.service", "systemd/crypto-decision-portal-refresh.service"),
             file_pair("部署工具/systemd/crypto-decision-portal-refresh.timer", "systemd/crypto-decision-portal-refresh.timer"),
+            file_pair("部署工具/systemd/crypto-attention-api.service", "systemd/crypto-attention-api.service"),
             file_pair("部署工具/signal_quality_review.py", "signal_quality_review.py"),
             file_pair("部署工具/strategy_evolution_gate.py", "strategy_evolution_gate.py"),
             file_pair("research_memory/approvals/manual_actions.jsonl", "research_memory/approvals/manual_actions.jsonl"),
@@ -375,6 +376,7 @@ ALIYUN_COMPONENTS: dict[str, dict[str, Any]] = {
         "post": [
             "chmod +x {root}/aliyun_analysis_refresh.sh {root}/run_shadow_review.sh {root}/aliyun_decision_portal_refresh.sh",
             "sudo cp systemd/crypto-decision-portal-refresh.service /etc/systemd/system/crypto-decision-portal-refresh.service && sudo cp systemd/crypto-decision-portal-refresh.timer /etc/systemd/system/crypto-decision-portal-refresh.timer && sudo systemctl daemon-reload && sudo systemctl enable --now crypto-decision-portal-refresh.timer",
+            "sudo cp systemd/crypto-attention-api.service /etc/systemd/system/crypto-attention-api.service && sudo systemctl daemon-reload",
         ],
     }
 }

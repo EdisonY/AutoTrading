@@ -72,6 +72,7 @@ UPLOADS = [
     (ROOT / "部署工具" / "aliyun_shadow_review.sh", f"{REMOTE_DIR}/run_shadow_review.sh"),
     (ROOT / "部署工具" / "systemd" / "crypto-decision-portal-refresh.service", f"{REMOTE_DIR}/systemd/crypto-decision-portal-refresh.service"),
     (ROOT / "部署工具" / "systemd" / "crypto-decision-portal-refresh.timer", f"{REMOTE_DIR}/systemd/crypto-decision-portal-refresh.timer"),
+    (ROOT / "部署工具" / "systemd" / "crypto-attention-api.service", f"{REMOTE_DIR}/systemd/crypto-attention-api.service"),
 ]
 
 
@@ -144,6 +145,7 @@ WantedBy=timers.target
         f"cp {REMOTE_DIR}/systemd/crypto-decision-portal-refresh.service /etc/systemd/system/crypto-decision-portal-refresh.service "
         f"&& cp {REMOTE_DIR}/systemd/crypto-decision-portal-refresh.timer /etc/systemd/system/crypto-decision-portal-refresh.timer",
     )
+    run(client, f"cp {REMOTE_DIR}/systemd/crypto-attention-api.service /etc/systemd/system/crypto-attention-api.service")
     run(client, "systemctl daemon-reload")
     run(client, "systemctl enable crypto-shadow-review.timer")
     run(client, "systemctl restart crypto-shadow-review.timer")

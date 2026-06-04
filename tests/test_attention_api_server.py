@@ -187,6 +187,13 @@ class AttentionApiServerTests(unittest.TestCase):
         self.assertIsNone(self.tool.resolve_static_path("/api/attention"))
         self.assertIsNone(self.tool.resolve_static_path("/reports/../runtime/event_store.sqlite3"))
 
+    def test_systemd_unit_uses_local_attention_db(self):
+        unit = ROOT / "部署工具" / "systemd" / "crypto-attention-api.service"
+        text = unit.read_text(encoding="utf-8")
+
+        self.assertIn("attention_api_server.py --port 8090", text)
+        self.assertNotIn("server_logs_tencent/runtime/event_store.sqlite3", text)
+
 
 if __name__ == "__main__":
     unittest.main()

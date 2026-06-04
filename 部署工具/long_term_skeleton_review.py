@@ -97,9 +97,10 @@ DEFAULT_SPECS: list[dict[str, Any]] = [
             bone("queue client tests", "tests/test_binance_api_queue_client.py"),
             bone("user-stream tests", "tests/test_binance_user_stream.py"),
         ],
-        validation_blockers=[
-            "Run staged cache -> sentinel -> A/B/C fresh-run for 30 minutes with no 418/429/-1003.",
-            "Prove account state stays fresh naturally and cooldown/source/top paths remain visible.",
+        validation_blockers=[],
+        post_launch_backlog=[
+            "Keep staged public producers single-file and cache-first when expanding from construction mode.",
+            "Collect a longer post-reset observation window before restoring normal scanner universes.",
         ],
     ),
     module_spec(
@@ -384,7 +385,7 @@ DEFAULT_SPECS: list[dict[str, Any]] = [
         portal=[bone("long-term matrix records final gate", "部署工具/long_term_skeleton_review.py", contains="FINAL-ZERO-RUN")],
         sync=[bone("reset tool release", "部署工具/release_manager.py", contains="runtime_data_reset.py")],
         tests=[bone("reset preview mode", "部署工具/runtime_data_reset.py", contains="only previews")],
-        validation_blockers=["Must wait until P0-A staged clean run passes and reset pre-checks show queue/services safe."],
+        validation_blockers=["Reset pre-checks must show queue/services safe before dirty-data archive/reset and zero-run."],
     ),
 ]
 

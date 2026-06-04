@@ -31,6 +31,13 @@ class ReleaseManagerBundleTests(unittest.TestCase):
 
                 self.assertTrue(expected.issubset(remotes))
 
+    def test_tencent_binance_components_include_start_guard(self):
+        for component in ("sentinel", "account", "account-state", "api-queue", "user-stream", "all"):
+            with self.subTest(component=component):
+                remotes = {remote for _local, remote in self.tool.TENCENT_COMPONENTS[component]["files"]}
+
+                self.assertIn("binance_start_guard.py", remotes)
+
 
 if __name__ == "__main__":
     unittest.main()

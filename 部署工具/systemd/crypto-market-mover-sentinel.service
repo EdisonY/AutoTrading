@@ -10,8 +10,10 @@ WorkingDirectory=/opt/crypto-auto-trader
 Environment=LEGACY_JSONL_ENABLED=0
 Environment=PYTHONUNBUFFERED=1
 Environment=SENTINEL_CONSOLE_LOG_LEVEL=WARNING
+ExecStartPre=/opt/crypto-auto-trader/.venv/bin/python /opt/crypto-auto-trader/binance_start_guard.py --scope public
 ExecStart=/opt/crypto-auto-trader/.venv/bin/python -u /opt/crypto-auto-trader/market_mover_sentinel.py --root /opt/crypto-auto-trader --interval 300
 Restart=always
+RestartPreventExitStatus=75
 RestartSec=5
 
 [Install]

@@ -8,8 +8,10 @@ Type=simple
 User=ubuntu
 WorkingDirectory=/opt/crypto-auto-trader
 EnvironmentFile=-/etc/crypto-auto-trader/trading.env
+ExecStartPre=/opt/crypto-auto-trader/.venv/bin/python /opt/crypto-auto-trader/binance_start_guard.py --scope signed --account B/v16
 ExecStart=/opt/crypto-auto-trader/.venv/bin/python -u /opt/crypto-auto-trader/binance_user_stream_service.py --strategy B/v16 --account B --apply-state
 Restart=on-failure
+RestartPreventExitStatus=75
 RestartSec=10
 
 [Install]

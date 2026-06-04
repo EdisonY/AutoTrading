@@ -6,7 +6,9 @@
 
 本节是后续自动推进的优先级来源。这里的 P 级是长期工程优先级，不是入口页 attention priority。旧阶段清单仍保留历史上下文；如冲突，以本节顺序为准。
 
-2026-06-04 骨架验收规则补充：第一版先看骨头，不扩肉。`long_term_skeleton_review.py` 本地 strict 检查 143/143 bones；P0-A/P0-B first-version gates 已通过后，最新矩阵为 `skeleton_ready=11`、`blocked_by_staged_validation=1`、`validation_blockers=1`、`post_launch_backlog=17`，唯一第一版 blocker 是 FINAL reset/zero-run。远端 Tencent/Aliyun 扁平 release root 只负责展示/施工态验收，路径通过 `部署工具/ -> root`、`策略文件/ -> root`、`交易客户端/ -> root`、`部署工具/systemd/ -> systemd/` 解析；只要 root 有扁平入口脚本，即使残留 `部署工具/` 目录也按扁平部署处理。扁平 root 文件优先于残留 repo-shaped 旧拷贝，原 repo 路径只作 fallback。Tencent `research` / `all` release bundle 必须包含 skeleton matrix 会检查的报告源文件，包括 `strategy_truth_ledger.py` 与 `sentinel_quality_review.py`。未部署到 runtime 节点的源码/测试骨架按本地 strict 验收结果视为 repo-only bone。所有优化项继续写入 post-launch backlog，不作为第一版阻塞。
+2026-06-04 骨架验收规则补充：第一版先看骨头，不扩肉。`long_term_skeleton_review.py` 本地 strict 检查 143/143 bones；FINAL foundation zero-run 后矩阵为 `skeleton_ready=12`、`blocked_by_staged_validation=0`、`validation_blockers=0`、`post_launch_backlog=19`。第一版骨架已落地，当前工作是 post-launch staged restoration 与上线后证据收集。远端 Tencent/Aliyun 扁平 release root 只负责展示/施工态验收，路径通过 `部署工具/ -> root`、`策略文件/ -> root`、`交易客户端/ -> root`、`部署工具/systemd/ -> systemd/` 解析；只要 root 有扁平入口脚本，即使残留 `部署工具/` 目录也按扁平部署处理。扁平 root 文件优先于残留 repo-shaped 旧拷贝，原 repo 路径只作 fallback。Tencent `research` / `all` release bundle 必须包含 skeleton matrix 会检查的报告源文件，包括 `strategy_truth_ledger.py` 与 `sentinel_quality_review.py`。未部署到 runtime 节点的源码/测试骨架按本地 strict 验收结果视为 repo-only bone。所有优化项继续写入 post-launch backlog，不作为第一版阻塞。
+
+2026-06-04 冷却期恢复规则补充：当前 B/v16 signed baseline 触发 `HTTP 418/-1003` 后，恢复暂停到 `2026-06-04 15:15:54.959 +08` 后再做只读检查。冷却期间可做离线小修；新增 `binance_start_guard.py` 作为 Binance-facing systemd unit 的本地 `ExecStartPre`，只读 queue cooldown DB，冷却中阻止 queue/user-stream/cache/sentinel/account-snapshot 误启动，不调用 Binance。它是安全带，不是恢复许可；主线恢复仍按 queue/service/journal clean check 后单步推进。
 
 ### Long-term P0 - 必须先完成
 

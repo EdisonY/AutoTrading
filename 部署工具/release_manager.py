@@ -181,6 +181,7 @@ TENCENT_COMPONENTS: dict[str, dict[str, Any]] = {
     "sentinel": {
         "files": CORE_FILES
         + [
+            file_pair("部署工具/binance_start_guard.py", "binance_start_guard.py"),
             file_pair("策略文件/market_mover_sentinel.py", "market_mover_sentinel.py"),
             file_pair("策略文件/market_data_service.py", "market_data_service.py"),
             file_pair("部署工具/systemd/crypto-market-data-cache.service", "systemd/crypto-market-data-cache.service"),
@@ -194,20 +195,26 @@ TENCENT_COMPONENTS: dict[str, dict[str, Any]] = {
     "account": {
         "files": CORE_FILES
         + [
+            file_pair("部署工具/binance_start_guard.py", "binance_start_guard.py"),
             file_pair("部署工具/account_snapshot_service.py", "account_snapshot_service.py"),
             file_pair("部署工具/account_state_service.py", "account_state_service.py"),
             file_pair("部署工具/account_snapshot_html.py", "account_snapshot_html.py"),
             file_pair("部署工具/systemd/crypto-account-state.service", "systemd/crypto-account-state.service"),
+            file_pair("部署工具/systemd/crypto-account-snapshot-api-throttle.conf", "systemd/crypto-account-snapshot-api-throttle.conf"),
             file_pair("交易客户端/binance_client.py", "binance_client.py"),
             file_pair("交易客户端/binance_client_v2.py", "binance_client_v2.py"),
             file_pair("交易客户端/binance_client_v3.py", "binance_client_v3.py"),
         ],
         "services": ["crypto-account-snapshot.service"],
-        "post": ['{python} -c "import account_snapshot_service; print(\'account_snapshot_service import ok\')"'],
+        "post": [
+            '{python} -c "import account_snapshot_service; print(\'account_snapshot_service import ok\')"',
+            "sudo mkdir -p /etc/systemd/system/crypto-account-snapshot.service.d && sudo cp systemd/crypto-account-snapshot-api-throttle.conf /etc/systemd/system/crypto-account-snapshot.service.d/10-api-throttle.conf && sudo systemctl daemon-reload",
+        ],
     },
     "account-state": {
         "files": CORE_FILES
         + [
+            file_pair("部署工具/binance_start_guard.py", "binance_start_guard.py"),
             file_pair("部署工具/account_snapshot_service.py", "account_snapshot_service.py"),
             file_pair("部署工具/account_state_service.py", "account_state_service.py"),
             file_pair("部署工具/account_snapshot_html.py", "account_snapshot_html.py"),
@@ -225,6 +232,7 @@ TENCENT_COMPONENTS: dict[str, dict[str, Any]] = {
     "api-queue": {
         "files": CORE_FILES
         + [
+            file_pair("部署工具/binance_start_guard.py", "binance_start_guard.py"),
             file_pair("部署工具/binance_api_queue_service.py", "binance_api_queue_service.py"),
             file_pair("部署工具/systemd/crypto-binance-api-queue.service", "systemd/crypto-binance-api-queue.service"),
         ],
@@ -237,6 +245,7 @@ TENCENT_COMPONENTS: dict[str, dict[str, Any]] = {
     "user-stream": {
         "files": CORE_FILES
         + [
+            file_pair("部署工具/binance_start_guard.py", "binance_start_guard.py"),
             file_pair("部署工具/binance_user_stream_service.py", "binance_user_stream_service.py"),
             file_pair("部署工具/systemd/crypto-binance-user-stream.service", "systemd/crypto-binance-user-stream.service"),
             file_pair("部署工具/systemd/crypto-binance-user-stream-v16.service", "systemd/crypto-binance-user-stream-v16.service"),

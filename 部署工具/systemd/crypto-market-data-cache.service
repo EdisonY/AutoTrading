@@ -8,8 +8,10 @@ Type=simple
 User=ubuntu
 WorkingDirectory=/opt/crypto-auto-trader
 Environment=PYTHONUNBUFFERED=1
+ExecStartPre=/opt/crypto-auto-trader/.venv/bin/python /opt/crypto-auto-trader/binance_start_guard.py --scope public
 ExecStart=/opt/crypto-auto-trader/.venv/bin/python -u /opt/crypto-auto-trader/market_data_service.py --root /opt/crypto-auto-trader --interval 300 --top-limit 180
 Restart=always
+RestartPreventExitStatus=75
 RestartSec=5
 
 [Install]

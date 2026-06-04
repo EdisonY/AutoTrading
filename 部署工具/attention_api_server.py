@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import mimetypes
 import sqlite3
 import sys
 from datetime import datetime, timezone, timedelta
@@ -36,6 +37,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 ROOT = SCRIPT_DIR.parent if SCRIPT_DIR.name == "部署工具" else SCRIPT_DIR
 EVENT_STORE_DB = ROOT / "runtime" / "event_store.sqlite3"
 ATTENTION_JSON = ROOT / "research_memory" / "attention" / "open_items.json"
+REPORTS_DIR = ROOT / "reports"
 PORT = 8090
 
 
@@ -288,6 +290,35 @@ def export_attention_json() -> None:
     ATTENTION_JSON.write_text(json.dumps(payload, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
 
 
+def refresh_decision_portal() -> None:
+    try:
+        import decision_portal
+
+        decision_portal.main(["--out-dir", str(REPORTS_DIR)])
+    except Exception as exc:
+        print(f"[{now_iso()}] decision portal refresh failed: {exc}", flush=True)
+
+
+def resolve_static_path(request_path: str) -> Path | None:
+    if request_path in {"", "/", "/index.html", "/reports", "/reports/"}:
+        candidate = REPORTS_DIR / "index.html"
+    elif request_path.startswith("/reports/"):
+        relative = request_path.removeprefix("/reports/").lstrip("/")
+        if not relative:
+            relative = "index.html"
+        candidate = REPORTS_DIR / relative
+    else:
+        return None
+    try:
+        resolved = candidate.resolve()
+        reports = REPORTS_DIR.resolve()
+        if resolved != reports and reports not in resolved.parents:
+            return None
+        return resolved
+    except Exception:
+        return None
+
+
 class AttentionHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         parsed = urlparse(self.path)
@@ -297,7 +328,16 @@ class AttentionHandler(BaseHTTPRequestHandler):
             items = load_attention_items()
             self._json_response({"ok": True, "items": items, "count": len(items)})
         else:
-            self._json_response({"error": "Not found"}, 404)
+            self._static_response(parsed.path)
+
+    def do_HEAD(self):
+        parsed = urlparse(self.path)
+        if parsed.path == "/api/health":
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.end_headers()
+            return
+        self._static_response(parsed.path, head_only=True)
 
     def do_POST(self):
         parsed = urlparse(self.path)
@@ -319,6 +359,7 @@ class AttentionHandler(BaseHTTPRequestHandler):
                 return
             result = acknowledge_item(item_id, user)
             export_attention_json()
+            refresh_decision_portal()
             self._json_response(result)
 
         elif parsed.path == "/api/attention/resolve":
@@ -327,6 +368,7 @@ class AttentionHandler(BaseHTTPRequestHandler):
                 return
             result = resolve_item(item_id, user)
             export_attention_json()
+            refresh_decision_portal()
             self._json_response(result)
 
         else:
@@ -340,6 +382,25 @@ class AttentionHandler(BaseHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
         self.end_headers()
         self.wfile.write(json.dumps(data, ensure_ascii=False, default=str).encode("utf-8"))
+
+    def _static_response(self, request_path: str, status: int = 200, head_only: bool = False):
+        path = resolve_static_path(request_path)
+        if not path or not path.exists() or not path.is_file():
+            self._json_response({"error": "Not found"}, 404)
+            return
+        content_type = mimetypes.guess_type(str(path))[0]
+        if not content_type:
+            content_type = "text/markdown" if path.suffix == ".md" else "application/octet-stream"
+        if content_type.startswith("text/") or path.suffix in {".html", ".json", ".md"}:
+            content_type += "; charset=utf-8"
+        data = b"" if head_only else path.read_bytes()
+        self.send_response(status)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Content-Length", str(path.stat().st_size))
+        self.end_headers()
+        if not head_only:
+            self.wfile.write(data)
 
     def do_OPTIONS(self):
         self.send_response(204)

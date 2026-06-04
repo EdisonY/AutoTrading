@@ -34,12 +34,15 @@ class AttentionApiServerTests(unittest.TestCase):
         self.attention_json.parent.mkdir(parents=True)
         self.old_db = self.tool.EVENT_STORE_DB
         self.old_json = self.tool.ATTENTION_JSON
+        self.old_reports = self.tool.REPORTS_DIR
         self.tool.EVENT_STORE_DB = self.db
         self.tool.ATTENTION_JSON = self.attention_json
+        self.tool.REPORTS_DIR = self.root / "reports"
 
     def tearDown(self):
         self.tool.EVENT_STORE_DB = self.old_db
         self.tool.ATTENTION_JSON = self.old_json
+        self.tool.REPORTS_DIR = self.old_reports
         self.tmp.cleanup()
 
     def seed_current_schema(self):
@@ -169,6 +172,20 @@ class AttentionApiServerTests(unittest.TestCase):
         self.assertEqual(item["status"], "acknowledged")
         self.assertTrue(item["acknowledged_at"])
         self.assertEqual(item["acknowledged_reason"], "portal:acknowledged")
+
+    def test_static_report_path_resolution_blocks_traversal(self):
+        reports = self.tool.REPORTS_DIR
+        reports.mkdir(parents=True)
+        (reports / "index.html").write_text("home", encoding="utf-8")
+        (reports / "portal_latest.html").write_text("detail", encoding="utf-8")
+
+        self.assertEqual(self.tool.resolve_static_path("/"), (reports / "index.html").resolve())
+        self.assertEqual(
+            self.tool.resolve_static_path("/reports/portal_latest.html"),
+            (reports / "portal_latest.html").resolve(),
+        )
+        self.assertIsNone(self.tool.resolve_static_path("/api/attention"))
+        self.assertIsNone(self.tool.resolve_static_path("/reports/../runtime/event_store.sqlite3"))
 
 
 if __name__ == "__main__":

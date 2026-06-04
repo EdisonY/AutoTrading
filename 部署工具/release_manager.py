@@ -137,6 +137,7 @@ TENCENT_COMPONENTS: dict[str, dict[str, Any]] = {
             file_pair("部署工具/acknowledge_attention_items.py", "acknowledge_attention_items.py"),
             file_pair("部署工具/long_term_skeleton_review.py", "long_term_skeleton_review.py"),
             file_pair("部署工具/portal_dashboard.py", "portal_dashboard.py"),
+            file_pair("部署工具/decision_portal.py", "decision_portal.py"),
             file_pair("部署工具/portal_refresh_service.py", "portal_refresh_service.py"),
             file_pair("部署工具/system_alerts.py", "system_alerts.py"),
         ],
@@ -333,6 +334,7 @@ ALIYUN_COMPONENTS: dict[str, dict[str, Any]] = {
             file_pair("部署工具/cleanup_event_store.py", "cleanup_event_store.py"),
             file_pair("部署工具/data_maintenance.py", "data_maintenance.py"),
             file_pair("部署工具/portal_dashboard.py", "portal_dashboard.py"),
+            file_pair("部署工具/decision_portal.py", "decision_portal.py"),
             file_pair("部署工具/research_memory_builder.py", "research_memory_builder.py"),
             file_pair("部署工具/research_kline_features.py", "research_kline_features.py"),
             file_pair("部署工具/research_kline_backfill.py", "research_kline_backfill.py"),
@@ -358,7 +360,10 @@ ALIYUN_COMPONENTS: dict[str, dict[str, Any]] = {
             file_pair("部署工具/sync_aliyun_reports_to_tencent.py", "sync_aliyun_reports_to_tencent.py"),
             file_pair("部署工具/attention_api_server.py", "attention_api_server.py"),
             file_pair("部署工具/aliyun_analysis_refresh.sh", "aliyun_analysis_refresh.sh"),
+            file_pair("部署工具/aliyun_decision_portal_refresh.sh", "aliyun_decision_portal_refresh.sh"),
             file_pair("部署工具/aliyun_shadow_review.sh", "run_shadow_review.sh"),
+            file_pair("部署工具/systemd/crypto-decision-portal-refresh.service", "systemd/crypto-decision-portal-refresh.service"),
+            file_pair("部署工具/systemd/crypto-decision-portal-refresh.timer", "systemd/crypto-decision-portal-refresh.timer"),
             file_pair("部署工具/signal_quality_review.py", "signal_quality_review.py"),
             file_pair("部署工具/strategy_evolution_gate.py", "strategy_evolution_gate.py"),
             file_pair("research_memory/approvals/manual_actions.jsonl", "research_memory/approvals/manual_actions.jsonl"),
@@ -366,8 +371,11 @@ ALIYUN_COMPONENTS: dict[str, dict[str, Any]] = {
             file_pair("research_memory/approvals/approve_full_live_A_v11_trailing_pullback_2026-05-29.json", "research_memory/approvals/approve_full_live_A_v11_trailing_pullback_2026-05-29.json"),
             file_pair("research_memory/approvals/approve_full_live_B_v16_sample_expansion_2026-05-31.json", "research_memory/approvals/approve_full_live_B_v16_sample_expansion_2026-05-31.json"),
         ],
-        "services": [],
-        "post": ["chmod +x {root}/aliyun_analysis_refresh.sh {root}/run_shadow_review.sh"],
+        "services": ["crypto-attention-api.service"],
+        "post": [
+            "chmod +x {root}/aliyun_analysis_refresh.sh {root}/run_shadow_review.sh {root}/aliyun_decision_portal_refresh.sh",
+            "sudo cp systemd/crypto-decision-portal-refresh.service /etc/systemd/system/crypto-decision-portal-refresh.service && sudo cp systemd/crypto-decision-portal-refresh.timer /etc/systemd/system/crypto-decision-portal-refresh.timer && sudo systemctl daemon-reload && sudo systemctl enable --now crypto-decision-portal-refresh.timer",
+        ],
     }
 }
 ALIYUN_COMPONENTS["all"] = ALIYUN_COMPONENTS["shadow"]

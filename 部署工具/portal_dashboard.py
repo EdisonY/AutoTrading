@@ -4228,10 +4228,12 @@ def main(argv: list[str] | None = None) -> int:
     html_text = render_html(out_dir)
     latest = out_dir / "portal_latest.html"
     latest.write_text(html_text, encoding="utf-8")
-    index = out_dir / "index.html"
-    index.write_text(html_text, encoding="utf-8")
+
+    import decision_portal
+
+    decision_portal.main(["--out-dir", str(out_dir)])
     print(f"总入口已生成: {latest}")
-    print(f"Index: {index}")
+    print(f"Index: {out_dir / 'index.html'}")
     return 0
 
 

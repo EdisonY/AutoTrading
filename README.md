@@ -49,7 +49,7 @@ python -m pip install -r requirements.txt
 3. Compile the current core scripts before editing:
 
 ```powershell
-python -m py_compile 部署工具\decision_attention.py 部署工具\portal_dashboard.py 部署工具\portal_refresh_service.py 部署工具\system_alerts.py 部署工具\pull_live_context.py 部署工具\release_manager.py
+python -m py_compile 部署工具\decision_attention.py 部署工具\decision_portal.py 部署工具\portal_dashboard.py 部署工具\portal_refresh_service.py 部署工具\system_alerts.py 部署工具\pull_live_context.py 部署工具\release_manager.py
 ```
 
 4. Read `PROJECT_STATE.md` and `research_memory/attention/open_items.json` before changing strategy behavior.
@@ -76,8 +76,9 @@ Important Tencent live services include:
 Aliyun owns the generated command-center/report pipeline:
 
 - `crypto-analysis-refresh.timer`
+- `crypto-decision-portal-refresh.timer`
 - `crypto-shadow-review.timer`
-- `crypto-attention-api.service` on port 8090
+- `crypto-attention-api.service` on port 8090, serving the online decision portal and attention acknowledgement API
 
 Server access, API keys, and environment files are not stored in Git. A new machine needs SSH access and the server-side environment setup before it can operate live systems.
 
@@ -147,7 +148,9 @@ python 部署工具\decision_attention.py
 python 部署工具\portal_dashboard.py --out-dir reports
 ```
 
-The local HTML entry is `reports/index.html`, ignored by Git because it is generated. Aliyun regenerates the command-center reports and syncs them back to Tencent for viewing.
+The primary operator entry is the online Aliyun URL `http://39.105.156.210:8090/`. It serves `reports/index.html` through the same origin as `/api/attention/ack`, so acknowledgement buttons can write to the durable attention ledger without a separate operator chat loop. The local `reports/index.html` is a generated backup/mirror only; it is fresh only after pull/sync. The older full portal remains `reports/portal_latest.html` for drilldown.
+
+Aliyun runs a lightweight decision-portal refresh every 5 minutes. That path only syncs bounded Tencent mirror data, rebuilds attention/skeleton/portal reports, and reverse-syncs generated files; it does not submit Binance queue work. The deeper analysis refresh remains on the longer Aliyun timers.
 
 The command center should surface:
 

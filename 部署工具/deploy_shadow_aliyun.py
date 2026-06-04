@@ -60,6 +60,7 @@ UPLOADS = [
     (ROOT / "部署工具" / "research_store_query.py", f"{REMOTE_DIR}/research_store_query.py"),
     (ROOT / "部署工具" / "research_review_dashboard.py", f"{REMOTE_DIR}/research_review_dashboard.py"),
     (ROOT / "部署工具" / "portal_dashboard.py", f"{REMOTE_DIR}/portal_dashboard.py"),
+    (ROOT / "部署工具" / "decision_portal.py", f"{REMOTE_DIR}/decision_portal.py"),
     (ROOT / "部署工具" / "apply_research_approval.py", f"{REMOTE_DIR}/apply_research_approval.py"),
     (ROOT / "部署工具" / "strategy_truth_ledger.py", f"{REMOTE_DIR}/strategy_truth_ledger.py"),
     (ROOT / "部署工具" / "sentinel_quality_review.py", f"{REMOTE_DIR}/sentinel_quality_review.py"),
@@ -67,7 +68,10 @@ UPLOADS = [
     (ROOT / "部署工具" / "sync_aliyun_reports_to_tencent.py", f"{REMOTE_DIR}/sync_aliyun_reports_to_tencent.py"),
     (ROOT / "部署工具" / "attention_api_server.py", f"{REMOTE_DIR}/attention_api_server.py"),
     (ROOT / "部署工具" / "aliyun_analysis_refresh.sh", f"{REMOTE_DIR}/aliyun_analysis_refresh.sh"),
+    (ROOT / "部署工具" / "aliyun_decision_portal_refresh.sh", f"{REMOTE_DIR}/aliyun_decision_portal_refresh.sh"),
     (ROOT / "部署工具" / "aliyun_shadow_review.sh", f"{REMOTE_DIR}/run_shadow_review.sh"),
+    (ROOT / "部署工具" / "systemd" / "crypto-decision-portal-refresh.service", f"{REMOTE_DIR}/systemd/crypto-decision-portal-refresh.service"),
+    (ROOT / "部署工具" / "systemd" / "crypto-decision-portal-refresh.timer", f"{REMOTE_DIR}/systemd/crypto-decision-portal-refresh.timer"),
 ]
 
 
@@ -134,17 +138,24 @@ WantedBy=timers.target
     finally:
         sftp.close()
     run(client, f"chmod +x {REMOTE_DIR}/run_shadow_review.sh")
+    run(client, f"chmod +x {REMOTE_DIR}/aliyun_decision_portal_refresh.sh")
+    run(
+        client,
+        f"cp {REMOTE_DIR}/systemd/crypto-decision-portal-refresh.service /etc/systemd/system/crypto-decision-portal-refresh.service "
+        f"&& cp {REMOTE_DIR}/systemd/crypto-decision-portal-refresh.timer /etc/systemd/system/crypto-decision-portal-refresh.timer",
+    )
     run(client, "systemctl daemon-reload")
     run(client, "systemctl enable crypto-shadow-review.timer")
     run(client, "systemctl restart crypto-shadow-review.timer")
+    run(client, "systemctl enable --now crypto-decision-portal-refresh.timer")
 
 
 def main() -> int:
     client = ssh()
     try:
         upload(client)
-        files = " ".join(remote for _, remote in UPLOADS)
-        _, _, rc = run(client, f"cd {REMOTE_DIR} && {PYTHON} -m py_compile {files}", timeout=120)
+        py_files = " ".join(remote for _, remote in UPLOADS if remote.endswith(".py"))
+        _, _, rc = run(client, f"cd {REMOTE_DIR} && {PYTHON} -m py_compile {py_files}", timeout=120)
         if rc != 0:
             return rc
         _, _, rc = run(client, f"{PYTHON} -c 'import paramiko; print(\"paramiko ok\")'", timeout=30)

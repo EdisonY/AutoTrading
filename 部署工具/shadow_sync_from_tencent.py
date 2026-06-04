@@ -65,6 +65,7 @@ REPORT_FILES = [
     "reports/alerts_latest.md",
     "runtime/account_snapshot_latest.json",
     "runtime/alerts_latest.json",
+    "runtime/binance_api_queue_summary_latest.json",
     "runtime/market_data_cache.json",
     "runtime/market_mover_watchlist.json",
 ]
@@ -215,6 +216,33 @@ def remote_sqlite_backup_command(
     return f"python3 -c {shell_quote(code)}"
 
 
+def remote_queue_summary_command(output: str) -> str:
+    code = (
+        "import json, pathlib, sqlite3, time\n"
+        "db = pathlib.Path('runtime/binance_api_queue.sqlite3')\n"
+        f"out = pathlib.Path({output!r})\n"
+        "out.parent.mkdir(parents=True, exist_ok=True)\n"
+        "payload = {'available': False, 'active': 0, 'cooldowns': 0, 'counts': {}, 'last': []}\n"
+        "if db.exists():\n"
+        "    con = sqlite3.connect(str(db))\n"
+        "    con.row_factory = sqlite3.Row\n"
+        "    try:\n"
+        "        now_ms = int(time.time() * 1000)\n"
+        "        payload = {\n"
+        "            'available': True,\n"
+        "            'generated_at_ms': now_ms,\n"
+        "            'active': con.execute(\"select count(*) from api_requests where status in ('queued','deferred','leased')\").fetchone()[0],\n"
+        "            'cooldowns': con.execute('select count(*) from api_cooldowns where until_ms > ?', (now_ms,)).fetchone()[0],\n"
+        "            'counts': {r['status']: int(r['n']) for r in con.execute('select status, count(*) n from api_requests group by status')},\n"
+        "            'last': [dict(r) for r in con.execute(\"select rowid,label,scope,account,path,status,result_status,error from api_requests order by rowid desc limit 8\")],\n"
+        "        }\n"
+        "    finally:\n"
+        "        con.close()\n"
+        "out.write_text(json.dumps(payload, ensure_ascii=False, default=str), encoding='utf-8')\n"
+    )
+    return f"python3 -c {shell_quote(code)}"
+
+
 def parse_ts(value: str | None) -> datetime | None:
     if not value:
         return None
@@ -339,9 +367,12 @@ def sync_bundle(
     for rel in REPORT_FILES:
         parent = Path(rel).parent.as_posix()
         commands.append(f"mkdir -p {shell_quote(f'{tmp_dir}/{parent}')} ")
-        commands.append(
-            f"if [ -f {shell_quote(rel)} ]; then cp {shell_quote(rel)} {shell_quote(f'{tmp_dir}/{rel}')} ; fi"
-        )
+        if rel == "runtime/binance_api_queue_summary_latest.json":
+            commands.append(remote_queue_summary_command(f"{tmp_dir}/{rel}"))
+        else:
+            commands.append(
+                f"if [ -f {shell_quote(rel)} ]; then cp {shell_quote(rel)} {shell_quote(f'{tmp_dir}/{rel}')} ; fi"
+            )
     for rel in SQLITE_FILES:
         parent = Path(rel).parent.as_posix()
         commands.append(f"mkdir -p {shell_quote(f'{tmp_dir}/{parent}')} ")

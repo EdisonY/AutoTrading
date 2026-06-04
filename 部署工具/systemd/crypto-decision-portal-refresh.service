@@ -1,0 +1,10 @@
+[Unit]
+Description=Crypto Decision Portal Lightweight Refresh
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/crypto-shadow-lab
+ExecStart=/bin/bash /opt/crypto-shadow-lab/aliyun_decision_portal_refresh.sh
+Environment=PYTHONIOENCODING=utf-8
+TimeoutStartSec=220

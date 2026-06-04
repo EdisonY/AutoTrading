@@ -36,6 +36,7 @@ TENCENT_RESEARCH = "/opt/crypto-auto-trader/research_memory/attention"
 # Reports generated on Aliyun that should be synced to Tencent
 REPORT_FILES = [
     "index.html",
+    "decision_portal_latest.html",
     "counterfactual_open_skips_latest.json",
     "counterfactual_open_skips_latest.md",
     "counterfactual_open_skips_latest.html",
@@ -71,6 +72,7 @@ OPTIONAL_REPORT_FILES = [
 ]
 
 RUNTIME_FILES = [
+    "binance_api_queue_summary_latest.json",
     "strategy_evolution_latest.json",
     "strategy_truth_latest.json",
     "sentinel_quality_latest.json",

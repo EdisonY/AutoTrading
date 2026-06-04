@@ -114,6 +114,10 @@ def _account_from_central_state(row: dict[str, Any]) -> dict[str, Any]:
         if isinstance(pos, dict) and str(pos.get("symbol") or "")
     ]
     positions.sort(key=lambda item: item["upnl"])
+    stale_empty = bool(normalized.get("stale")) and not positions and int(normalized.get("open_positions") or 0) == 0
+    snapshot_error = normalized.get("snapshot_error") or ("central account state stale" if normalized.get("stale") else "")
+    if stale_empty:
+        snapshot_error = "waiting_for_user_stream_no_signed_rest"
     return {
         "key": key,
         "version": version,
@@ -131,7 +135,7 @@ def _account_from_central_state(row: dict[str, Any]) -> dict[str, Any]:
         "over_hard": int(normalized.get("hard_stop_risk_count") or sum(1 for pos in positions if pos["loss"] >= hard)),
         "stale": bool(normalized.get("stale")),
         "snapshot_ts": normalized.get("ts"),
-        "snapshot_error": normalized.get("snapshot_error") or ("central account state stale" if normalized.get("stale") else ""),
+        "snapshot_error": snapshot_error,
     }
 
 
@@ -146,11 +150,14 @@ def collect_accounts_from_central_state() -> tuple[list[dict[str, Any]], list[st
         if key not in present:
             accounts.append(_empty_error_account(key, version, desc, hard, "central account state row missing"))
     accounts.sort(key=lambda account: ["A", "B", "C"].index(str(account.get("key"))) if str(account.get("key")) in expected else 99)
-    errors = [
-        str(account.get("snapshot_error") or f"{account.get('key')}/{account.get('version')} central account state stale")
-        for account in accounts
-        if account.get("stale") or account.get("snapshot_error")
-    ]
+    errors = []
+    for account in accounts:
+        positions = account.get("positions") or []
+        stale_empty = bool(account.get("stale")) and not positions
+        if stale_empty and str(account.get("snapshot_error") or "") == "waiting_for_user_stream_no_signed_rest":
+            continue
+        if account.get("stale") or account.get("snapshot_error"):
+            errors.append(str(account.get("snapshot_error") or f"{account.get('key')}/{account.get('version')} central account state stale"))
     return accounts, errors
 
 

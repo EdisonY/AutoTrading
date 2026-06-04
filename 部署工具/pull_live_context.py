@@ -36,6 +36,7 @@ CST = timezone(timedelta(hours=8))
 
 MAIN_FILES = [
     ("reports/index.html", "reports/index.html", True),
+    ("reports/decision_portal_latest.html", "reports/decision_portal_latest.html", False),
     ("reports/portal_latest.html", "reports/portal_latest.html", False),
     ("reports/decision_attention_latest.html", "reports/decision_attention_latest.html", False),
     ("reports/decision_attention_latest.md", "reports/decision_attention_latest.md", False),
@@ -67,6 +68,7 @@ MAIN_FILES = [
     ("复盘报告/account_snapshot_latest.html", "复盘报告/account_snapshot_latest.html", False),
     ("runtime/account_snapshot_latest.json", "runtime/account_snapshot_latest.json", True),
     ("runtime/alerts_latest.json", "runtime/alerts_latest.json", True),
+    ("runtime/binance_api_queue_summary_latest.json", "runtime/binance_api_queue_summary_latest.json", False),
     ("runtime/market_data_cache.json", "runtime/market_data_cache.json", False),
     ("runtime/market_mover_watchlist.json", "runtime/market_mover_watchlist.json", False),
     ("runtime/strategy_evolution_latest.json", "runtime/strategy_evolution_latest.json", True),

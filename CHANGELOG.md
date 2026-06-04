@@ -2,6 +2,14 @@
 
 This is the durable reason-and-outcome ledger for every material design, code, configuration, deployment, rollback, optimization, or live operational change.
 
+## 2026-06-04 08:15 CST - Tighten B/v16 staged retry universe
+- Trigger / reason: B/v16 small-universe staged validation still hit public `HTTP 418/-1003` when cache and sentinel were active. The next retry must prove the B scanner path with the smallest possible public footprint, not chase coverage breadth.
+- Completed: Updated Tencent systemd drop-in `/etc/systemd/system/crypto-scanner-v16.service.d/30-staged-small-universe.conf` to `SCANNER_B_TOP_SYMBOLS=1` and `SCANNER_B_SENTINEL_LIMIT=1`, then ran `systemctl daemon-reload`. B/v16, A/v11, C/v14, cache, and sentinel remained stopped.
+- Not completed / remaining: Public cooldown still runs until `2026-06-04 08:34:51 CST`. After it clears, retry B/v16 alone with cache and sentinel stopped.
+- Verification: `systemctl cat crypto-scanner-v16.service` shows the updated staged drop-in. Queue had no pending requests when this config was changed, and no Binance request was made by the drop-in update.
+- Live impact / deployment: Tencent staged-validation config only. No code deploy, service start, strategy rule, Binance request, Kline/depth ingest, rollback, data reset, or zero-run occurred.
+- Files / release / commit: `CHANGELOG.md`, `PROJECT_STATE.md`, `记忆文档/MEMORY.md`, `记忆文档/FUTURE_EXECUTION_PLAN.md`.
+
 ## 2026-06-04 08:10 CST - Cancel stale B/v16 deferred queue request
 - Trigger / reason: After the B/v16 staged attempt hit public `HTTP 418/-1003`, one old B/v16 public request remained in the central queue as `deferred`. If left there, the queue executor could replay it automatically when cooldown clears, before the next controlled B-alone staged retry.
 - Completed: Marked the stale deferred B/v16 public queue request `c1390484e6544d7eb4715b93fb1c0666` as `failed` with reason `cancelled stale deferred staged B/v16 request after public cooldown blocker; retry will submit fresh B-alone request`.

@@ -35,14 +35,29 @@ class AttentionApiServerTests(unittest.TestCase):
         self.old_db = self.tool.EVENT_STORE_DB
         self.old_json = self.tool.ATTENTION_JSON
         self.old_reports = self.tool.REPORTS_DIR
+        self.old_refresh_script = self.tool.REPORT_REFRESH_SCRIPT
+        self.old_refresh_state = dict(self.tool._refresh_state)
         self.tool.EVENT_STORE_DB = self.db
         self.tool.ATTENTION_JSON = self.attention_json
         self.tool.REPORTS_DIR = self.root / "reports"
+        self.tool.REPORT_REFRESH_SCRIPT = self.root / "aliyun_decision_portal_refresh.sh"
+        self.tool._refresh_state.update({
+            "status": "idle",
+            "started_at": None,
+            "finished_at": None,
+            "user": None,
+            "mode": None,
+            "ok": None,
+            "error": None,
+        })
 
     def tearDown(self):
         self.tool.EVENT_STORE_DB = self.old_db
         self.tool.ATTENTION_JSON = self.old_json
         self.tool.REPORTS_DIR = self.old_reports
+        self.tool.REPORT_REFRESH_SCRIPT = self.old_refresh_script
+        self.tool._refresh_state.clear()
+        self.tool._refresh_state.update(self.old_refresh_state)
         self.tmp.cleanup()
 
     def seed_current_schema(self):
@@ -193,6 +208,26 @@ class AttentionApiServerTests(unittest.TestCase):
 
         self.assertIn("attention_api_server.py --port 8090", text)
         self.assertNotIn("server_logs_tencent/runtime/event_store.sqlite3", text)
+
+    def test_report_refresh_command_uses_safe_report_script(self):
+        self.tool.REPORT_REFRESH_SCRIPT.write_text("#!/bin/bash\necho safe\n", encoding="utf-8")
+
+        cmd = self.tool.report_refresh_command()
+
+        joined = " ".join(cmd)
+        self.assertIn("aliyun_decision_portal_refresh.sh", joined)
+        self.assertNotIn("binance_user_stream_service.py", joined)
+        self.assertNotIn("binance_api_queue_service.py --execute", joined)
+        self.assertNotIn("account_state_service.py --once", joined)
+
+    def test_report_refresh_lock_reports_already_running(self):
+        self.tool._refresh_state.update({"status": "running", "started_at": "now", "user": "tester"})
+
+        result = self.tool.start_report_refresh("tester")
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["action"], "already_running")
+        self.assertEqual(result["safety"], "report_only_no_binance_submit")
 
 
 if __name__ == "__main__":

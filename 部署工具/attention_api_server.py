@@ -7,6 +7,8 @@ Endpoints:
   GET  /api/attention        - List current attention items
   POST /api/attention/ack    - Acknowledge an item
   POST /api/attention/resolve - Resolve an item
+  GET  /api/report/refresh   - Read safe report-refresh status
+  POST /api/report/refresh   - Start safe report-only refresh
   GET  /api/health           - Health check
 
 Run on Aliyun as a systemd service.
@@ -18,7 +20,9 @@ import hashlib
 import json
 import mimetypes
 import sqlite3
+import subprocess
 import sys
+import threading
 from datetime import datetime, timezone, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -38,7 +42,20 @@ ROOT = SCRIPT_DIR.parent if SCRIPT_DIR.name == "部署工具" else SCRIPT_DIR
 EVENT_STORE_DB = ROOT / "runtime" / "event_store.sqlite3"
 ATTENTION_JSON = ROOT / "research_memory" / "attention" / "open_items.json"
 REPORTS_DIR = ROOT / "reports"
+REPORT_REFRESH_SCRIPT = ROOT / "aliyun_decision_portal_refresh.sh"
+REPORT_REFRESH_TIMEOUT_SEC = 240
 PORT = 8090
+
+_refresh_lock = threading.Lock()
+_refresh_state: dict[str, Any] = {
+    "status": "idle",
+    "started_at": None,
+    "finished_at": None,
+    "user": None,
+    "mode": None,
+    "ok": None,
+    "error": None,
+}
 
 
 def now_iso() -> str:
@@ -299,6 +316,104 @@ def refresh_decision_portal() -> None:
         print(f"[{now_iso()}] decision portal refresh failed: {exc}", flush=True)
 
 
+def resolve_report_refresh_script() -> Path | None:
+    candidates = [REPORT_REFRESH_SCRIPT, SCRIPT_DIR / "aliyun_decision_portal_refresh.sh"]
+    for path in candidates:
+        if path.exists() and path.is_file():
+            return path
+    return None
+
+
+def report_refresh_command() -> list[str]:
+    script = resolve_report_refresh_script()
+    if script:
+        shell = "bash" if sys.platform == "win32" else "/bin/bash"
+        return [shell, str(script)]
+    portal_script = SCRIPT_DIR / "portal_dashboard.py"
+    return [sys.executable, str(portal_script), "--out-dir", str(REPORTS_DIR)]
+
+
+def report_refresh_status() -> dict[str, Any]:
+    with _refresh_lock:
+        return dict(_refresh_state)
+
+
+def _set_report_refresh_state(**updates: Any) -> None:
+    with _refresh_lock:
+        _refresh_state.update(updates)
+
+
+def _run_report_refresh(user: str) -> None:
+    cmd = report_refresh_command()
+    _set_report_refresh_state(
+        status="running",
+        started_at=now_iso(),
+        finished_at=None,
+        user=user,
+        mode="script" if resolve_report_refresh_script() else "local_portal_only",
+        ok=None,
+        error=None,
+    )
+    try:
+        completed = subprocess.run(
+            cmd,
+            cwd=str(ROOT),
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            timeout=REPORT_REFRESH_TIMEOUT_SEC,
+            check=False,
+        )
+        ok = completed.returncode == 0
+        output = (completed.stdout or "").strip()
+        error = None if ok else (output[-800:] if output else f"exit={completed.returncode}")
+        if not ok:
+            refresh_decision_portal()
+        _set_report_refresh_state(status="idle", finished_at=now_iso(), ok=ok, error=error)
+        if output:
+            print(f"[{now_iso()}] report refresh output tail: {output[-800:]}", flush=True)
+    except subprocess.TimeoutExpired as exc:
+        refresh_decision_portal()
+        _set_report_refresh_state(
+            status="idle",
+            finished_at=now_iso(),
+            ok=False,
+            error=f"timeout after {exc.timeout}s; local portal regenerated",
+        )
+    except Exception as exc:
+        refresh_decision_portal()
+        _set_report_refresh_state(
+            status="idle",
+            finished_at=now_iso(),
+            ok=False,
+            error=f"{type(exc).__name__}: {exc}; local portal regenerated",
+        )
+
+
+def start_report_refresh(user: str = "portal") -> dict[str, Any]:
+    with _refresh_lock:
+        if _refresh_state.get("status") in {"starting", "running"}:
+            result = dict(_refresh_state)
+            result.update({"ok": True, "action": "already_running", "safety": "report_only_no_binance_submit"})
+            return result
+        _refresh_state.update(
+            {
+                "status": "starting",
+                "started_at": now_iso(),
+                "finished_at": None,
+                "user": user,
+                "mode": "script" if resolve_report_refresh_script() else "local_portal_only",
+                "ok": None,
+                "error": None,
+            }
+        )
+    worker = threading.Thread(target=_run_report_refresh, args=(user,), daemon=True)
+    worker.start()
+    result = report_refresh_status()
+    result.update({"ok": True, "action": "started", "safety": "report_only_no_binance_submit"})
+    return result
+
+
 def resolve_static_path(request_path: str) -> Path | None:
     if request_path in {"", "/", "/index.html", "/reports", "/reports/"}:
         candidate = REPORTS_DIR / "index.html"
@@ -327,6 +442,10 @@ class AttentionHandler(BaseHTTPRequestHandler):
         elif parsed.path == "/api/attention":
             items = load_attention_items()
             self._json_response({"ok": True, "items": items, "count": len(items)})
+        elif parsed.path == "/api/report/refresh":
+            status = report_refresh_status()
+            status.update({"ok": True, "safety": "report_only_no_binance_submit"})
+            self._json_response(status)
         else:
             self._static_response(parsed.path)
 
@@ -369,6 +488,10 @@ class AttentionHandler(BaseHTTPRequestHandler):
             result = resolve_item(item_id, user)
             export_attention_json()
             refresh_decision_portal()
+            self._json_response(result)
+
+        elif parsed.path == "/api/report/refresh":
+            result = start_report_refresh(user)
             self._json_response(result)
 
         else:

@@ -402,6 +402,7 @@
 - 2026-06-04：scanner 恢复前新增单账户 account-state baseline 安全栅栏。现有 `account_state_latest.json` 仍是 stale A/B/C 空占位，直接启动 scanner 只能 fail-closed，不能真实开仓；旧 full baseline 会一次刷新三账户，signed REST 压力较集中。已本地新增 `account_state_service.py --account A|B|C` 和 `collect_accounts_resilient(account_filter=...)`，可一次只刷一个账户并合并回中心状态，保留其它 stale 占位。后续部署后必须 A/B/C 分步执行，每步查 queue/cooldown。
 - 2026-06-04：B/v16 单账户 baseline 仍触发 signed IP ban，恢复暂停。`account_state_service.py --once --account A` 成功，A balance/positionRisk rows `480/481` 均 `200`，中心状态为 A fresh、B/C stale。随后 `--account B` 的 balance row `483` 命中 `HTTP 418/-1003`，冷却到 `2026-06-04 15:15:54.959 +08`；C baseline 和 scanner 恢复已停止。已停 API queue executor、A/B/C user-stream、cache、sentinel、A/B/C scanners、account-snapshot，只保留 system-alerts/data-maintenance。远端 queue 手动写入 `global` cooldown；本地修复 `binance_api_executor`，以后 `418`/`banned until` 自动写全局 cooldown，避免只锁单账户后误继续请求。
 - 2026-06-04：新版在线决策 report 第一版已上线为主入口 `http://39.105.156.210:8090/`，本地 `reports/index.html` 只作拉取后的备份。后验发现首页已清掉旧 `账户快照采集失败/HTTP 418` P0，但 `/api/attention` 仍读 Tencent 镜像 DB，导致确认 API 返回旧 P0。已修 `crypto-attention-api.service`，默认读写 Aliyun 本地 attention DB；公网 `/api/attention` 现为 open `P0=0/P1=0/P2=2`，且不含旧 418 快照项。此修复只影响 Aliyun report/API，不触发 Binance 请求。
+- 2026-06-05：决策 report 首页确认区收口。`你需要确认的事项` 以后只显示当前 open P0/P1，历史已清除项和 P2 观察项不再占首页确认区；策略进化/回滚项用白话中文解释，不直接让用户读 `EXP-*` 和英文 action code。首页新增 `刷新报表`，调用 Aliyun `/api/report/refresh` 后台跑轻量报表刷新链路，只同步镜像和重建 report，不提交 Binance 队列、不跑 scanner、不跑账户 baseline、不强拉 Binance。
 
 ---
 ## 2026-05-29 全局运行自检与账户方向口径修复

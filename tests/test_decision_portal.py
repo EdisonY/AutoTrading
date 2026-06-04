@@ -1,0 +1,86 @@
+import importlib.util
+import json
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def load_tool():
+    path = ROOT / "部署工具" / "decision_portal.py"
+    spec = importlib.util.spec_from_file_location("decision_portal_tool", path)
+    module = importlib.util.module_from_spec(spec)
+    assert spec and spec.loader
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+class DecisionPortalTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.tool = load_tool()
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.attention_json = self.root / "research_memory" / "attention" / "open_items.json"
+        self.attention_json.parent.mkdir(parents=True)
+        self.old_attention_json = self.tool.ATTENTION_JSON
+        self.tool.ATTENTION_JSON = self.attention_json
+
+    def tearDown(self):
+        self.tool.ATTENTION_JSON = self.old_attention_json
+        self.tmp.cleanup()
+
+    def test_confirm_section_only_shows_current_p0_p1_in_plain_chinese(self):
+        payload = {
+            "summary": {"open": 2, "counts": {"P0": 0, "P1": 1, "P2": 1}},
+            "items": [
+                {
+                    "item_id": "evolution:exp-20260523-v11-replacement-quality",
+                    "priority": "P2",
+                    "category": "策略进化",
+                    "title": "P2 A/v11 EXP-20260523-v11-replacement-quality",
+                    "status": "open",
+                    "evidence": "状态 small_live_monitoring",
+                    "recommended_action": "keep_small_live_monitoring",
+                },
+                {
+                    "item_id": "rollback:exp-old",
+                    "priority": "P1",
+                    "category": "策略回滚",
+                    "title": "P1 A/v11 回滚观察 EXP-old",
+                    "status": "cleared_pending_review",
+                    "evidence": "状态 rollback_watch",
+                    "recommended_action": "prepare_rollback_review",
+                },
+                {
+                    "item_id": "rollback:exp-current",
+                    "priority": "P1",
+                    "category": "策略回滚",
+                    "title": "P1 A/v11 回滚观察 EXP-current",
+                    "status": "open",
+                    "evidence": "状态 rollback_watch",
+                    "recommended_action": "prepare_rollback_review",
+                },
+            ],
+        }
+        self.attention_json.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+        _summary, items = self.tool.attention_items()
+        html = self.tool.render_attention(items)
+
+        self.assertEqual([item["item_id"] for item in items], ["rollback:exp-current"])
+        self.assertIn("A/v11 已上线改动需要复核", html)
+        self.assertIn("决定继续观察、收窄，或准备回滚", html)
+        self.assertNotIn("EXP-current", html)
+        self.assertNotIn("EXP-old", html)
+        self.assertNotIn("replacement-quality", html)
+
+
+if __name__ == "__main__":
+    unittest.main()

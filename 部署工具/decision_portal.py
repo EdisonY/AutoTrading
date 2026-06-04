@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import html
 import json
+import re
 import sqlite3
 import sys
 from datetime import datetime, timedelta, timezone
@@ -245,11 +246,84 @@ def attention_items(limit: int = 8) -> tuple[dict[str, Any], list[dict[str, Any]
     payload = read_json(ATTENTION_JSON)
     items = [
         item for item in payload.get("items", [])
-        if isinstance(item, dict) and item.get("status") in {"open", "cleared_pending_review"}
+        if (
+            isinstance(item, dict)
+            and item.get("status") == "open"
+            and str(item.get("priority") or "") in {"P0", "P1"}
+        )
     ]
     rank = {"P0": 0, "P1": 1, "P2": 2, "P3": 3}
     items.sort(key=lambda item: (rank.get(str(item.get("priority") or "P3"), 9), str(item.get("title") or "")))
     return payload.get("summary") or {}, items[:limit]
+
+
+def attention_level_label(priority: Any) -> str:
+    return {
+        "P0": "马上处理",
+        "P1": "需要你决定",
+        "P2": "观察项",
+        "P3": "记录",
+    }.get(str(priority or ""), "事项")
+
+
+def item_strategy(item: dict[str, Any]) -> str:
+    text = " ".join(str(item.get(key) or "") for key in ("title", "evidence", "item_id"))
+    match = re.search(r"\b(A/v11|B/v16|C/v14)\b", text)
+    return match.group(1) if match else "策略"
+
+
+def plain_attention_title(item: dict[str, Any]) -> str:
+    category = str(item.get("category") or "")
+    title = str(item.get("title") or "需要确认")
+    priority = str(item.get("priority") or "")
+    strategy = item_strategy(item)
+    item_id = str(item.get("item_id") or "")
+    if category == "策略回滚" or item_id.startswith("rollback:"):
+        return f"{strategy} 已上线改动需要复核"
+    if category == "策略进化":
+        if priority in {"P0", "P1"}:
+            return f"{strategy} 有策略改动需要你决定"
+        return f"{strategy} 有策略改进在观察"
+    return title
+
+
+def plain_attention_evidence(item: dict[str, Any]) -> str:
+    text = str(item.get("evidence") or "")
+    category = str(item.get("category") or "")
+    item_id = str(item.get("item_id") or "")
+    if "HTTP 418" in text or "-1003" in text:
+        return "以前触发过币安接口保护；如果再次出现，要先停扩量，等冷却清干净。"
+    if category == "策略回滚" or item_id.startswith("rollback:"):
+        return "这项已经上线过，现在要看真实表现是否继续、收窄，还是准备回滚。"
+    if category == "策略进化":
+        if "small_live_monitoring" in text:
+            return "现在只是小仓观察，不能当成已经验证好的正式升级。"
+        if "shadow_validating" in text:
+            return "还在影子验证，缺少真实成交或纸面撮合盈利证据。"
+        if "ready_for_review" in text:
+            return "已有一些证据，但还需要人工决定下一步。"
+        if "样本不足" in text:
+            return "样本还不够，先继续观察，不急着改实盘。"
+    if text:
+        return text[:180]
+    return "没有更多说明。"
+
+
+def plain_attention_action(item: dict[str, Any]) -> str:
+    action = str(item.get("recommended_action") or "")
+    category = str(item.get("category") or "")
+    priority = str(item.get("priority") or "")
+    if category in {"策略进化", "策略回滚"}:
+        if "rollback" in action or category == "策略回滚":
+            return "打开详情看盈亏和失败原因，决定继续观察、收窄，或准备回滚。"
+        if "shadow" in action:
+            return "不用现在上线，继续收样；等有真实/纸面盈利证据再说。"
+        return "先看详情，再决定继续观察还是暂停扩样。"
+    if priority == "P0":
+        return "先处理这个风险；确认已经解决或接受风险后，再点确认。"
+    if priority == "P1":
+        return "看一眼是否接受这个风险；接受或处理完后点确认。"
+    return "不用现在处理，继续观察。"
 
 
 def cleanup_summary() -> dict[str, Any]:
@@ -372,16 +446,20 @@ def render_strategy_table(rows: list[dict[str, str]]) -> str:
 
 def render_attention(items: list[dict[str, Any]]) -> str:
     if not items:
-        return '<p class="empty">暂无需要你确认的事项。</p>'
+        return '<p class="empty">暂无需要你确认的 P0/P1 事项。P2 观察项在完整详情里，不占用首页确认区。</p>'
     rows = []
     for item in items:
         item_id = str(item.get("item_id") or "")
+        priority = str(item.get("priority") or "")
+        title = plain_attention_title(item)
+        evidence = plain_attention_evidence(item)
+        action = plain_attention_action(item)
         rows.append(
             f"""
 <tr data-item="{h(item_id)}">
-  <td><b>{h(item.get('priority'))}</b></td>
-  <td>{h(item.get('title'))}<small>{h(item.get('evidence') or '')}</small></td>
-  <td>{h(item.get('recommended_action') or '看完后可确认')}</td>
+  <td><b>{h(attention_level_label(priority))}</b><small>{h(priority)}</small></td>
+  <td>{h(title)}<small>{h(evidence)}</small></td>
+  <td>{h(action)}</td>
   <td><button class="icon-btn" onclick="ackItem('{h(item_id)}', this)">确认</button></td>
 </tr>
 """.strip()
@@ -491,6 +569,9 @@ td small {{ display:block; color:var(--muted); margin-top:4px; }}
 .icon-btn:disabled {{ opacity:.65; cursor:default; }}
 .links {{ display:flex; flex-wrap:wrap; gap:8px; margin-top:8px; }}
 .links a {{ color:var(--blue); background:#eff6ff; border:1px solid #bfdbfe; padding:7px 10px; border-radius:6px; text-decoration:none; }}
+.top-actions {{ display:flex; flex-wrap:wrap; align-items:center; gap:10px; margin-top:10px; }}
+.refresh-btn {{ background:var(--cyan); }}
+.refresh-status {{ color:var(--muted); font-size:12px; }}
 .empty {{ color:var(--muted); }}
 @media (max-width: 980px) {{ .metrics,.cards,.grid {{ grid-template-columns:1fr; }} header {{ grid-template-columns:1fr; }} }}
 </style>
@@ -501,6 +582,10 @@ td small {{ display:block; color:var(--muted); margin-top:4px; }}
     <div>
       <h1>AutoTrading 决策入口</h1>
       <div class="sub">更新 {h(generated)}。线上首页 5 分钟自动刷新；这里只读现有数据，不请求 Binance。</div>
+      <div class="top-actions">
+        <button class="icon-btn refresh-btn" onclick="refreshReport(this)" title="同步服务器镜像并重新生成报表，不提交币安队列">刷新报表</button>
+        <span id="refreshStatus" class="refresh-status">安全刷新：只更新报表和镜像，不下单，不强拉账户。</span>
+      </div>
     </div>
     <div class="status {plain_level(state['overall'])}">{h(status_text(state))}</div>
   </header>
@@ -568,6 +653,33 @@ async function ackItem(itemId, btn) {{
   }} catch (err) {{
     btn.textContent = '网络错误';
     btn.disabled = false;
+  }}
+}}
+async function refreshReport(btn) {{
+  const status = document.getElementById('refreshStatus');
+  if (btn) {{
+    btn.disabled = true;
+    btn.textContent = '刷新中';
+  }}
+  if (status) status.textContent = '正在刷新报表。不会下单，不会强拉 Binance 账户。';
+  try {{
+    const resp = await fetch('/api/report/refresh', {{
+      method: 'POST',
+      headers: {{'Content-Type': 'application/json'}},
+      body: JSON.stringify({{user: 'decision_portal'}})
+    }});
+    const data = await resp.json();
+    if (!data.ok) throw new Error(data.error || '刷新失败');
+    if (status) status.textContent = data.action === 'already_running'
+      ? '已有刷新任务在跑，等它完成后页面会自动变新。'
+      : '刷新任务已启动，稍等 30-90 秒后自动重载。';
+    setTimeout(() => window.location.reload(), 45000);
+  }} catch (err) {{
+    if (status) status.textContent = '刷新启动失败：' + (err.message || err);
+    if (btn) {{
+      btn.disabled = false;
+      btn.textContent = '刷新报表';
+    }}
   }}
 }}
 </script>

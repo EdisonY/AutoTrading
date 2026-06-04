@@ -2,13 +2,21 @@
 
 This is the durable reason-and-outcome ledger for every material design, code, configuration, deployment, rollback, optimization, or live operational change.
 
+## 2026-06-04 13:57 CST - Add per-account account-state baseline for guarded scanner restoration
+- Trigger / reason: After cache and sentinel restored cleanly, A/B/C scanners could be restored only if central account state becomes fresh. The post-reset account state is intentionally stale placeholders, and running the old full baseline would query all three accounts in one action, creating avoidable signed REST pressure.
+- Completed: Added an account filter to `collect_accounts_resilient()` and `account_state_service.py --account`, so a baseline can refresh only one account such as `A` or `A/v11`. When an account filter is used, refreshed rows are merged into the existing central account-state payload so other accounts remain as stale placeholders instead of being dropped. Added a focused unit test proving a single-account refresh preserves the other bootstrap placeholders.
+- Not completed / remaining: This is a deployable safety tool only. It has not yet been deployed or run on Tencent in this entry. Scanner restoration still requires one-account-at-a-time baseline execution with queue/cooldown checks after each account, then A/B/C scanner starts in order.
+- Verification: `python -B -m py_compile 部署工具\account_snapshot_service.py 部署工具\account_state_service.py tests\test_account_state_service_stream.py` passed. `python -B -m unittest tests.test_account_state_service_stream tests.test_account_state` passed (`8` tests).
+- Live impact / deployment: Local/offline code change only so far. No Binance request, service restart, scanner start, signed REST baseline, order, close, strategy threshold/config, leverage, stop, sizing, or data reset occurred.
+- Files / release / commit: `部署工具/account_snapshot_service.py`, `部署工具/account_state_service.py`, `tests/test_account_state_service_stream.py`, `CHANGELOG.md`, `PROJECT_STATE.md`, `记忆文档/MEMORY.md`, `记忆文档/FUTURE_EXECUTION_PLAN.md`; source commit contains this entry.
+
 ## 2026-06-04 13:49 CST - Restore sentinel as the second public producer
 - Trigger / reason: After `market-data-cache` restored cleanly and queue/cooldown stayed empty, post-launch restoration could advance one more small step without starting scanners or signed REST polling.
 - Completed: Restored only `crypto-market-mover-sentinel.service` while keeping A/B/C scanners and `crypto-account-snapshot.service` inactive. Sentinel wrote a fresh watchlist with `58` symbols and queued one public `/fapi/v1/ticker/24hr` request.
 - Not completed / remaining: A/B/C scanners remain inactive and must be restored one at a time only after confirming the staged drop-ins still keep Kline network disabled and universe small. `crypto-account-snapshot.service` remains signed-REST sensitive and should stay off until scanner restoration and queue quiet checks pass.
 - Verification: Pre-start queue was `max_rowid=472`, `pending=[]`, `cooldowns=[]`, with cache rows `471` and `472` both `done/200`. Sentinel start produced queue row `473`, label `sentinel`, scope `public`, path `/fapi/v1/ticker/24hr`, status `done`, `result_status=200`. Post-start queue remained `pending=[]` and `cooldowns=[]`; `crypto-market-data-cache.service` and `crypto-market-mover-sentinel.service` were active, A/B/C scanners and account snapshot were inactive, and journals since `13:16:40 CST` showed no `418`, `429`, `-1003`, `Traceback`, `ImportError`, or `SyntaxError`.
 - Live impact / deployment: Controlled service start only. Binance impact was exactly one queued public ticker request from sentinel, completed `200`; no scanner, signed REST, order, close, strategy threshold/config, leverage, stop, sizing, or data reset occurred.
-- Files / release / commit: `CHANGELOG.md`, `PROJECT_STATE.md`, `记忆文档/MEMORY.md`, `记忆文档/FUTURE_EXECUTION_PLAN.md`; commit to follow.
+- Files / release / commit: `CHANGELOG.md`, `PROJECT_STATE.md`, `记忆文档/MEMORY.md`, `记忆文档/FUTURE_EXECUTION_PLAN.md`; source commit `16c3e87`.
 
 ## 2026-06-04 13:43 CST - Sync ready-state reports and begin guarded post-launch restoration
 - Trigger / reason: After FINAL foundation zero-run acceptance, the ready-state report wording needed to reach Tencent/Aliyun, and post-launch restoration needed to resume without adding avoidable Binance pressure.

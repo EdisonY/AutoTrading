@@ -234,18 +234,30 @@ def _collect_account(key: str, version: str, desc: str, module_name: str, class_
     }
 
 
-def collect_accounts_resilient() -> tuple[list[dict[str, Any]], list[str]]:
+def _account_matches_filter(spec: tuple[str, str, str, str, str, float], account_filter: set[str] | None) -> bool:
+    if not account_filter:
+        return True
+    key, version, *_rest = spec
+    tokens = {key.upper(), version.upper(), f"{key}/{version}".upper()}
+    return bool(tokens & account_filter)
+
+
+def collect_accounts_resilient(account_filter: set[str] | None = None) -> tuple[list[dict[str, Any]], list[str]]:
     accounts: list[dict[str, Any]] = []
     errors: list[str] = []
-    total = len(ACCOUNTS)
-    for index, (key, version, desc, module_name, class_name, hard) in enumerate(ACCOUNTS):
+    selected_accounts = [spec for spec in ACCOUNTS if _account_matches_filter(spec, account_filter)]
+    if not selected_accounts:
+        wanted = ",".join(sorted(account_filter or []))
+        raise ValueError(f"no account matched filter: {wanted}")
+    total = len(selected_accounts)
+    for index, (key, version, desc, module_name, class_name, hard) in enumerate(selected_accounts):
         collected_success = False
         guard_delay = current_cooldown_seconds()
         if guard_delay > 0:
             error = f"shared guard cooldown active before {key}/{version}: {int(guard_delay)}s"
             errors.append(error)
             accounts.append(_last_account_snapshot(key, version, desc, hard, error))
-            for rest in ACCOUNTS[index + 1:]:
+            for rest in selected_accounts[index + 1:]:
                 rest_key, rest_version, rest_desc, _, _, rest_hard = rest
                 rest_error = f"shared guard cooldown active before {rest_key}/{rest_version}: {int(guard_delay)}s"
                 errors.append(rest_error)
@@ -259,7 +271,7 @@ def collect_accounts_resilient() -> tuple[list[dict[str, Any]], list[str]]:
             errors.append(error)
             accounts.append(_last_account_snapshot(key, version, desc, hard, error))
             if "418" in error or "429" in error or "-1003" in error or "too many requests" in error.lower():
-                for rest in ACCOUNTS[index + 1:]:
+                for rest in selected_accounts[index + 1:]:
                     rest_key, rest_version, rest_desc, _, _, rest_hard = rest
                     rest_error = f"stopped after rate-limit error from {key}/{version}: {error}"
                     errors.append(rest_error)

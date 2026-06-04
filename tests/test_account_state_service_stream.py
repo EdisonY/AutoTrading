@@ -3,9 +3,10 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from core.account_state import build_account_state_payload, load_central_account_state, write_account_state
-from 部署工具.account_state_service import apply_stream_events_once, bootstrap_empty_state
+from 部署工具.account_state_service import apply_stream_events_once, bootstrap_empty_state, collect_state_once
 
 
 class AccountStateServiceStreamTest(unittest.TestCase):
@@ -97,6 +98,44 @@ class AccountStateServiceStreamTest(unittest.TestCase):
             self.assertEqual(float(state.balance["totalWalletBalance"]), 1400.0)
             offset_path = root / "runtime" / "account_state_stream_offsets.json"
             self.assertTrue(offset_path.exists())
+
+    def test_collect_state_once_account_filter_preserves_other_placeholders(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            bootstrap_empty_state(root=root)
+
+            def fake_collect_accounts_resilient(*, account_filter=None):
+                self.assertEqual(account_filter, {"A"})
+                return [
+                    {
+                        "key": "A",
+                        "version": "v11",
+                        "desc": "A",
+                        "wallet": 1200,
+                        "available": 1100,
+                        "margin": 1200,
+                        "positions": [],
+                        "upnl": 0,
+                        "longs": 0,
+                        "shorts": 0,
+                        "notional": 0,
+                        "used_margin": 0,
+                        "over_hard": 0,
+                        "stale": False,
+                        "snapshot_error": "",
+                    }
+                ], []
+
+            with patch("部署工具.account_state_service.ROOT", root), patch(
+                "部署工具.account_state_service.collect_accounts_resilient",
+                side_effect=fake_collect_accounts_resilient,
+            ):
+                payload = collect_state_once(account_filter={"A"})
+
+            self.assertEqual(payload["summary"]["fresh_accounts"], 1)
+            self.assertEqual(payload["summary"]["stale_accounts"], ["B", "C"])
+            self.assertIsNotNone(load_central_account_state(root, "A/v11", max_age_seconds=60, allow_legacy=False))
+            self.assertIsNone(load_central_account_state(root, "B/v16", max_age_seconds=60, allow_legacy=False))
 
 
 if __name__ == "__main__":

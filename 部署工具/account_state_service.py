@@ -92,10 +92,55 @@ def bootstrap_empty_state(*, root: str | Path = ROOT) -> dict[str, Any]:
     return payload
 
 
-def collect_state_once(*, write_legacy_snapshot: bool = False, write_db: bool = False) -> dict[str, Any]:
+def _account_filter_tokens(values: list[str] | None) -> set[str] | None:
+    tokens: set[str] = set()
+    for value in values or []:
+        for part in str(value).replace(";", ",").split(","):
+            token = part.strip().upper()
+            if token:
+                tokens.add(token)
+    return tokens or None
+
+
+def _merge_account_rows(existing_rows: list[dict[str, Any]], refreshed_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    by_key: dict[str, dict[str, Any]] = {}
+    for row in existing_rows:
+        if not isinstance(row, dict):
+            continue
+        key = str(row.get("account") or row.get("strategy") or "").upper()
+        if key:
+            by_key[key] = row
+    for row in refreshed_rows:
+        key = str(row.get("account") or row.get("strategy") or "").upper()
+        if key:
+            by_key[key] = row
+    ordered: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for key, version, _desc, _module_name, _class_name, _hard in ACCOUNTS:
+        for token in (key.upper(), f"{key}/{version}".upper()):
+            if token in by_key and token not in seen:
+                ordered.append(by_key[token])
+                seen.add(token)
+                break
+    for key, row in by_key.items():
+        if key not in seen:
+            ordered.append(row)
+    return ordered
+
+
+def collect_state_once(
+    *,
+    write_legacy_snapshot: bool = False,
+    write_db: bool = False,
+    account_filter: set[str] | None = None,
+) -> dict[str, Any]:
     ts = datetime.now(CST)
-    accounts, errors = collect_accounts_resilient()
+    accounts, errors = collect_accounts_resilient(account_filter=account_filter)
     rows = [_snapshot_payload(account, ts) for account in accounts]
+    if account_filter:
+        existing = read_account_state_payload(ROOT, allow_legacy=False) or {}
+        existing_rows = existing.get("accounts") if isinstance(existing.get("accounts"), list) else []
+        rows = _merge_account_rows(existing_rows, rows)
     status = "ok" if not errors else "partial"
     if rows and all(row.get("stale") for row in rows):
         status = "stale"
@@ -226,6 +271,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--write-legacy-snapshot", action="store_true")
     parser.add_argument("--write-db", action="store_true")
     parser.add_argument("--bootstrap-empty", action="store_true", help="Write stale zero placeholders without signed REST")
+    parser.add_argument("--account", action="append", default=[], help="Limit signed baseline to account key/version, e.g. A or A/v11")
     parser.add_argument("--stream-events", help="Apply newline-delimited user-data-stream events to central account state")
     parser.add_argument("--stream-strategy", default="", help="Default strategy for raw stream events")
     parser.add_argument("--stream-offset-state", default="", help="Offset/dedup state path for stream events")
@@ -254,7 +300,11 @@ def main(argv: list[str] | None = None) -> int:
             return 1
     while True:
         try:
-            collect_state_once(write_legacy_snapshot=args.write_legacy_snapshot, write_db=args.write_db)
+            collect_state_once(
+                write_legacy_snapshot=args.write_legacy_snapshot,
+                write_db=args.write_db,
+                account_filter=_account_filter_tokens(args.account),
+            )
         except Exception as exc:
             write_snapshot_error(exc)
             print(json.dumps({"status": "error", "error": str(exc)}, ensure_ascii=False), flush=True)

@@ -2,6 +2,14 @@
 
 This is the durable reason-and-outcome ledger for every material design, code, configuration, deployment, rollback, optimization, or live operational change.
 
+## 2026-06-04 08:02 CST - Stage B/v16 scanner cooldown blocker
+- Trigger / reason: After A/v11 staged validation passed, the next ordered staged gate was B/v16 small-universe scanner validation under the central queue.
+- Completed: Started only `crypto-scanner-v16.service` at `07:55 CST` with the existing small-universe drop-in (`SCANNER_B_TOP_SYMBOLS=8`, `SCANNER_B_SENTINEL_LIMIT=4`); A/v11 and C/v14 stayed inactive. B/v16 public queue requests returned `200` at `07:56` and `07:58 CST`, while market-data-cache and sentinel were still active from earlier staged gates.
+- Not completed / remaining: At `08:00:27 CST`, a B/v16 public request hit Binance Testnet `HTTP 418/-1003`; public queue cooldown is active until `2026-06-04 08:34:51 CST`. B/v16 did not pass staged scanner validation. C/v14 was not started. Next retry must wait for cooldown to clear and run scanner validation with a single public producer: keep cache and sentinel stopped, then retry B/v16 alone before C/v14.
+- Verification: Queue evidence: B/v16 public `done/200` at `07:56` and `07:58`, then `deferred` with `HTTP 418` at `08:00:27`; active cooldown `scope=public` until `08:34:51 CST`. After detection, `crypto-scanner-v16.service`, `crypto-market-data-cache.service`, and `crypto-market-mover-sentinel.service` were stopped; A/v11 and C/v14 were inactive; API queue and A/B/C user-stream services stayed active. Local tests passed during the wait: `python -B -m unittest tests.test_release_manager_bundle tests.test_long_term_skeleton_review tests.test_replay_readiness_review`.
+- Live impact / deployment: Operational staged-validation action only. No code, strategy threshold, leverage, stop, sizing, Kline/depth ingest, rollback, dirty-data reset, or zero-run occurred. Public producers are paused until cooldown clears.
+- Files / release / commit: `CHANGELOG.md`, `PROJECT_STATE.md`, `记忆文档/MEMORY.md`, `记忆文档/FUTURE_EXECUTION_PLAN.md`.
+
 ## 2026-06-04 07:54 CST - Stage A/v11 scanner after close-target fix
 - Trigger / reason: After deploying the close-target account-state fix to Tencent, the staged scanner gate needed to prove A/v11 could run under the slow central queue without reviving the previous `close_confirm_account_state_unavailable` blocker or Binance public cooldown.
 - Completed: Deployed Tencent no-restart release `20260604-074130-all-a9d0b13`, then started only `crypto-scanner.service` with the existing small-universe drop-in (`SCANNER_A_TOP_SYMBOLS=12`, `SCANNER_A_SPIKE_SYMBOLS=12`, `SCANNER_A_SENTINEL_LIMIT=6`). B/v16 and C/v14 stayed inactive. A/v11 was stopped after the staged check. The run produced restored-position close events for `XNYUSDT` short and `VVVUSDT` long, showing the close-target path no longer fails before submit.

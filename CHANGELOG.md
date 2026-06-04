@@ -2,6 +2,14 @@
 
 This is the durable reason-and-outcome ledger for every material design, code, configuration, deployment, rollback, optimization, or live operational change.
 
+## 2026-06-04 08:10 CST - Cancel stale B/v16 deferred queue request
+- Trigger / reason: After the B/v16 staged attempt hit public `HTTP 418/-1003`, one old B/v16 public request remained in the central queue as `deferred`. If left there, the queue executor could replay it automatically when cooldown clears, before the next controlled B-alone staged retry.
+- Completed: Marked the stale deferred B/v16 public queue request `c1390484e6544d7eb4715b93fb1c0666` as `failed` with reason `cancelled stale deferred staged B/v16 request after public cooldown blocker; retry will submit fresh B-alone request`.
+- Not completed / remaining: Public cooldown still runs until `2026-06-04 08:34:51 CST`. B/v16 and C/v14 staged scanner validation remain open; next B retry must keep cache and sentinel stopped.
+- Verification: Queue summary after the mutation was `done=371`, `failed=86`; active public cooldown remained `HTTP 418` until `08:34:51 CST`. No Binance request was made by this queue hygiene step.
+- Live impact / deployment: Mutated Tencent queue state only to prevent uncontrolled replay. No service start, code deploy, strategy rule, Binance request, Kline/depth ingest, rollback, data reset, or zero-run occurred.
+- Files / release / commit: `CHANGELOG.md`, `PROJECT_STATE.md`, `记忆文档/MEMORY.md`, `记忆文档/FUTURE_EXECUTION_PLAN.md`.
+
 ## 2026-06-04 08:08 CST - Fix attention API request handling
 - Trigger / reason: During the B/v16 public cooldown wait, staged browser-ack verification found Aliyun `crypto-attention-api.service` was active and listening on port `8090`, but local `/api/health` and `/api/attention` requests timed out. Socket probing also timed out, consistent with the single-threaded HTTP server being stuck behind slow or bad inbound connections.
 - Completed: `attention_api_server.py` now uses `ThreadingHTTPServer` with daemon request threads and a larger request backlog (`request_queue_size=64`). The acknowledgement, resolve, SQLite schema migration, and JSON export behavior are unchanged.

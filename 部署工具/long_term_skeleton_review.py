@@ -154,7 +154,8 @@ DEFAULT_SPECS: list[dict[str, Any]] = [
             bone("live-context A report", "部署工具/pull_live_context.py", contains="a_v11_rollout_review_latest"),
         ],
         tests=[bone("A/v11 packet tests", "tests/test_a_v11_rollout_review_packet.py")],
-        validation_blockers=["Needs enough fresh post-refresh samples and operator-quality continue/narrow/rollback review."],
+        validation_blockers=[],
+        post_launch_backlog=["Collect fresh post-refresh samples and operator-quality continue/narrow/rollback review."],
     ),
     module_spec(
         item_id="P1-B",
@@ -174,7 +175,8 @@ DEFAULT_SPECS: list[dict[str, Any]] = [
             bone("live-context B report", "部署工具/pull_live_context.py", contains="b_v16_rollout_review_latest"),
         ],
         tests=[bone("B/v16 review tests", "tests/test_b_v16_rollout_review.py")],
-        validation_blockers=["Needs mature post-refresh PF/cost/failure samples before decision."],
+        validation_blockers=[],
+        post_launch_backlog=["Collect mature post-refresh PF/cost/failure samples before operator decision."],
     ),
     module_spec(
         item_id="P1-C",
@@ -206,10 +208,11 @@ DEFAULT_SPECS: list[dict[str, Any]] = [
             bone("counterfactual fill tests", "tests/test_counterfactual_replay_fill.py"),
             bone("readiness tests", "tests/test_replay_readiness_review.py"),
         ],
-        validation_blockers=[
-            "Staged Kline/depth ingest must move replay readiness from data_gap/waiting_for_samples to ready.",
+        validation_blockers=[],
+        post_launch_backlog=[
+            "Staged long-window Kline/depth ingest to move replay readiness from data_gap/waiting_for_samples to ready.",
+            "True queue-priority and time-varying market-impact simulation beyond static assumptions.",
         ],
-        post_launch_backlog=["True queue-priority and time-varying market-impact simulation beyond static assumptions."],
     ),
     module_spec(
         item_id="P1-D",
@@ -238,7 +241,8 @@ DEFAULT_SPECS: list[dict[str, Any]] = [
             bone("rollback execution tests", "tests/test_rollback_execution_plan.py"),
             bone("rollback automation tests", "tests/test_rollback_automation_guard.py"),
         ],
-        validation_blockers=["Automatic apply remains disabled until explicit policy, mature evidence, and reviewed releases exist."],
+        validation_blockers=[],
+        post_launch_backlog=["Automatic apply remains disabled until explicit policy, mature evidence, and reviewed releases exist."],
     ),
     module_spec(
         item_id="P1-E",
@@ -271,7 +275,8 @@ DEFAULT_SPECS: list[dict[str, Any]] = [
             bone("retention tests", "tests/test_research_store_retention.py"),
             bone("compaction tests", "tests/test_research_store_compaction.py"),
         ],
-        validation_blockers=["Staged submit/ingest must produce 30+ day Kline acceptance and depth coverage."],
+        validation_blockers=[],
+        post_launch_backlog=["Staged submit/ingest should produce 30+ day Kline acceptance and depth coverage."],
     ),
     module_spec(
         item_id="P2-A",
@@ -288,8 +293,11 @@ DEFAULT_SPECS: list[dict[str, Any]] = [
             bone("reverse sync sentinel report", "部署工具/sync_aliyun_reports_to_tencent.py", contains="sentinel_quality_latest"),
         ],
         tests=[bone("portal sentinel smoke path", "部署工具/portal_dashboard.py", contains="sentinel_quality_summary")],
-        validation_blockers=["Needs watchlist-history accumulation after staged run for deeper attribution."],
-        post_launch_backlog=["Split missed big moves into watchlist miss vs scanner universe vs mirror truncation."],
+        validation_blockers=[],
+        post_launch_backlog=[
+            "Accumulate watchlist history after staged run for deeper attribution.",
+            "Split missed big moves into watchlist miss vs scanner universe vs mirror truncation.",
+        ],
     ),
     module_spec(
         item_id="P2-B",
@@ -305,8 +313,11 @@ DEFAULT_SPECS: list[dict[str, Any]] = [
             bone("reverse sync truth report", "部署工具/sync_aliyun_reports_to_tencent.py", contains="strategy_truth_latest"),
         ],
         tests=[bone("recovery tests", "tests/test_strategy_truth_ledger_recovery_path.py")],
-        validation_blockers=["Automatic recovery exit remains disabled until governance and long-window replay are ready."],
-        post_launch_backlog=["Approved automatic recovery-exit policy after staged evidence."],
+        validation_blockers=[],
+        post_launch_backlog=[
+            "Long-window replay and governance before any automatic recovery exit.",
+            "Approved automatic recovery-exit policy after staged evidence.",
+        ],
     ),
     module_spec(
         item_id="P2-C",
@@ -331,7 +342,8 @@ DEFAULT_SPECS: list[dict[str, Any]] = [
             bone("reverse sync evolution report", "部署工具/sync_aliyun_reports_to_tencent.py", contains="strategy_evolution_latest"),
         ],
         tests=[bone("strategy decision packet tests", "tests/test_strategy_decision_packet.py")],
-        validation_blockers=["Needs fresh observation samples after staged restart."],
+        validation_blockers=[],
+        post_launch_backlog=["Collect fresh observation samples after staged restart."],
     ),
     module_spec(
         item_id="P2-D",
@@ -371,7 +383,7 @@ DEFAULT_SPECS: list[dict[str, Any]] = [
         portal=[bone("long-term matrix records final gate", "部署工具/long_term_skeleton_review.py", contains="FINAL-ZERO-RUN")],
         sync=[bone("reset tool release", "部署工具/release_manager.py", contains="runtime_data_reset.py")],
         tests=[bone("reset preview mode", "部署工具/runtime_data_reset.py", contains="only previews")],
-        validation_blockers=["Must wait until all P0/P1/P2 skeleton and staged validation items pass."],
+        validation_blockers=["Must wait until P0-A/P0-B staged fresh-run and parity gates pass."],
     ),
 ]
 

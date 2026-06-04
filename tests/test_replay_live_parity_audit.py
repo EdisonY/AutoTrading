@@ -392,6 +392,43 @@ class ReplayLiveParityAuditTests(unittest.TestCase):
         self.assertEqual(summary["close_gate_cases"], 1)
         self.assertEqual(summary["close_passed"], 1)
 
+    def test_since_filters_old_dirty_rows_for_fresh_window(self):
+        tmp, db_path = self.make_db(
+            [
+                {
+                    "ts": "2026-06-03T09:00:00+08:00",
+                    "payload": {"raw": {"reason": "legacy row without exact case"}},
+                }
+            ],
+            scan_rows=[
+                {
+                    "ts": "2026-06-04T10:45:00+08:00",
+                    "payload": {
+                        "strategy_gate_case": {
+                            "name": "score-too-hot",
+                            "gate": "score_max",
+                            "inputs": {"score": 91, "score_max": 85},
+                            "expected_allowed": False,
+                            "expected_reason": "评分91超过85",
+                        }
+                    },
+                }
+            ],
+        )
+        self.addCleanup(tmp.cleanup)
+
+        payload = self.tool.build_payload(db_path, days=30, limit=100, since="2026-06-04 10:40:00")
+        summary = payload["summary"]
+
+        self.assertEqual(payload["since"], "2026-06-04T10:40:00+08:00")
+        self.assertEqual(summary["open_flow_rows"], 0)
+        self.assertEqual(summary["missing_case_rows"], 0)
+        self.assertEqual(summary["scan_gate_rows"], 1)
+        self.assertEqual(summary["scan_rows_with_exact_cases"], 1)
+        self.assertEqual(summary["scan_passed"], 1)
+        self.assertEqual(summary["acceptance_status"], "accepted")
+        self.assertFalse(payload["acceptance"]["fresh_run_required"])
+
 
 if __name__ == "__main__":
     unittest.main()

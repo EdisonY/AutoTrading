@@ -831,6 +831,8 @@ def replay_parity_summary(path: Path | None) -> dict[str, Any]:
         "age": "No replay/live parity audit",
         "fresh": False,
         "days": 0,
+        "since": None,
+        "until": None,
         "summary": {
             "open_flow_rows": 0,
             "gate_cases": 0,
@@ -856,6 +858,8 @@ def replay_parity_summary(path: Path | None) -> dict[str, Any]:
         "age": age_text(generated_at),
         "fresh": bool(generated_at and (datetime.now(CST) - generated_at).total_seconds() < 4 * 3600),
         "days": int(payload.get("days") or 0),
+        "since": payload.get("since"),
+        "until": payload.get("until"),
         "summary": summary,
         "strategies": payload.get("strategies") if isinstance(payload.get("strategies"), list) else [],
         "mismatch_examples": payload.get("mismatch_examples") if isinstance(payload.get("mismatch_examples"), list) else [],
@@ -4065,7 +4069,7 @@ th {{ background:#f1f5f9; color:#334155; }}
   <section class="section panel">
     <h2>Replay/live 同输入审计</h2>
     <p class="note">Exact parity 只使用事件 payload 里持久化的 `strategy_gate_case(s)`。没有 exact case 的 live 行计为缺口，不从 stage/layer 反推，避免把观测归因误当同输入一致。</p>
-    <p class="note">窗口 {int(replay_parity.get('days') or 0)} 日；open-flow {int(replay_parity_summary_data.get('open_flow_rows') or 0)} 条；exact rows {int(replay_parity_summary_data.get('rows_with_exact_cases') or 0)}；cases {int(replay_parity_summary_data.get('gate_cases') or 0)}；pass {float(replay_parity_summary_data.get('pass_rate_pct') or 0):.1f}%；mismatch {int(replay_parity_summary_data.get('mismatched') or 0)}；errors {int(replay_parity_summary_data.get('errors') or 0)}；exact覆盖 {float(replay_parity_summary_data.get('exact_case_coverage_pct') or 0):.1f}%；observed覆盖 {float(replay_parity_summary_data.get('observed_gate_coverage_pct') or 0):.1f}%；更新 {h(replay_parity.get('age'))}。</p>
+    <p class="note">窗口 {int(replay_parity.get('days') or 0)} 日；since {h(replay_parity.get('since') or '-')}；until {h(replay_parity.get('until') or '-')}；open-flow {int(replay_parity_summary_data.get('open_flow_rows') or 0)} 条；exact rows {int(replay_parity_summary_data.get('rows_with_exact_cases') or 0)}；cases {int(replay_parity_summary_data.get('gate_cases') or 0)}；pass {float(replay_parity_summary_data.get('pass_rate_pct') or 0):.1f}%；mismatch {int(replay_parity_summary_data.get('mismatched') or 0)}；errors {int(replay_parity_summary_data.get('errors') or 0)}；exact覆盖 {float(replay_parity_summary_data.get('exact_case_coverage_pct') or 0):.1f}%；observed覆盖 {float(replay_parity_summary_data.get('observed_gate_coverage_pct') or 0):.1f}%；更新 {h(replay_parity.get('age'))}。</p>
     <table>
       <thead><tr><th>策略</th><th>开仓流</th><th>Exact rows</th><th>缺 case</th><th>Cases</th><th>Pass</th><th>Mismatch</th><th>Errors</th><th>Pass rate</th><th>主要 exact gate</th></tr></thead>
       <tbody>{replay_parity_rows}</tbody>

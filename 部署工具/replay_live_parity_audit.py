@@ -81,47 +81,141 @@ def json_dump(path: Path, payload: dict[str, Any]) -> None:
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
 
 
-def query_events(db: Path, days: int, limit: int) -> list[dict[str, Any]]:
+def parse_window_time(value: str | datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        dt = value
+    else:
+        raw = str(value).strip()
+        if not raw:
+            return None
+        normalized = raw.replace("Z", "+00:00")
+        candidates = [normalized]
+        if " " in normalized and "T" not in normalized:
+            candidates.append(normalized.replace(" ", "T", 1))
+        dt = None
+        for candidate in candidates:
+            try:
+                dt = datetime.fromisoformat(candidate)
+                break
+            except ValueError:
+                pass
+        if dt is None:
+            for fmt in ("%Y-%m-%d %H:%M:%S %z", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
+                try:
+                    dt = datetime.strptime(raw, fmt)
+                    break
+                except ValueError:
+                    pass
+        if dt is None:
+            raise ValueError(f"Invalid time window value: {value!r}")
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=CST)
+    return dt.astimezone(CST)
+
+
+def _row_time(row: Mapping[str, Any]) -> datetime | None:
+    try:
+        return parse_window_time(row.get("ts"))  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+
+
+def _filter_rows_by_window(
+    rows: Iterable[Mapping[str, Any]],
+    *,
+    since: datetime | None,
+    until: datetime | None,
+) -> list[dict[str, Any]]:
+    if since is None and until is None:
+        return [dict(row) for row in rows]
+    filtered: list[dict[str, Any]] = []
+    for row in rows:
+        data = dict(row)
+        ts = _row_time(data)
+        if ts is None:
+            continue
+        if since is not None and ts < since:
+            continue
+        if until is not None and ts > until:
+            continue
+        filtered.append(data)
+    return filtered
+
+
+def query_events(
+    db: Path,
+    days: int,
+    limit: int,
+    *,
+    since: datetime | None = None,
+    until: datetime | None = None,
+) -> list[dict[str, Any]]:
     if not db.exists():
         return []
-    cutoff = (now_cst() - timedelta(days=days)).strftime("%Y-%m-%d")
+    cutoff_dt = since or (now_cst() - timedelta(days=days))
+    cutoff = cutoff_dt.strftime("%Y-%m-%d")
     con = sqlite3.connect(db)
     try:
         con.row_factory = sqlite3.Row
         placeholders = ", ".join("?" for _ in EVENT_FLOW_TYPES)
+        until_sql = ""
+        params: list[Any] = [cutoff]
+        if until is not None:
+            until_sql = "and substr(ts, 1, 10) <= ?"
+            params.append(until.strftime("%Y-%m-%d"))
+        params.extend(sorted(EVENT_FLOW_TYPES))
+        params.append(int(limit))
         rows = con.execute(
             f"""
             select id, ts, strategy, symbol, event_type, category, side, score,
                    stage, layer, reason, source, payload_json
             from events
             where substr(ts, 1, 10) >= ?
+              {until_sql}
               and event_type in ({placeholders})
               and strategy in ('A/v11', 'B/v16', 'C/v14')
             order by id desc
             limit ?
             """,
-            (cutoff, *sorted(EVENT_FLOW_TYPES), int(limit)),
+            tuple(params),
         ).fetchall()
     finally:
         con.close()
-    return [dict(row) for row in rows]
+    return _filter_rows_by_window(rows, since=since, until=until)
 
 
-def query_sentinel_scans(db: Path, days: int, limit: int) -> list[dict[str, Any]]:
+def query_sentinel_scans(
+    db: Path,
+    days: int,
+    limit: int,
+    *,
+    since: datetime | None = None,
+    until: datetime | None = None,
+) -> list[dict[str, Any]]:
     if not db.exists():
         return []
-    cutoff = (now_cst() - timedelta(days=days)).strftime("%Y-%m-%d")
+    cutoff_dt = since or (now_cst() - timedelta(days=days))
+    cutoff = cutoff_dt.strftime("%Y-%m-%d")
     con = sqlite3.connect(db)
     try:
         con.row_factory = sqlite3.Row
+        until_sql = ""
+        params: list[Any] = [cutoff]
+        if until is not None:
+            until_sql = "and date <= ?"
+            params.append(until.strftime("%Y-%m-%d"))
+        params.append(int(limit))
         rows = con.execute(
-            """
+            f"""
             select id, ts, strategy, symbol, event_type, category,
                    '' as side, null as score, decision_stage as stage,
                    filter_layer as layer, reason, 'sentinel_scans' as source,
                    scan_result, payload_json
             from sentinel_scans
             where date >= ?
+              {until_sql}
               and strategy in ('A/v11', 'B/v16', 'C/v14')
               and decision_stage in (
                 'confirmation', 'cooldown', 'market_data_guard', 'market_microstructure',
@@ -132,13 +226,13 @@ def query_sentinel_scans(db: Path, days: int, limit: int) -> list[dict[str, Any]
             order by id desc
             limit ?
             """,
-            (cutoff, int(limit)),
+            tuple(params),
         ).fetchall()
     except sqlite3.OperationalError:
         rows = []
     finally:
         con.close()
-    return [dict(row) for row in rows]
+    return _filter_rows_by_window(rows, since=since, until=until)
 
 
 def _case_sources(payload: Mapping[str, Any]) -> Iterable[Any]:
@@ -491,9 +585,21 @@ def _process_cases(
                 )
 
 
-def build_payload(db: Path, days: int, limit: int) -> dict[str, Any]:
-    rows = query_events(db, days, limit)
-    scan_rows = query_sentinel_scans(db, days, limit)
+def build_payload(
+    db: Path,
+    days: int,
+    limit: int,
+    *,
+    since: str | datetime | None = None,
+    until: str | datetime | None = None,
+) -> dict[str, Any]:
+    since_dt = parse_window_time(since)
+    until_dt = parse_window_time(until)
+    if since_dt is not None and until_dt is not None and since_dt > until_dt:
+        raise ValueError("--since must be earlier than or equal to --until")
+
+    rows = query_events(db, days, limit, since=since_dt, until=until_dt)
+    scan_rows = query_sentinel_scans(db, days, limit, since=since_dt, until=until_dt)
     by_strategy: dict[str, dict[str, Any]] = {}
     mismatch_examples: list[dict[str, Any]] = []
     error_examples: list[dict[str, Any]] = []
@@ -676,6 +782,8 @@ def build_payload(db: Path, days: int, limit: int) -> dict[str, Any]:
         "generated_at": now_cst().isoformat(),
         "db": str(db),
         "days": int(days),
+        "since": since_dt.isoformat() if since_dt else None,
+        "until": until_dt.isoformat() if until_dt else None,
         "limit": int(limit),
         "summary": summary,
         "acceptance": acceptance,
@@ -696,6 +804,8 @@ def build_markdown(payload: dict[str, Any]) -> str:
         f"- Generated: `{payload.get('generated_at')}`",
         f"- DB: `{payload.get('db')}`",
         f"- Window: `{payload.get('days')}` day(s), limit `{payload.get('limit')}` rows",
+        f"- Since: `{payload.get('since') or '-'}`",
+        f"- Until: `{payload.get('until') or '-'}`",
         f"- Status: `{summary.get('status')}`",
         f"- Acceptance: `{acceptance.get('overall_status')}`",
         f"- Conclusion: `{acceptance.get('conclusion')}`",
@@ -793,12 +903,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--reports-dir", default=str(ROOT / "reports"))
     parser.add_argument("--days", type=int, default=3)
     parser.add_argument("--limit", type=int, default=30000)
+    parser.add_argument("--since", default=None, help="Only audit rows at or after this CST/ISO timestamp")
+    parser.add_argument("--until", default=None, help="Only audit rows at or before this CST/ISO timestamp")
     return parser.parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
-    payload = build_payload(Path(args.db), args.days, args.limit)
+    payload = build_payload(Path(args.db), args.days, args.limit, since=args.since, until=args.until)
     runtime_dir = Path(args.runtime_dir)
     reports_dir = Path(args.reports_dir)
     json_dump(runtime_dir / "replay_live_parity_latest.json", payload)
@@ -822,6 +934,8 @@ def main(argv: list[str] | None = None) -> int:
                 "acceptance_status": payload["acceptance"]["overall_status"],
                 "acceptance_conclusion": payload["acceptance"]["conclusion"],
                 "readiness_score_pct": payload["acceptance"]["readiness_score_pct"],
+                "since": payload.get("since"),
+                "until": payload.get("until"),
             },
             ensure_ascii=False,
         )

@@ -2151,8 +2151,23 @@ class Scanner:
 
         for sym in symbols:
             # ATR=0异常币种黑名单
-            if sym in ATR_ZERO_BLACKLIST:
-                log_sentinel_scan(sym, "vpb", "pre_filter_rejected", "ATR=0黑名单", decision_stage="pre_filter")
+            vpb_blacklist_gate = evaluate_symbol_blacklist_gate(
+                symbol=sym,
+                blacklisted_symbols=ATR_ZERO_BLACKLIST,
+                reason="ATR=0黑名单",
+            )
+            if not vpb_blacklist_gate.allowed:
+                log_sentinel_scan(
+                    sym, "vpb", "pre_filter_rejected", "ATR=0黑名单",
+                    decision_stage="pre_filter",
+                    strategy_gate_case=strategy_gate_case(
+                        name="a_v11_vpb_symbol_blacklist",
+                        gate="symbol_blacklist",
+                        inputs={"symbol": sym, "blacklisted_symbols": ATR_ZERO_BLACKLIST, "reason": "ATR=0黑名单"},
+                        decision=vpb_blacklist_gate,
+                        meta={"strategy": "A/v11", "timeframe": "vpb"},
+                    ),
+                )
                 continue
             if self.sl_counts.get(sym, 0) >= MAX_SL_PER_SYMBOL:
                 log_sentinel_scan(sym, "vpb", "cooldown_rejected", "同币种当日止损已达上限", decision_stage="cooldown", filter_layer="risk")

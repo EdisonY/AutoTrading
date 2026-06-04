@@ -1113,6 +1113,17 @@ class ScannerV16:
                 blacklist_gate = evaluate_symbol_blacklist_gate(symbol=sym, blacklisted_symbols=LOSS_BLACKLIST, reason="loss_blacklist")
                 if not blacklist_gate.allowed:
                     scan_stats["loss_blacklist"] += 1
+                    log_sentinel_scan(
+                        sym, tf, "pre_filter_rejected", "loss_blacklist",
+                        decision_stage="pre_filter",
+                        strategy_gate_case=strategy_gate_case(
+                            name="b_v16_symbol_blacklist",
+                            gate="symbol_blacklist",
+                            inputs={"symbol": sym, "blacklisted_symbols": LOSS_BLACKLIST, "reason": "loss_blacklist"},
+                            decision=blacklist_gate,
+                            meta={"strategy": "B/v16", "timeframe": tf},
+                        ),
+                    )
                     continue
                 timeframe_position_gate = evaluate_timeframe_position_gate(has_timeframe_position=self.has_position(tf, sym))
                 if not timeframe_position_gate.allowed:

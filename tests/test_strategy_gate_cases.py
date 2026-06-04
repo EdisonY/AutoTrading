@@ -806,6 +806,76 @@ class StrategyGateCasesTest(unittest.TestCase):
         self.assertEqual([row["passed"] for row in evaluate_strategy_gate_cases(cases)], [True] * len(cases))
         self.assertIn(("COPENUSDT", "long"), scanner.positions["1h"])
 
+    def test_b_v16_blacklist_scan_logs_replayable_exact_case(self):
+        scanner = scanner_v16_module.ScannerV16.__new__(scanner_v16_module.ScannerV16)
+        scanner.positions = {"1h": {}, "15m": {}}
+        scanner.cooldowns = {"1h": {}, "15m": {}}
+        scanner.sl_counts = {}
+        scanner._total_exchange_positions = lambda: 0
+        scans = []
+
+        original_fetch_top = scanner_v16_module.fetch_top_symbols
+        original_merge = scanner_v16_module.merge_sentinel_symbols
+        original_log_sentinel_scan = scanner_v16_module.log_sentinel_scan
+        original_log_system = scanner_v16_module.log_system
+        original_logger_disabled = scanner_v16_module.logger.disabled
+        scanner_v16_module.fetch_top_symbols = lambda n=50: ["RDNTUSDT"]
+        scanner_v16_module.merge_sentinel_symbols = lambda symbols, limit=30: list(symbols)
+        scanner_v16_module.log_sentinel_scan = lambda symbol, tf, result, reason, **extra: scans.append(extra)
+        scanner_v16_module.log_system = lambda state: None
+        scanner_v16_module.logger.disabled = True
+        try:
+            scanner.scan()
+        finally:
+            scanner_v16_module.fetch_top_symbols = original_fetch_top
+            scanner_v16_module.merge_sentinel_symbols = original_merge
+            scanner_v16_module.log_sentinel_scan = original_log_sentinel_scan
+            scanner_v16_module.log_system = original_log_system
+            scanner_v16_module.logger.disabled = original_logger_disabled
+
+        self.assertEqual(len(scans), 1)
+        case = scans[0]["strategy_gate_case"]
+        self.assertEqual(case["gate"], "symbol_blacklist")
+        self.assertEqual(case["meta"]["strategy"], "B/v16")
+        self.assertEqual([row["passed"] for row in evaluate_strategy_gate_cases([case])], [True])
+
+    def test_a_v11_vpb_blacklist_scan_logs_replayable_exact_case(self):
+        scanner = self._scanner_without_runtime()
+        scanner.scan_count = 0
+        scanner._sl_counts_date = datetime.now(scanner_module.CST).strftime("%Y-%m-%d")
+        scanner.sl_counts = {}
+        scanner._sync_exchange_positions = lambda now_str, now_dt=None: None
+        scanner._enforce_hard_stop_on_exchange = lambda now_str, now_dt=None: None
+        scanner._check_exits = lambda now_str, now_dt=None: None
+        scanner._get_market_trend = lambda: "neutral"
+        scanner.strategy_engine = SimpleNamespace(analyze=lambda symbol, tf: None)
+        scans = []
+
+        original_fetch_top = scanner_module.fetch_top_symbols
+        original_fetch_spikes = scanner_module.fetch_volume_spikes
+        original_merge = scanner_module.merge_sentinel_symbols
+        original_log_sentinel_scan = scanner_module.log_sentinel_scan
+        original_logger_disabled = scanner_module.logger.disabled
+        scanner_module.fetch_top_symbols = lambda top_n=100: ["RDNTUSDT"]
+        scanner_module.fetch_volume_spikes = lambda top_n=100: []
+        scanner_module.merge_sentinel_symbols = lambda symbols, limit=40: list(symbols)
+        scanner_module.log_sentinel_scan = lambda symbol, tf, result, reason, **extra: scans.append((tf, extra))
+        scanner_module.logger.disabled = True
+        try:
+            scanner.scan_cycle()
+        finally:
+            scanner_module.fetch_top_symbols = original_fetch_top
+            scanner_module.fetch_volume_spikes = original_fetch_spikes
+            scanner_module.merge_sentinel_symbols = original_merge
+            scanner_module.log_sentinel_scan = original_log_sentinel_scan
+            scanner_module.logger.disabled = original_logger_disabled
+
+        vpb_cases = [extra["strategy_gate_case"] for tf, extra in scans if tf == "vpb"]
+        self.assertEqual(len(vpb_cases), 1)
+        self.assertEqual(vpb_cases[0]["gate"], "symbol_blacklist")
+        self.assertEqual(vpb_cases[0]["meta"]["strategy"], "A/v11")
+        self.assertEqual([row["passed"] for row in evaluate_strategy_gate_cases(vpb_cases)], [True])
+
     def test_strategy_gate_case_is_json_safe_and_replayable(self):
         decision = evaluate_symbol_blacklist_gate(
             symbol="BTCUSDT",

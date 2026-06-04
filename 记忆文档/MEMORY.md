@@ -380,6 +380,7 @@
 - 2026-06-04：B/v16 cooldown 等待期间修正施工态展示。Tencent/Aliyun 已用各自正确 Python runtime 重跑 long-term skeleton/replay readiness；Tencent `system_alerts.py --once` 后总入口从 bad 回到 warn/施工暂停，骨架仍是 `143/143`、`blocked_by_staged_validation`。同时把 C/v14 staged drop-in 收紧到 `SCANNER_C_TOP_SYMBOLS=1` / `SCANNER_C_SENTINEL_LIMIT=1`，服务保持 inactive；C 只能在 B 单生产者重试通过后再单独启动。
 - 2026-06-04：B/v16 单生产者重试仍被 Testnet Kline REST ban 卡住。`08:36` 后 B alone 两次 `/fapi/v1/ticker/24hr` 为 `200`，第一条 `/fapi/v1/klines BTCUSDT 1h limit=200` 触发 `HTTP 418/-1003`；B 已停，deferred 请求已 failed，queue cooldown 到 `10:08:56 CST`。已新增 `SCANNER_KLINE_NETWORK_ENABLED=0` staged 开关，A/B/C scanner 在该模式只读本地 Kline cache，缺缓存就跳过分析，不碰 Binance Kline。默认仍开启网络，不改正常策略行为。
 - 2026-06-04：staged Kline cache-only 已无重启部署到 Tencent。commit `d124eeb` / release `20260604-085014-all-d124eeb` 已上传；A/B/C scanner drop-in 设置 `SCANNER_KLINE_NETWORK_ENABLED=0` 与 `SCANNER_KLINE_CACHE_MAX_AGE_SEC=86400`，B/C 仍为 `1/1` 小宇宙。A/B/C/cache/sentinel 仍 inactive，queue/user-stream active，queue 无 pending；等 public cooldown `10:08:56 CST` 后只启动 B/v16 单生产者验收。
+- 2026-06-04：继续 P0-B fresh exact parity。C/v14 staged scanner 已能用 cache-only + fresh watchlist 产出真实 `sentinel_scans` blacklist exact case；为避免 A/B staged fresh rows coverage 掉到 partial，B/v16 loss blacklist 和 A/v11 VPB blacklist scan rows 也补了 replayable `symbol_blacklist` exact case。此变更只补遥测/验收骨架，不改阈值、风控、仓位、杠杆、止损或下单。
 
 ---
 ## 2026-05-29 全局运行自检与账户方向口径修复

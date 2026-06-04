@@ -2,6 +2,14 @@
 
 This is the durable reason-and-outcome ledger for every material design, code, configuration, deployment, rollback, optimization, or live operational change.
 
+## 2026-06-04 11:34 CST - Close A/B scan-level exact-case gaps before staged parity rows
+- Trigger / reason: P0-B fresh replay/live parity needs post-instrumentation scanner rows with serialized exact `strategy_gate_case(s)`. A C/v14 staged scanner run could already produce replayable blacklist rows, but B/v16 loss-blacklist scan rows and A/v11 VPB blacklist scan rows still lacked exact cases and would reduce fresh-window scan coverage.
+- Completed: Added replayable scan-level exact cases for B/v16 `loss_blacklist` pre-filter rejects and A/v11 VPB `ATR=0黑名单` pre-filter rejects. Added focused tests that drive those scanner paths and verify the emitted `symbol_blacklist` exact cases pass through `evaluate_strategy_gate_cases()`. No strategy thresholds, leverage, stops, sizing, risk limits, or order behavior changed.
+- Not completed / remaining: This is local code/test completion only. Tencent still needs no-restart deployment of this commit before A/v11 and B/v16 staged scanner evidence can be generated. P0-B still requires fresh post-deploy rows; P0-A still needs the final clean staged run; final dirty-data archive/reset and zero-run remain blocked until those gates pass.
+- Verification: `python -B -m py_compile 策略文件\scanner.py 策略文件\scanner_v16.py tests\test_strategy_gate_cases.py` passed. `python -B -m unittest tests.test_strategy_gate_cases` passed (`16` tests).
+- Live impact / deployment: None yet. No Binance request, no service start/restart, no data reset, and no zero-run occurred in this code change.
+- Files / release / commit: `策略文件/scanner.py`, `策略文件/scanner_v16.py`, `tests/test_strategy_gate_cases.py`, `CHANGELOG.md`, `PROJECT_STATE.md`, `记忆文档/MEMORY.md`, `记忆文档/FUTURE_EXECUTION_PLAN.md`.
+
 ## 2026-06-04 11:10 CST - Verify fresh-window parity audit with synthetic smoke row
 - Trigger / reason: After deploying the fresh-window audit, verify the remote strict audit path can accept a newly written exact `strategy_gate_case` row in the fresh window without starting scanners or calling Binance. This is a tooling smoke, not market or strategy evidence.
 - Completed: Inserted one clearly marked synthetic `sentinel_scans` row on Tencent with marker `P0B_FRESH_WINDOW_SYNTHETIC_SMOKE_20260604_1108`, strategy `B/v16`, symbol `SMOKETESTUSDT`, decision stage `score_gate`, and exact `score_max` case (`score=91`, `score_max=85`, expected reject reason `评分91超过85`). Ran `replay_live_parity_audit.py --since <smoke_ts> --until <smoke_ts>` and confirmed the audit returned `status=ok`, `scan_gate_rows=1`, `scan_gate_cases=1`, `scan_exact_case_coverage_pct=100.0`, `acceptance_status=accepted`, and `readiness_score_pct=100.0`. Immediately deleted the synthetic row by id and marker, then reran the same audit window; it returned `acceptance_status=no_historical_rows` again.

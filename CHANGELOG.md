@@ -5,9 +5,9 @@ This is the durable reason-and-outcome ledger for every material design, code, c
 ## 2026-06-04 08:08 CST - Fix attention API request handling
 - Trigger / reason: During the B/v16 public cooldown wait, staged browser-ack verification found Aliyun `crypto-attention-api.service` was active and listening on port `8090`, but local `/api/health` and `/api/attention` requests timed out. Socket probing also timed out, consistent with the single-threaded HTTP server being stuck behind slow or bad inbound connections.
 - Completed: `attention_api_server.py` now uses `ThreadingHTTPServer` with daemon request threads and a larger request backlog (`request_queue_size=64`). The acknowledgement, resolve, SQLite schema migration, and JSON export behavior are unchanged.
-- Not completed / remaining: Deploy to Aliyun, restart `crypto-attention-api.service`, and verify `/api/health` plus `/api/attention` before marking browser-ack staged validation complete.
-- Verification: `python -B -m py_compile 部署工具\attention_api_server.py` passed. `python -B -m unittest tests.test_attention_api_server` passed.
-- Live impact / deployment: Pending Aliyun deploy/restart. No Tencent trading service, Binance request, scanner, strategy rule, Kline/depth ingest, rollback, data reset, or zero-run change.
+- Not completed / remaining: Browser-side manual click through the public portal remains a UI-level check, but the API service, read endpoint, and durable write path are staged-verified.
+- Verification: `python -B -m py_compile 部署工具\attention_api_server.py` passed. `python -B -m unittest tests.test_attention_api_server` passed. Aliyun local `/api/health` and `/api/attention` returned `200` after restart. A synthetic staged item posted to `/api/attention/ack` returned `200`, wrote `attention_items.status=acknowledged` and an `attention_acknowledgements` row, then the synthetic rows were removed and attention JSON was re-exported.
+- Live impact / deployment: Aliyun shadow release `20260604-080630-shadow-c84fefd` uploaded the threaded API server and related analysis files, then `crypto-attention-api.service` was restarted successfully. No Tencent trading service, Binance request, scanner, strategy rule, Kline/depth ingest, rollback, data reset, or zero-run change.
 - Files / release / commit: `部署工具/attention_api_server.py`, `CHANGELOG.md`, `PROJECT_STATE.md`, `记忆文档/MEMORY.md`, `记忆文档/FUTURE_EXECUTION_PLAN.md`.
 
 ## 2026-06-04 08:02 CST - Stage B/v16 scanner cooldown blocker

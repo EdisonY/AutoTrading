@@ -537,7 +537,7 @@ def build_payload(root: Path = ROOT, specs: list[dict[str, Any]] | None = None) 
         next_action = "run_staged_validation_then_zero_reset"
     else:
         overall_status = "skeleton_ready"
-        next_action = "ready_for_zero_reset"
+        next_action = "post_launch_staged_restoration"
     blockers = [
         {"id": item.get("id"), "name": item.get("name"), "blocker": blocker}
         for item in modules
@@ -570,7 +570,7 @@ def build_payload(root: Path = ROOT, specs: list[dict[str, Any]] | None = None) 
         "modules": modules,
         "validation_blockers": blockers,
         "post_launch_backlog": backlog,
-        "rule": "Do not expand detail work before the skeleton and staged validation gates pass.",
+        "rule": "First-version skeleton is landed; post-launch restoration must stay staged and queue/cooldown guarded.",
     }
 
 

@@ -2,6 +2,14 @@
 
 This is the durable reason-and-outcome ledger for every material design, code, configuration, deployment, rollback, optimization, or live operational change.
 
+## 2026-06-04 13:26 CST - Correct long-term next action after FINAL acceptance
+- Trigger / reason: Remote verification after FINAL foundation zero-run showed the long-term matrix itself was `skeleton_ready=12/12` with no blockers, but the high-level `next_action` string still said `ready_for_zero_reset`, which could mislead the operator into thinking FINAL reset/zero-run was still ahead.
+- Completed: Changed `long_term_skeleton_review.py` overall ready-state `next_action` to `post_launch_staged_restoration` and updated its rule text so the matrix points to staged service restoration instead of another zero reset. No first-version blocker was reintroduced.
+- Not completed / remaining: Tencent/Aliyun no-restart report sync and post-sync verification will follow from the committed source hash. Scanner/cache/sentinel/account-snapshot/system-alerts/data-maintenance remain post-launch staged restoration work.
+- Verification: `python -B -m py_compile 部署工具\long_term_skeleton_review.py`, `python -B -m unittest tests.test_long_term_skeleton_review`, `git diff --check`, and `python 部署工具\long_term_skeleton_review.py` passed. Local matrix remains `skeleton_ready=12`, `blocked_by_staged_validation=0`, `validation_blockers=0`, `ready_bones=143/143`, and the ready-state next action is now `post_launch_staged_restoration`.
+- Live impact / deployment: Local/reporting change only so far. No service restart, Binance request, strategy rule, order behavior, data reset, or scanner/cache/sentinel restoration.
+- Files / release / commit: `部署工具/long_term_skeleton_review.py`, `CHANGELOG.md`; source commit to follow.
+
 ## 2026-06-04 13:18 CST - Accept FINAL foundation zero-run and clear first-version blockers
 - Trigger / reason: The post-reset zero-run needed a safe retry after the signed A/v11 cooldown ended at `2026-06-04T13:04:53.840+08:00`, without expanding into scanner/cache/sentinel validation or triggering another Binance cooldown.
 - Completed: Deployed the account-state bootstrap and user-stream idle-touch fix to Tencent without service restarts, then ran the minimal foundation zero-run. `crypto-account-state.service` now writes stale A/B/C placeholders through `--bootstrap-empty` without any signed REST. `crypto-binance-api-queue.service` and A/B/C user-stream services are active. No scanner, market-data-cache, sentinel, account-snapshot, system-alerts, data-maintenance, or strategy service was restarted. Updated `long_term_skeleton_review.py` so FINAL no longer blocks first-version skeleton landing; scanner/cache/sentinel/account-snapshot restoration and natural open/close evidence remain post-launch backlog.

@@ -381,6 +381,7 @@
 - 2026-06-04：B/v16 单生产者重试仍被 Testnet Kline REST ban 卡住。`08:36` 后 B alone 两次 `/fapi/v1/ticker/24hr` 为 `200`，第一条 `/fapi/v1/klines BTCUSDT 1h limit=200` 触发 `HTTP 418/-1003`；B 已停，deferred 请求已 failed，queue cooldown 到 `10:08:56 CST`。已新增 `SCANNER_KLINE_NETWORK_ENABLED=0` staged 开关，A/B/C scanner 在该模式只读本地 Kline cache，缺缓存就跳过分析，不碰 Binance Kline。默认仍开启网络，不改正常策略行为。
 - 2026-06-04：staged Kline cache-only 已无重启部署到 Tencent。commit `d124eeb` / release `20260604-085014-all-d124eeb` 已上传；A/B/C scanner drop-in 设置 `SCANNER_KLINE_NETWORK_ENABLED=0` 与 `SCANNER_KLINE_CACHE_MAX_AGE_SEC=86400`，B/C 仍为 `1/1` 小宇宙。A/B/C/cache/sentinel 仍 inactive，queue/user-stream active，queue 无 pending；等 public cooldown `10:08:56 CST` 后只启动 B/v16 单生产者验收。
 - 2026-06-04：继续 P0-B fresh exact parity。C/v14 staged scanner 已能用 cache-only + fresh watchlist 产出真实 `sentinel_scans` blacklist exact case；为避免 A/B staged fresh rows coverage 掉到 partial，B/v16 loss blacklist 和 A/v11 VPB blacklist scan rows 也补了 replayable `symbol_blacklist` exact case。此变更只补遥测/验收骨架，不改阈值、风控、仓位、杠杆、止损或下单。
+- 2026-06-04：P0-B staged scan-flow evidence 已生成。Tencent fresh window `11:24:30`-`11:43:10 CST` 有 A/B/C scanner 真实写入的 6 条 scan-level exact case，strict audit accepted，coverage/pass 100%。这不是完整 P0-B 生产接受：open/close flow rows 仍为 0，最终还要 P0-A clean run 和 zero-run。A/v11 staged 单轮暴露一个初始化 exchangeInfo public queue intent，已改为 lazy-load，避免 pre-filter staged 验收也排 public 请求。
 
 ---
 ## 2026-05-29 全局运行自检与账户方向口径修复

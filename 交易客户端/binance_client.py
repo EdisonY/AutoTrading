@@ -253,13 +253,22 @@ class BinanceClient:
         if not API_KEY or not API_SECRET:
             raise RuntimeError("Missing BINANCE_A_API_KEY / BINANCE_A_API_SECRET")
         self._ctval_cache: dict[str, float] = {}
-        self._markets = get_markets()
+        self._markets = {}
         self._account_cache_ttl = float(os.environ.get("BINANCE_ACCOUNT_CACHE_TTL_SEC", "5"))
         self._balance_cache = None
         self._positions_cache = None
         self._last_balance_error = None
         self._last_positions_error = None
         logger.info("BinanceClient 初始化完成")
+
+    def _load_markets(self, *, force: bool = False) -> dict:
+        global _markets_cache
+        if force:
+            _markets_cache = None
+            self._markets = {}
+        if not self._markets:
+            self._markets = get_markets()
+        return self._markets
 
     def _cache_valid(self, cached) -> bool:
         return cached is not None and (time.time() - cached[0]) <= self._account_cache_ttl
@@ -327,7 +336,7 @@ class BinanceClient:
             self._ctval_cache[symbol] = CTVAL_DEFAULTS[symbol]
             return CTVAL_DEFAULTS[symbol]
 
-        market = self._markets.get(symbol, {})
+        market = self._load_markets().get(symbol, {})
         ct_val = float(market.get("contractSize", 1))
         self._ctval_cache[symbol] = ct_val
         logger.info(f"合约面值 {symbol}: {ct_val}")
@@ -353,12 +362,9 @@ class BinanceClient:
         return check["quantity"] if check["ok"] else 0.0
 
     def get_symbol_rules(self, symbol: str) -> SymbolRules | None:
-        market = self._markets.get(symbol)
+        market = self._load_markets().get(symbol)
         if not market:
-            global _markets_cache
-            _markets_cache = None
-            self._markets = get_markets()
-            market = self._markets.get(symbol)
+            market = self._load_markets(force=True).get(symbol)
         if not market:
             return None
         return rules_from_symbol(market.get("info") or {
@@ -412,13 +418,10 @@ class BinanceClient:
 
     def is_tradable(self, symbol: str) -> dict:
         """检查合约是否可交易"""
-        market = self._markets.get(symbol)
+        market = self._load_markets().get(symbol)
         if not market:
             # 尝试重新加载市场数据
-            global _markets_cache
-            _markets_cache = None
-            self._markets = get_markets()
-            market = self._markets.get(symbol)
+            market = self._load_markets(force=True).get(symbol)
 
         if not market:
             return {"tradable": False, "reason": "合约不存在"}

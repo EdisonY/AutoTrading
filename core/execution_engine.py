@@ -87,6 +87,29 @@ class ExecutionResult:
         return detail if isinstance(detail, dict) else {}
 
 
+def scanner_order_enabled() -> bool:
+    value = os.environ.get("SCANNER_ORDER_ENABLED", "1").strip().lower()
+    return value not in {"0", "false", "no", "off"}
+
+
+def scanner_order_disabled_result(action: str, symbol: str, side: str, quantity: float = 0.0) -> ExecutionResult:
+    detail = {
+        "ok": False,
+        "code": "scanner_order_disabled",
+        "reason": "scanner order execution disabled by SCANNER_ORDER_ENABLED=0",
+    }
+    return ExecutionResult(
+        False,
+        action,
+        symbol,
+        side,
+        quantity,
+        code="scanner_order_disabled",
+        message=detail["reason"],
+        raw={"preflight": detail},
+    )
+
+
 class ExecutionEngine:
     def __init__(
         self,
@@ -136,6 +159,8 @@ class ExecutionEngine:
         qty = req.quantity
         if qty is None:
             qty = self.calc_quantity(req.symbol, req.price, req.risk_usdt, req.leverage, req.max_quantity)
+        if not scanner_order_enabled():
+            return scanner_order_disabled_result("open", req.symbol, req.side, float(qty or 0.0))
         if qty <= 0:
             return ExecutionResult(False, "open", req.symbol, req.side, qty, code="qty<=0", message="quantity too small")
         if hasattr(self.client, "validate_order_quantity"):
@@ -264,6 +289,8 @@ class ExecutionEngine:
         )
 
     def close_position(self, req: CloseRequest) -> ExecutionResult:
+        if not scanner_order_enabled():
+            return scanner_order_disabled_result("close", req.symbol, req.side, float(req.quantity or 0.0))
         if req.cancel_open_orders:
             self._cancel_open_orders(req.symbol)
         confirm_cache: dict[str, Any] = {}

@@ -10,6 +10,8 @@
 
 2026-06-04 冷却后恢复规则补充：B/v16 signed baseline 触发的 `HTTP 418/-1003` cooldown 已在 `2026-06-04 15:15:54.959 +08` 后清除，read-only queue/service/journal check clean。当前已只恢复 API queue、market-data-cache、sentinel、A/v11 user-stream、B/v16 user-stream、C/v14 user-stream；queue rows `486`-`508` 全部 `done/200`，A listenKey row `494`、B listenKey row `501`、C listenKey row `506` 均为 `200`。A/B/C scanners、account-snapshot 仍停。不要重试 B/C signed baseline；下一步是 scanner/account-snapshot gate 自检。B/C user-stream idle 没有产生真实 `ACCOUNT_UPDATE`，所以 B/C account-state 仍 stale，不能按 fresh 启动 scanner。`binance_start_guard.py` 继续作为本地 `ExecStartPre` 安全带，只读 queue cooldown DB，不调用 Binance；它不替代每步前后的 queue/service/journal clean check。
 
+2026-06-04 staged scanner 观察补充：为避免 scanner 验收阶段误下单/平仓/改 leverage/margin，新增 `SCANNER_ORDER_ENABLED=0` 禁单观察开关。默认仍为 order-enabled；显式关闭时 `ExecutionEngine` 在 open/close/cancel/confirmation 前返回 `scanner_order_disabled` preflight，C/v14 也跳过开仓前 leverage/margin。下一步部署后，先在 cache-only + 小宇宙 + queue/cooldown/journal clean 的条件下用该开关做 bounded scanner observation。该开关只降低 staged 风险，不改变 B/C account-state stale 事实，不替代真实 live-order 验收。
+
 ### Long-term P0 - 必须先完成
 
 1. **P0-A Binance API 根治**

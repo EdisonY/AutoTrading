@@ -1,15 +1,19 @@
+import os
 import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from core.account_state import build_account_state_payload, write_account_state
-from core.execution_engine import ConfirmationStateUnavailable, ExecutionEngine
+from core.execution_engine import CloseRequest, ConfirmationStateUnavailable, ExecutionEngine, OpenRequest
 
 
 class FakeClient:
     def __init__(self):
         self.get_positions_calls = 0
+        self.open_calls = []
+        self.close_calls = []
+        self.delete_calls = []
 
     def get_positions(self):
         self.get_positions_calls += 1
@@ -17,6 +21,21 @@ class FakeClient:
 
     def invalidate_account_snapshot(self):
         pass
+
+    def open_long(self, *args):
+        self.open_calls.append(("open_long", args))
+        return {"orderId": "should-not-call"}
+
+    def open_short(self, *args):
+        self.open_calls.append(("open_short", args))
+        return {"orderId": "should-not-call"}
+
+    def close_position(self, *args, **kwargs):
+        self.close_calls.append((args, kwargs))
+        return {"orderId": "should-not-call"}
+
+    def _delete(self, symbol):
+        self.delete_calls.append(symbol)
 
 
 class ExecutionEngineAccountStateTest(unittest.TestCase):
@@ -42,6 +61,60 @@ class ExecutionEngineAccountStateTest(unittest.TestCase):
 
             self.assertEqual(client.get_positions_calls, 0)
             self.assertEqual(positions[0]["symbol"], "BTCUSDT")
+
+    def test_order_disabled_blocks_open_before_client_order_call(self):
+        old_value = os.environ.get("SCANNER_ORDER_ENABLED")
+        os.environ["SCANNER_ORDER_ENABLED"] = "0"
+        try:
+            client = FakeClient()
+            engine = ExecutionEngine(client, "A/v11")
+
+            result = engine.open_position(OpenRequest(
+                symbol="BTCUSDT",
+                side="long",
+                price=100.0,
+                risk_usdt=100.0,
+                leverage=4,
+                take_profit=110.0,
+                stop_loss=90.0,
+                quantity=1.0,
+            ))
+        finally:
+            if old_value is None:
+                os.environ.pop("SCANNER_ORDER_ENABLED", None)
+            else:
+                os.environ["SCANNER_ORDER_ENABLED"] = old_value
+
+        self.assertFalse(result.success)
+        self.assertTrue(result.preflight_rejected)
+        self.assertEqual(result.code, "scanner_order_disabled")
+        self.assertEqual(client.open_calls, [])
+
+    def test_order_disabled_blocks_close_before_cancel_or_client_order_call(self):
+        old_value = os.environ.get("SCANNER_ORDER_ENABLED")
+        os.environ["SCANNER_ORDER_ENABLED"] = "0"
+        try:
+            client = FakeClient()
+            engine = ExecutionEngine(client, "A/v11")
+
+            result = engine.close_position(CloseRequest(
+                symbol="BTCUSDT",
+                side="long",
+                quantity=1.0,
+                cancel_open_orders=True,
+            ))
+        finally:
+            if old_value is None:
+                os.environ.pop("SCANNER_ORDER_ENABLED", None)
+            else:
+                os.environ["SCANNER_ORDER_ENABLED"] = old_value
+
+        self.assertFalse(result.success)
+        self.assertTrue(result.preflight_rejected)
+        self.assertEqual(result.code, "scanner_order_disabled")
+        self.assertEqual(client.delete_calls, [])
+        self.assertEqual(client.close_calls, [])
+        self.assertEqual(client.get_positions_calls, 0)
 
     def test_confirmation_requires_fresh_central_state_by_default(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -1,12 +1,13 @@
 import json
 import importlib.util
+import os
 import sys
 import unittest
 from datetime import datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
-from core.execution_engine import ExecutionResult
+from core.execution_engine import ExecutionEngine, ExecutionResult
 from core.risk_engine import RiskEngine, RiskLimits
 from core.strategy_gate_cases import evaluate_strategy_gate_case, evaluate_strategy_gate_cases, strategy_gate_case
 from core.strategy_gates import evaluate_positive_quantity_gate, evaluate_symbol_blacklist_gate, evaluate_symbol_cooldown_gate
@@ -87,12 +88,24 @@ class _TradableClient:
 class _LeverageClient:
     def __init__(self):
         self.calls = []
+        self.open_calls = []
+
+    def calc_size(self, symbol, price, risk_usdt, leverage):
+        return 4.0
 
     def set_leverage(self, symbol, leverage):
         self.calls.append(("set_leverage", symbol, leverage))
 
     def set_margin_type(self, symbol, margin_type):
         self.calls.append(("set_margin_type", symbol, margin_type))
+
+    def open_long(self, *args):
+        self.open_calls.append(("open_long", args))
+        return {"orderId": "should-not-call"}
+
+    def open_short(self, *args):
+        self.open_calls.append(("open_short", args))
+        return {"orderId": "should-not-call"}
 
 
 class StrategyGateCasesTest(unittest.TestCase):
@@ -805,6 +818,72 @@ class StrategyGateCasesTest(unittest.TestCase):
         ])
         self.assertEqual([row["passed"] for row in evaluate_strategy_gate_cases(cases)], [True] * len(cases))
         self.assertIn(("COPENUSDT", "long"), scanner.positions["1h"])
+
+    def test_c_v14_order_disabled_skips_before_leverage_or_margin_calls(self):
+        scanner = scanner_v14_module.Scanner.__new__(scanner_v14_module.Scanner)
+        scanner.positions = {"1h": {}, "15m": {}}
+        scanner.cooldowns = {"1h": {}, "15m": {}}
+        scanner.recent_entry_prices = {}
+        scanner.leverage = 4
+        scanner.client = _LeverageClient()
+        scanner.risk_engine = RiskEngine(RiskLimits(
+            max_total_positions=20,
+            max_positions_per_side=12,
+            min_available_balance_pct=0.25,
+            min_available_balance_usdt=300,
+        ))
+        scanner.execution = ExecutionEngine(scanner.client, "C/v14")
+        sig = {
+            "symbol": "COBSUSDT",
+            "timeframe": "1h",
+            "trade_side": "long",
+            "net_score": 72,
+            "price": 100,
+            "atr": 2,
+            "atr_pct": 0.02,
+            "bb_pos": 55,
+            "rsi": 52,
+            "adx": 25,
+            "vol_ratio": 1.4,
+            "mfi": 50,
+            "st_flipped": False,
+            "sl_long": 95,
+            "tp_long": 115,
+            "sl_short": 105,
+            "tp_short": 85,
+            "reasons_long": ["test"],
+            "reasons_short": [],
+        }
+        events = []
+        cached_state = SimpleNamespace(
+            positions=[],
+            balance={"totalWalletBalance": "5000", "availableBalance": "4500"},
+        )
+        old_order_enabled = os.environ.get("SCANNER_ORDER_ENABLED")
+        original_log_event = scanner_v14_module.log_event
+        original_load_cached = scanner_v14_module.load_cached_account_state
+        original_logger_disabled = scanner_v14_module.logger.disabled
+        os.environ["SCANNER_ORDER_ENABLED"] = "0"
+        scanner_v14_module.log_event = events.append
+        scanner_v14_module.load_cached_account_state = lambda root, strategy: cached_state
+        scanner_v14_module.logger.disabled = True
+        try:
+            scanner._open_position(sig, "2026-06-04 17:05:00", open_chain_cases=[])
+        finally:
+            if old_order_enabled is None:
+                os.environ.pop("SCANNER_ORDER_ENABLED", None)
+            else:
+                os.environ["SCANNER_ORDER_ENABLED"] = old_order_enabled
+            scanner_v14_module.log_event = original_log_event
+            scanner_v14_module.load_cached_account_state = original_load_cached
+            scanner_v14_module.logger.disabled = original_logger_disabled
+
+        self.assertEqual(scanner.client.calls, [])
+        self.assertEqual(scanner.client.open_calls, [])
+        self.assertEqual(events[0]["event"], "OPEN_SKIPPED")
+        self.assertEqual(events[0]["code"], "scanner_order_disabled")
+        self.assertEqual(events[0]["preflight"]["code"], "scanner_order_disabled")
+        self.assertNotIn(("COBSUSDT", "long"), scanner.positions["1h"])
 
     def test_b_v16_blacklist_scan_logs_replayable_exact_case(self):
         scanner = scanner_v16_module.ScannerV16.__new__(scanner_v16_module.ScannerV16)

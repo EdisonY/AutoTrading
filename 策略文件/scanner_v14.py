@@ -55,7 +55,7 @@ from cloud.analyzer.auxiliary import (
 from binance_client_v3 import get_client, BinanceClientV3 as ExchangeClient, _delete
 from core.audit_log import write_jsonl_with_daily_shard
 from core.account_state_cache import load_cached_account_state
-from core.execution_engine import CloseRequest, ExecutionEngine, OpenRequest
+from core.execution_engine import CloseRequest, ExecutionEngine, OpenRequest, scanner_order_enabled
 from core.exchange_state import count_active_positions, count_side_positions, find_symbol_position, usdt_balance_summary
 from core.event_store import EventStoreWriter
 from core.market_watchlist import load_sentinel_context
@@ -2273,10 +2273,6 @@ class Scanner:
         )
         runtime_chain_cases.append(market_case)
 
-        # 设置杠杆和保证金类型
-        self.client.set_leverage(inst_id, self.leverage)
-        self.client.set_margin_type(inst_id, "CROSSED")
-
         # 统一执行层计算数量并下单
         qty = self.execution.calc_quantity(inst_id, price, risk_usdt, self.leverage)
         quantity_gate = evaluate_positive_quantity_gate(quantity=qty)
@@ -2317,17 +2313,34 @@ class Scanner:
         )
         runtime_chain_cases.append(quantity_case)
 
-        exec_result = self.execution.open_position(OpenRequest(
-            symbol=inst_id,
-            side=side,
-            price=price,
-            risk_usdt=risk_usdt,
-            leverage=self.leverage,
-            take_profit=tp,
-            stop_loss=sl,
-            quantity=qty,
-            confirm_position=True,
-        ))
+        if not scanner_order_enabled():
+            exec_result = self.execution.open_position(OpenRequest(
+                symbol=inst_id,
+                side=side,
+                price=price,
+                risk_usdt=risk_usdt,
+                leverage=self.leverage,
+                take_profit=tp,
+                stop_loss=sl,
+                quantity=qty,
+                confirm_position=True,
+            ))
+        else:
+            # 设置杠杆和保证金类型
+            self.client.set_leverage(inst_id, self.leverage)
+            self.client.set_margin_type(inst_id, "CROSSED")
+
+            exec_result = self.execution.open_position(OpenRequest(
+                symbol=inst_id,
+                side=side,
+                price=price,
+                risk_usdt=risk_usdt,
+                leverage=self.leverage,
+                take_profit=tp,
+                stop_loss=sl,
+                quantity=qty,
+                confirm_position=True,
+            ))
         if not exec_result.success:
             execution_gate = evaluate_execution_result_gate(
                 success=exec_result.success,

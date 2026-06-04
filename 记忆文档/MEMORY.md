@@ -370,6 +370,7 @@
 - 2026-06-04：P1-B/P1-C B/v16 保护性出场 replay parity 已离线落地。`core.replay_fill` 新增默认关闭的 close-price hard-bottom / profit-retrace exits；`b_v16_rollout_review.py` 开启 B/v16 实盘常量：10% 杠杆硬底、30 USDT 最低最高浮盈、25% 盈利回撤。B/v16 rollout replay 现在可把回放出场归因为 `hard_bottom` / `profit_retrace`，但仍只读本地/镜像 Kline/depth，不抓 Binance、不改实盘出场。
 - 2026-06-04：长期骨架远端验收路径误判已修。Tencent/Aliyun 是扁平 release root，`long_term_skeleton_review.py` 现在支持 `部署工具/`、`策略文件/`、`交易客户端/`、`部署工具/systemd/` 的部署别名，远端未部署的源码/测试骨架按“本地 strict skeleton review 已验收的 repo-only bone”处理；`release_manager.py` portal post hook 先跑 skeleton review 再跑 system alerts，避免施工暂停服务被误报成 P0。此修复不启动服务、不请求 Binance、不清脏数据；最终 staged validation 和 zero-run 仍未完成。
 - 2026-06-04：补修长期骨架远端判断。Tencent root 可能同时有扁平脚本和残留 `部署工具/` 目录；flat-root 判断已改为只要 root 有 `long_term_skeleton_review.py` 或 `portal_dashboard.py` 就按扁平部署处理，且扁平 root 文件优先于残留 repo-shaped 旧拷贝，避免再次误报 `missing_skeleton=12`。
+- 2026-06-04：B/v16 cooldown 等待期间修正施工态展示。Tencent/Aliyun 已用各自正确 Python runtime 重跑 long-term skeleton/replay readiness；Tencent `system_alerts.py --once` 后总入口从 bad 回到 warn/施工暂停，骨架仍是 `143/143`、`blocked_by_staged_validation`。同时把 C/v14 staged drop-in 收紧到 `SCANNER_C_TOP_SYMBOLS=1` / `SCANNER_C_SENTINEL_LIMIT=1`，服务保持 inactive；C 只能在 B 单生产者重试通过后再单独启动。
 
 ---
 ## 2026-05-29 全局运行自检与账户方向口径修复

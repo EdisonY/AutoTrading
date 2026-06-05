@@ -55,6 +55,33 @@ class UnfilledOpenClient(FakeClient):
         return []
 
 
+class ReduceOnlyRejectCloseClient(FakeClient):
+    def close_position(self, *args, **kwargs):
+        self.close_calls.append((args, kwargs))
+        if len(self.close_calls) == 1:
+            return {"code": "-2022", "msg": "ReduceOnly Order is rejected."}
+        return {"orderId": "retry-close", "status": "FILLED", "executedQty": "4738.7"}
+
+    def _delete(self, symbol):
+        self.delete_calls.append(symbol)
+        return {"code": 200, "msg": "The operation of cancel all open order is done."}
+
+
+class ReduceOnlyCancelFailClient(ReduceOnlyRejectCloseClient):
+    def _delete(self, symbol):
+        self.delete_calls.append(symbol)
+        return {"code": "-1003", "msg": "queued request blocked by active cooldown"}
+
+
+class ReduceOnlyNoCancelClient:
+    def __init__(self):
+        self.close_calls = []
+
+    def close_position(self, *args, **kwargs):
+        self.close_calls.append((args, kwargs))
+        return {"code": "-2022", "msg": "ReduceOnly Order is rejected."}
+
+
 class ExecutionEngineAccountStateTest(unittest.TestCase):
     def test_confirmation_uses_fresh_central_state(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -193,6 +220,88 @@ class ExecutionEngineAccountStateTest(unittest.TestCase):
 
         self.assertTrue(result.success)
         self.assertEqual(client.delete_calls, ["BTCUSDT"])
+
+    def test_close_reduce_only_reject_cancels_symbol_orders_then_retries_once(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            payload = build_account_state_payload([
+                {
+                    "ts": datetime.now(timezone.utc).isoformat(),
+                    "account": "B",
+                    "strategy": "B/v16",
+                    "positions": [{"symbol": "ARBUSDT", "side": "SHORT", "qty": 4738.7}],
+                }
+            ])
+            write_account_state(root, payload)
+            client = ReduceOnlyRejectCloseClient()
+            engine = ExecutionEngine(client, "B/v16", account_state_root=root, central_confirmation_max_age_seconds=60)
+
+            result = engine.close_position(CloseRequest(
+                symbol="ARBUSDT",
+                side="short",
+                quantity=4738.7,
+                confirm_position=False,
+            ))
+
+            self.assertTrue(result.success)
+            self.assertEqual(client.delete_calls, ["ARBUSDT"])
+            self.assertEqual(len(client.close_calls), 2)
+            self.assertEqual(client.close_calls[0][1]["position_side"], "SHORT")
+            self.assertEqual(client.close_calls[0][1]["order_side"], "BUY")
+            self.assertIn("_reduce_only_recovery", result.raw)
+
+    def test_close_reduce_only_reject_does_not_retry_when_cancel_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            payload = build_account_state_payload([
+                {
+                    "ts": datetime.now(timezone.utc).isoformat(),
+                    "account": "B",
+                    "strategy": "B/v16",
+                    "positions": [{"symbol": "ARBUSDT", "side": "SHORT", "qty": 4738.7}],
+                }
+            ])
+            write_account_state(root, payload)
+            client = ReduceOnlyCancelFailClient()
+            engine = ExecutionEngine(client, "B/v16", account_state_root=root, central_confirmation_max_age_seconds=60)
+
+            result = engine.close_position(CloseRequest(
+                symbol="ARBUSDT",
+                side="short",
+                quantity=4738.7,
+                confirm_position=False,
+            ))
+
+            self.assertFalse(result.success)
+            self.assertEqual(result.code, "close_reduce_only_cancel_failed")
+            self.assertEqual(client.delete_calls, ["ARBUSDT"])
+            self.assertEqual(len(client.close_calls), 1)
+
+    def test_close_reduce_only_reject_does_not_retry_without_cancel_support(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            payload = build_account_state_payload([
+                {
+                    "ts": datetime.now(timezone.utc).isoformat(),
+                    "account": "B",
+                    "strategy": "B/v16",
+                    "positions": [{"symbol": "ARBUSDT", "side": "SHORT", "qty": 4738.7}],
+                }
+            ])
+            write_account_state(root, payload)
+            client = ReduceOnlyNoCancelClient()
+            engine = ExecutionEngine(client, "B/v16", account_state_root=root, central_confirmation_max_age_seconds=60)
+
+            result = engine.close_position(CloseRequest(
+                symbol="ARBUSDT",
+                side="short",
+                quantity=4738.7,
+                confirm_position=False,
+            ))
+
+            self.assertFalse(result.success)
+            self.assertEqual(result.code, "close_reduce_only_cancel_failed")
+            self.assertEqual(len(client.close_calls), 1)
 
     def test_confirmation_rest_fallback_confirms_when_central_state_is_too_old(self):
         with tempfile.TemporaryDirectory() as tmp:

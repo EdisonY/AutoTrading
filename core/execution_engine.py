@@ -387,6 +387,40 @@ class ExecutionEngine:
             raw = self._submit_close(req.symbol, req.side, qty, close_target)
         except Exception as exc:
             return ExecutionResult(False, "close", req.symbol, req.side, qty, code="exception", message=str(exc))
+        if self._is_reduce_only_reject(raw):
+            cancel_raw = self._cancel_open_orders(req.symbol)
+            if not self._cancel_open_orders_succeeded(cancel_raw):
+                return ExecutionResult(
+                    False,
+                    "close",
+                    req.symbol,
+                    req.side,
+                    qty,
+                    status="CLOSE_REDUCE_ONLY_CANCEL_FAILED",
+                    code="close_reduce_only_cancel_failed",
+                    message=self._raw_message(cancel_raw),
+                    raw={"initial": raw, "cancel_open_orders": cancel_raw},
+                )
+            try:
+                close_target = self._close_target(req.symbol, req.side, confirm_cache, force_refresh=False)
+                submitted_at = datetime.now(timezone.utc)
+                retry_raw = self._submit_close(req.symbol, req.side, qty, close_target)
+            except Exception as exc:
+                return ExecutionResult(
+                    False,
+                    "close",
+                    req.symbol,
+                    req.side,
+                    qty,
+                    status="CLOSE_REDUCE_ONLY_RETRY_EXCEPTION",
+                    code="close_reduce_only_retry_exception",
+                    message=str(exc),
+                    raw={"initial": raw, "cancel_open_orders": cancel_raw},
+                )
+            if isinstance(retry_raw, dict):
+                retry_raw = dict(retry_raw)
+                retry_raw.setdefault("_reduce_only_recovery", {"initial": raw, "cancel_open_orders": cancel_raw})
+            raw = retry_raw
         confirm_cache["min_observed_at"] = submitted_at
         if self._is_success(raw):
             remaining_qty = 0.0
@@ -595,12 +629,13 @@ class ExecutionEngine:
         except TypeError:
             return self.client.close_position(symbol, side, quantity=quantity)
 
-    def _cancel_open_orders(self, symbol: str) -> None:
+    def _cancel_open_orders(self, symbol: str) -> Any:
         try:
             if hasattr(self.client, "_delete"):
-                self.client._delete(symbol)
-        except Exception:
-            pass
+                return self.client._delete(symbol)
+        except Exception as exc:
+            return {"code": "cancel_exception", "msg": str(exc)}
+        return None
 
     def _confirm_position_qty(
         self,
@@ -765,3 +800,15 @@ class ExecutionEngine:
         code = cls._raw_code(raw)
         msg = cls._raw_message(raw).lower()
         return code == "-4164" or "notional must be no smaller than 5" in msg
+
+    @classmethod
+    def _is_reduce_only_reject(cls, raw: Any) -> bool:
+        code = cls._raw_code(raw)
+        msg = cls._raw_message(raw).lower()
+        return code == "-2022" or "reduceonly order is rejected" in msg
+
+    @classmethod
+    def _cancel_open_orders_succeeded(cls, raw: Any) -> bool:
+        if not isinstance(raw, dict):
+            return False
+        return cls._raw_code(raw) in ("", "0", "200")

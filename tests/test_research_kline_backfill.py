@@ -158,6 +158,7 @@ class ResearchKlineBackfillTests(unittest.TestCase):
             self.assertEqual(queue.summary()["counts"], {"queued": 1})
             leased = queue.lease_next(worker_id="test", at_ms=self.tool.now_ms() + 61_000)
             self.assertEqual(leased.path, "/fapi/v1/klines")
+            self.assertEqual(leased.url, "https://fapi.binance.com/fapi/v1/klines")
             self.assertEqual(leased.body["symbol"], "ABCUSDT")
 
     def test_ingest_done_requests_merges_queue_result(self):

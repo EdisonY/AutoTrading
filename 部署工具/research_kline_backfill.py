@@ -45,6 +45,7 @@ INTERVAL_MS = {
 }
 DEFAULT_INTERVALS = ("15m", "30m", "1h")
 SYMBOL_SOURCE_TABLES = ("events", "sentinel_scans")
+DEFAULT_KLINE_BASE_URL = "https://fapi.binance.com"
 
 
 def now_cst() -> datetime:
@@ -228,11 +229,12 @@ def build_backfill_plan(
     }
 
 
-def submit_plan(queue: BinanceApiQueue, items: list[dict[str, Any]], *, stagger_sec: int) -> dict[str, Any]:
+def submit_plan(queue: BinanceApiQueue, items: list[dict[str, Any]], *, stagger_sec: int, base_url: str = DEFAULT_KLINE_BASE_URL) -> dict[str, Any]:
     submitted = 0
     existing = 0
     request_ids: list[str] = []
     base_ms = now_ms()
+    kline_url = f"{str(base_url).strip().rstrip('/')}/fapi/v1/klines"
     for idx, item in enumerate(items):
         before_counts = queue.summary().get("counts", {})
         request = queue.submit_request(
@@ -240,6 +242,7 @@ def submit_plan(queue: BinanceApiQueue, items: list[dict[str, Any]], *, stagger_
             label="research_kline_backfill",
             method="GET",
             path="/fapi/v1/klines",
+            url=kline_url,
             body=item.get("body") if isinstance(item.get("body"), dict) else {},
             priority=PRIORITY_NORMAL,
             earliest_ms=base_ms + idx * max(0, int(stagger_sec)) * 1000,
@@ -404,6 +407,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--format", choices=["parquet", "jsonl"], default="parquet")
     parser.add_argument("--submit", action="store_true", help="Submit planned requests to the local central API queue")
     parser.add_argument("--stagger-sec", type=int, default=60)
+    parser.add_argument("--kline-base-url", default=DEFAULT_KLINE_BASE_URL)
     parser.add_argument("--ingest-done", action="store_true", help="Merge completed queue Kline responses into research_store")
     return parser.parse_args(argv)
 
@@ -426,7 +430,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     submit_result: dict[str, Any] = {}
     if args.submit and plan.get("items"):
-        submit_result = submit_plan(BinanceApiQueue(queue_db), plan["items"], stagger_sec=args.stagger_sec)
+        submit_result = submit_plan(
+            BinanceApiQueue(queue_db),
+            plan["items"],
+            stagger_sec=args.stagger_sec,
+            base_url=args.kline_base_url,
+        )
     ingest_result: dict[str, Any] = {}
     if args.ingest_done:
         ingest_result = ingest_done_requests(queue_db, store, args.format)
@@ -439,6 +448,7 @@ def main(argv: list[str] | None = None) -> int:
         "queue_db": str(queue_db),
         "format": args.format,
         "symbol_source_rows": len(symbol_rows),
+        "kline_base_url": args.kline_base_url,
         "plan": plan,
         "submit": submit_result,
         "ingest": ingest_result,

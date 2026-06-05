@@ -20,7 +20,7 @@ def market_cache_max_age_seconds(default: int = 45) -> int:
 def market_data_network_enabled() -> bool:
     raw = os.environ.get("SCANNER_MARKET_DATA_NETWORK_ENABLED")
     if raw is None:
-        raw = os.environ.get("SCANNER_KLINE_NETWORK_ENABLED", "1")
+        raw = os.environ.get("SCANNER_KLINE_NETWORK_ENABLED", "0")
     return str(raw).strip().lower() not in {"0", "false", "no", "off"}
 
 

@@ -31,8 +31,8 @@ SAFETY = "read_only_no_binance_request_no_queue_submit_no_service_restart"
 STRATEGIES = ("A/v11", "B/v16", "C/v14")
 REASON_LABELS = {
     "duplicate_position": "已有同币种/同方向仓位，避免重复开仓",
-    "account_state_unavailable": "账户状态不够新，宁可不开仓",
-    "central_account_state_unavailable": "中心账户状态不够新，宁可不开仓",
+    "account_state_unavailable": "开仓前账户资料暂时不够新；恢复期会用已验证快照/用户流补新，不该长期挡住信号",
+    "central_account_state_unavailable": "中心账户资料暂时不够新；先修刷新链路，不把有效信号当没机会",
     "scanner_order_disabled": "观察模式关闭下单，只收扫描证据",
     "market_data_unavailable": "行情/K线缓存不足，策略不硬开",
     "kline_unavailable": "K线缓存不足，策略不硬开",
@@ -188,9 +188,10 @@ def queue_review(runtime_dir: Path, mirror_runtime: Path) -> dict[str, Any]:
             out["active_requests"] = int(conn.execute(
                 "select count(*) from api_requests where status in ('queued','deferred','leased')"
             ).fetchone()[0])
-            if table_exists(conn, "cooldowns"):
+            cooldown_table = "api_cooldowns" if table_exists(conn, "api_cooldowns") else "cooldowns" if table_exists(conn, "cooldowns") else ""
+            if cooldown_table:
                 out["active_cooldowns"] = int(conn.execute(
-                    "select count(*) from cooldowns where until_ms > ?", (now_ms,)
+                    f"select count(*) from {cooldown_table} where until_ms > ?", (now_ms,)
                 ).fetchone()[0])
             out["recent_bad"] = int(conn.execute(
                 """
@@ -205,6 +206,91 @@ def queue_review(runtime_dir: Path, mirror_runtime: Path) -> dict[str, Any]:
             out["latest_rows"] = [dict(row) for row in latest_rows]
     except Exception as exc:
         out["error"] = str(exc)
+    return out
+
+
+def apply_alert_queue_fallback(queue: dict[str, Any], runtime_dir: Path, mirror_runtime: Path) -> dict[str, Any]:
+    if queue.get("available") and (queue.get("active_cooldowns") or queue.get("recent_bad")):
+        return queue
+    alerts = read_json(first_existing(runtime_dir / "alerts_latest.json", mirror_runtime / "alerts_latest.json") or Path(""))
+    rows = alerts.get("alerts") if isinstance(alerts.get("alerts"), list) else []
+    has_rate_limit = False
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        text = f"{row.get('title') or ''} {row.get('body') or ''}".lower()
+        if "binance api限流" in text or "418" in text or "429" in text or "-1003" in text or "cooldown" in text:
+            has_rate_limit = True
+            break
+    if not has_rate_limit:
+        return queue
+    out = dict(queue)
+    out["alert_rate_limit_fallback"] = True
+    out["available"] = bool(out.get("available"))
+    out["active_cooldowns"] = max(1, int(out.get("active_cooldowns") or 0))
+    out["recent_bad"] = max(1, int(out.get("recent_bad") or 0))
+    out["note"] = "队列明细未拉回或不可读，但新鲜告警显示 Binance 限流/冷却；按有冷却处理。"
+    return out
+
+
+def account_state_review(runtime_dir: Path, mirror_runtime: Path) -> dict[str, Any]:
+    """Explain whether account-state freshness can block pre-entry gates.
+
+    This is read-only. It does not refresh account state or call Binance.
+    """
+    path = first_existing(
+        runtime_dir / "account_state_latest.json",
+        mirror_runtime / "account_state_latest.json",
+        runtime_dir / "account_snapshot_latest.json",
+        mirror_runtime / "account_snapshot_latest.json",
+    )
+    pre_entry_ttl = 7200.0
+    confirm_ttl = 15.0
+    out: dict[str, Any] = {
+        "available": False,
+        "source": str(path) if path else "",
+        "pre_entry_ttl_sec": int(pre_entry_ttl),
+        "post_submit_confirm_ttl_sec": int(confirm_ttl),
+        "pre_entry_blocking": True,
+        "status": "missing",
+        "plain_status": "没有账户资料文件；如果策略运行，会被账户风控挡住。",
+        "accounts": [],
+    }
+    payload = read_json(path or Path(""))
+    rows = payload.get("accounts") if isinstance(payload.get("accounts"), list) else []
+    if not rows:
+        return out
+    out["available"] = True
+    blocking = False
+    accounts = []
+    now = datetime.now(CST)
+    for raw in rows:
+        if not isinstance(raw, dict):
+            continue
+        strategy = str(raw.get("strategy") or f"{raw.get('account') or raw.get('key')}/{raw.get('version') or ''}").strip("/")
+        stale = bool(raw.get("stale"))
+        ts = parse_dt(raw.get("ts") or raw.get("snapshot_ts"))
+        age_sec = (now - ts.astimezone(CST)).total_seconds() if ts else None
+        fresh_for_entry = bool(ts) and not stale and age_sec is not None and 0 <= age_sec <= pre_entry_ttl
+        if not fresh_for_entry:
+            blocking = True
+        accounts.append({
+            "strategy": strategy or "unknown",
+            "age": age_text(ts),
+            "age_sec": int(age_sec) if age_sec is not None else None,
+            "stale": stale,
+            "fresh_for_entry": fresh_for_entry,
+            "open_positions": int(raw.get("open_positions") or 0),
+            "snapshot_error": str(raw.get("snapshot_error") or ""),
+        })
+    out["accounts"] = accounts
+    out["pre_entry_blocking"] = blocking
+    if blocking:
+        out["status"] = "blocking_pre_entry"
+        out["plain_status"] = "有账户资料过旧或标记 stale；会挡住开仓前风控，需要等用户流/快照链路恢复。"
+    else:
+        out["status"] = "fresh_for_pre_entry"
+        out["plain_status"] = "账户资料在恢复期 TTL 内；当前不应因为“账户状态不够新”挡住开仓信号。"
     return out
 
 
@@ -515,12 +601,13 @@ def build_payload(root: Path = ROOT, hours: int = 24) -> dict[str, Any]:
     reports_dir = root / "reports"
     mirror_runtime = root / "server_logs_tencent" / "runtime"
     event_db = first_existing(mirror_runtime / "event_store.sqlite3", runtime_dir / "event_store.sqlite3")
-    queue = queue_review(runtime_dir, mirror_runtime)
+    queue = apply_alert_queue_fallback(queue_review(runtime_dir, mirror_runtime), runtime_dir, mirror_runtime)
     skipped = open_skipped_review(event_db, hours)
     gaps = research_gap_review(runtime_dir, mirror_runtime)
     top100 = top100_review(runtime_dir, mirror_runtime)
     scan_coverage = scan_coverage_review(event_db, top100.get("top100_symbols") or [], hours)
     live_activity = live_activity_review(runtime_dir)
+    account_state = account_state_review(runtime_dir, mirror_runtime)
     status = "blocked_by_cooldown" if queue.get("active_cooldowns") else "safe_to_optimize_offline"
     readiness = {
         "decision": "hold_frequency" if queue.get("active_cooldowns") or queue.get("recent_bad") else "ready_for_plan_only_data_work",
@@ -543,6 +630,7 @@ def build_payload(root: Path = ROOT, hours: int = 24) -> dict[str, Any]:
         "queue": queue,
         "top100": top100,
         "scan_coverage": scan_coverage,
+        "account_state": account_state,
         "open_skipped": skipped,
         "research_gaps": gaps,
         "reports": report_review(runtime_dir, reports_dir),
@@ -559,6 +647,7 @@ def build_payload(root: Path = ROOT, hours: int = 24) -> dict[str, Any]:
             "top100_scanned": int(scan_coverage.get("overall_top100_scanned") or 0),
             "top100_pct": float(scan_coverage.get("overall_top100_pct") or 0.0),
             "scan_coverage_status": scan_coverage.get("coverage_status") or "measured",
+            "account_state_blocking": bool(account_state.get("pre_entry_blocking")),
             "planned_kline_requests": int(gaps.get("planned_kline_requests") or 0),
             "planned_depth_requests": int(gaps.get("planned_depth_requests") or 0),
         },
@@ -582,6 +671,7 @@ def render_md(payload: dict[str, Any]) -> str:
     gaps = payload.get("research_gaps") or {}
     readiness = payload.get("readiness") or {}
     live_activity = payload.get("live_activity") or {}
+    account_state = payload.get("account_state") or {}
     measured = (coverage.get("coverage_status") or "measured") == "measured"
     no_open_fresh = bool(skipped.get("fresh_enough", True))
     coverage_text = (
@@ -608,6 +698,7 @@ def render_md(payload: dict[str, Any]) -> str:
         f"- 队列中请求: `{summary.get('active_requests')}`",
         f"- 当前冷却: `{summary.get('active_cooldowns')}`",
         f"- 近期坏请求: `{summary.get('recent_bad')}`",
+        f"- 账户资料是否挡开仓: `{'是' if account_state.get('pre_entry_blocking') else '否'}` - {account_state.get('plain_status')}",
         f"- 是否能提频: `否`",
         f"- 是否能提交 Kline/depth: `否`",
         "",
@@ -626,6 +717,25 @@ def render_md(payload: dict[str, Any]) -> str:
     for strategy, row in (live_activity.get("strategies") or {}).items():
         live_rows.append([strategy, row.get("service"), row.get("activity_age")])
     lines.extend(md_table(live_rows) or ["No live activity rows."])
+    lines.extend([
+        "",
+        "### 账户状态新鲜度",
+        "",
+        f"- 开仓前恢复期 TTL: `{account_state.get('pre_entry_ttl_sec')}` 秒",
+        f"- 下单后成仓确认 TTL: `{account_state.get('post_submit_confirm_ttl_sec')}` 秒",
+        f"- 判断: {account_state.get('plain_status')}",
+        "",
+    ])
+    account_rows = [["Strategy", "Age", "Fresh for entry", "Open positions", "Error"]]
+    for row in account_state.get("accounts", []):
+        account_rows.append([
+            row.get("strategy"),
+            row.get("age"),
+            "yes" if row.get("fresh_for_entry") else "no",
+            row.get("open_positions"),
+            row.get("snapshot_error") or "-",
+        ])
+    lines.extend(md_table(account_rows) or ["No account-state rows."])
     lines.extend([
         "",
         "### 各策略实扫覆盖",
@@ -701,6 +811,7 @@ def render_html(payload: dict[str, Any]) -> str:
     gaps = payload.get("research_gaps") if isinstance(payload.get("research_gaps"), dict) else {}
     readiness = payload.get("readiness") if isinstance(payload.get("readiness"), dict) else {}
     live = payload.get("live_activity") if isinstance(payload.get("live_activity"), dict) else {}
+    account_state = payload.get("account_state") if isinstance(payload.get("account_state"), dict) else {}
     measured = (coverage.get("coverage_status") or "measured") == "measured"
     top_pct = float(summary.get("top100_pct") or 0.0)
     generated = parse_dt(payload.get("generated_at"))
@@ -725,6 +836,18 @@ def render_html(payload: dict[str, Any]) -> str:
         for strategy, row in (live.get("strategies") or {}).items()
         if isinstance(row, dict)
     ) or '<tr><td colspan="3">暂无 live heartbeat。</td></tr>'
+    account_rows = "".join(
+        f"""
+<tr>
+  <td>{html.escape(str(row.get('strategy') or 'unknown'))}</td>
+  <td>{html.escape(str(row.get('age') or '无记录'))}</td>
+  <td><span class="pill {('good' if row.get('fresh_for_entry') else 'bad')}">{'不挡开仓' if row.get('fresh_for_entry') else '会挡开仓'}</span></td>
+  <td>{html.escape(str(row.get('open_positions', 0)))}</td>
+</tr>
+""".strip()
+        for row in account_state.get("accounts", [])
+        if isinstance(row, dict)
+    ) or '<tr><td colspan="4">暂无账户资料。</td></tr>'
     coverage_rows = "".join(
         f"""
 <tr>
@@ -777,8 +900,8 @@ ul{{margin:0;padding-left:18px}} li{{margin:6px 0}} .note{{color:var(--muted);ma
   <section class="grid">
     <article class="card {('good' if not summary.get('active_cooldowns') else 'bad')}"><span>当前冷却</span><b>{html.escape(str(summary.get('active_cooldowns', 0)))}</b><small>必须为 0 才考虑放开</small></article>
     <article class="card {('good' if not summary.get('active_requests') else 'warn')}"><span>队列等待</span><b>{html.escape(str(summary.get('active_requests', 0)))}</b><small>清空后再看下一层</small></article>
+    <article class="card {('bad' if account_state.get('pre_entry_blocking') else 'good')}"><span>账户资料挡开仓</span><b>{'是' if account_state.get('pre_entry_blocking') else '否'}</b><small>{html.escape(str(account_state.get('status') or 'missing'))}</small></article>
     <article class="card {level_for_pct(top_pct) if measured else 'warn'}"><span>Top100 实扫</span><b>{html.escape(coverage_label)}</b><small>{html.escape(str(top_pct if measured else coverage.get('coverage_status') or 'unknown'))}{'%' if measured else ''}</small></article>
-    <article class="card info"><span>Kline/depth 计划</span><b>{html.escape(str(summary.get('planned_kline_requests', 0)))} / {html.escape(str(summary.get('planned_depth_requests', 0)))}</b><small>计划存在，但 submit 关闭</small></article>
   </section>
   <section class="layout">
     <div>
@@ -804,6 +927,11 @@ ul{{margin:0;padding-left:18px}} li{{margin:6px 0}} .note{{color:var(--muted);ma
       <section class="panel">
         <h2>实时心跳</h2>
         <table><thead><tr><th>策略</th><th>服务</th><th>最新活动</th></tr></thead><tbody>{live_rows}</tbody></table>
+      </section>
+      <section class="panel">
+        <h2>账户状态新鲜度</h2>
+        <p class="note">{html.escape(str(account_state.get('plain_status') or '缺少账户状态'))}</p>
+        <table><thead><tr><th>策略</th><th>年龄</th><th>开仓前</th><th>持仓</th></tr></thead><tbody>{account_rows}</tbody></table>
       </section>
       <section class="panel">
         <h2>安全边界</h2>

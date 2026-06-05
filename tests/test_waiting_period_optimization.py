@@ -108,6 +108,29 @@ class WaitingPeriodOptimizationTests(unittest.TestCase):
             )
             conn.commit()
 
+    def create_queue_db_with_api_cooldowns(self, path: Path) -> None:
+        future_ms = int((datetime.now(timezone.utc) + timedelta(minutes=30)).timestamp() * 1000)
+        with closing(sqlite3.connect(path)) as conn:
+            conn.execute(
+                """
+                create table api_requests(
+                    label text,
+                    scope text,
+                    account text,
+                    path text,
+                    status text,
+                    result_status integer,
+                    error text
+                )
+                """
+            )
+            conn.execute("create table api_cooldowns(scope text, account text, reason text, until_ms integer)")
+            conn.execute(
+                "insert into api_cooldowns(scope,account,reason,until_ms) values(?,?,?,?)",
+                ("global", "", "HTTP 418 global", future_ms),
+            )
+            conn.commit()
+
     def test_build_payload_from_local_files(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -135,6 +158,22 @@ class WaitingPeriodOptimizationTests(unittest.TestCase):
                 json.dumps({"plan": {"summary": {"requests": 3}}}),
                 encoding="utf-8",
             )
+            (runtime / "account_state_latest.json").write_text(
+                json.dumps({
+                    "accounts": [
+                        {
+                            "account": "A",
+                            "version": "v11",
+                            "strategy": "A/v11",
+                            "ts": datetime.now(timezone.utc).isoformat(),
+                            "stale": False,
+                            "open_positions": 0,
+                            "positions": [],
+                        }
+                    ]
+                }),
+                encoding="utf-8",
+            )
 
             payload = self.tool.build_payload(root=root, hours=24)
             self.assertEqual(payload["safety"], self.tool.SAFETY)
@@ -146,6 +185,8 @@ class WaitingPeriodOptimizationTests(unittest.TestCase):
             self.assertGreaterEqual(payload["summary"]["top100_scanned"], 3)
             self.assertIn("已有同币种/同方向仓位", payload["open_skipped"]["plain_reasons"][0]["reason"])
             self.assertTrue(any("订单已提交但未确认成仓" in row["reason"] for row in payload["open_skipped"]["open_failed_plain_reasons"]))
+            self.assertFalse(payload["summary"]["account_state_blocking"])
+            self.assertEqual(payload["account_state"]["status"], "fresh_for_pre_entry")
             self.assertFalse(payload["readiness"]["can_raise_frequency"])
 
             self.tool.write_outputs(runtime, reports, payload)
@@ -153,6 +194,79 @@ class WaitingPeriodOptimizationTests(unittest.TestCase):
             md = (reports / "waiting_period_optimization_latest.md").read_text(encoding="utf-8")
             self.assertIn("OPEN_SKIPPED", md)
             self.assertIn("Top100 实扫", md)
+            self.assertIn("账户状态新鲜度", md)
+
+    def test_queue_review_reads_current_api_cooldowns_table(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            runtime = root / "runtime"
+            mirror_runtime = root / "server_logs_tencent" / "runtime"
+            runtime.mkdir(parents=True)
+            mirror_runtime.mkdir(parents=True)
+            self.create_queue_db_with_api_cooldowns(runtime / "binance_api_queue.sqlite3")
+
+            queue = self.tool.queue_review(runtime, mirror_runtime)
+
+            self.assertEqual(queue["active_cooldowns"], 1)
+
+    def test_account_state_review_marks_stale_rows_blocking(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            runtime = root / "runtime"
+            mirror_runtime = root / "server_logs_tencent" / "runtime"
+            runtime.mkdir(parents=True)
+            mirror_runtime.mkdir(parents=True)
+            (runtime / "account_state_latest.json").write_text(
+                json.dumps({
+                    "accounts": [
+                        {
+                            "account": "B",
+                            "version": "v16",
+                            "strategy": "B/v16",
+                            "ts": (datetime.now(timezone.utc) - timedelta(hours=3)).isoformat(),
+                            "stale": False,
+                            "open_positions": 1,
+                            "positions": [],
+                        }
+                    ]
+                }),
+                encoding="utf-8",
+            )
+
+            review = self.tool.account_state_review(runtime, mirror_runtime)
+
+            self.assertTrue(review["pre_entry_blocking"])
+            self.assertEqual(review["status"], "blocking_pre_entry")
+
+    def test_alert_rate_limit_fallback_marks_cooldown_when_queue_db_missing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            runtime = root / "runtime"
+            mirror_runtime = root / "server_logs_tencent" / "runtime"
+            runtime.mkdir(parents=True)
+            mirror_runtime.mkdir(parents=True)
+            (runtime / "alerts_latest.json").write_text(
+                json.dumps({
+                    "alerts": [
+                        {
+                            "level": "bad",
+                            "title": "Binance API限流/封禁",
+                            "body": "最新请求触发 HTTP 418 / -1003，等待 cooldown。",
+                        }
+                    ]
+                }, ensure_ascii=False),
+                encoding="utf-8",
+            )
+
+            queue = self.tool.apply_alert_queue_fallback(
+                {"available": False, "active_cooldowns": 0, "recent_bad": 0},
+                runtime,
+                mirror_runtime,
+            )
+
+            self.assertEqual(queue["active_cooldowns"], 1)
+            self.assertEqual(queue["recent_bad"], 1)
+            self.assertTrue(queue["alert_rate_limit_fallback"])
 
 
 if __name__ == "__main__":

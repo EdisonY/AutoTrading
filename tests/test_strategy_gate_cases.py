@@ -767,6 +767,50 @@ class StrategyGateCasesTest(unittest.TestCase):
         self.assertEqual(events[-1]["event"], "CLOSE")
         self.assertNotIn("ARBUSDT", scanner.positions["1h"])
 
+    def test_b_v16_failed_residual_exchange_close_does_not_fall_back_to_normal_close(self):
+        scanner = scanner_v16_module.ScannerV16.__new__(scanner_v16_module.ScannerV16)
+        scanner.positions = {"1h": {}, "15m": {}}
+        scanner.cooldowns = {"1h": {}, "15m": {}}
+        scanner.capital = 1000.0
+        scanner.sl_counts = {}
+        scanner.residual_close_attempted_symbols = set()
+        scanner._latest_symbol_position_event = lambda symbol: {"event_type": "CLOSE_FAILED"}
+        scanner.execution = _CloseExecution(
+            ExecutionResult(False, "close", "ARBUSDT", "short", quantity=4738.7, code="-2022", message="ReduceOnly Order is rejected.")
+        )
+        cached_state = SimpleNamespace(
+            positions=[{
+                "symbol": "ARBUSDT",
+                "positionAmt": "-4738.7",
+                "positionSide": "SHORT",
+                "entryPrice": "0.0835",
+                "markPrice": "0.08306",
+                "leverage": "4",
+            }]
+        )
+        events = []
+        original_load_cached = scanner_v16_module.load_cached_account_state
+        original_log_event = scanner_v16_module.log_event
+        original_log_trade = scanner_v16_module.log_trade
+        original_fetch_klines = scanner_v16_module.fetch_klines
+        scanner_v16_module.load_cached_account_state = lambda root, strategy: cached_state
+        scanner_v16_module.log_event = events.append
+        scanner_v16_module.log_trade = lambda trade: None
+        scanner_v16_module.fetch_klines = lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("normal close fallback must not fetch klines"))
+        try:
+            scanner._sync_exchange_positions()
+            scanner.check_exits()
+            scanner.check_exits()
+        finally:
+            scanner_v16_module.load_cached_account_state = original_load_cached
+            scanner_v16_module.log_event = original_log_event
+            scanner_v16_module.log_trade = original_log_trade
+            scanner_v16_module.fetch_klines = original_fetch_klines
+
+        self.assertEqual(len(scanner.execution.requests), 1)
+        self.assertEqual(events[-1]["event"], "CLOSE_FAILED")
+        self.assertIn("ARBUSDT", scanner.positions["1h"])
+
     def test_c_v14_successful_open_chain_cases_replay(self):
         scanner = scanner_v14_module.Scanner.__new__(scanner_v14_module.Scanner)
         scanner.positions = {"1h": {}, "15m": {}}

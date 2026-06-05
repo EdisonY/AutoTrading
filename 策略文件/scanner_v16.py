@@ -1699,11 +1699,12 @@ class ScannerV16:
         self._sync_exchange_positions()
         for tf in TIMEFRAMES:
             for sym, pos in list(self.positions[tf].items()):
-                if pos.recovery_close_reason and pos.recovery_close_attempts <= 0:
-                    pos.recovery_close_attempts += 1
-                    self.residual_close_attempted_symbols.add(sym)
-                    exit_price = pos.current_price or pos.entry_price
-                    self._close_position(tf, sym, pos, exit_price, pos.recovery_close_reason)
+                if pos.recovery_close_reason:
+                    if pos.recovery_close_attempts <= 0:
+                        pos.recovery_close_attempts += 1
+                        self.residual_close_attempted_symbols.add(sym)
+                        exit_price = pos.current_price or pos.entry_price
+                        self._close_position(tf, sym, pos, exit_price, pos.recovery_close_reason)
                     continue
                 rows = fetch_klines(sym, tf, 2)
                 if not rows: continue

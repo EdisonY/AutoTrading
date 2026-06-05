@@ -426,6 +426,7 @@
 - 2026-06-05：继续验收 A/v11 心跳后发现“只在 scan cycle 结束写 `SCAN_STATS`”仍不够；A 可能在 Top100+ VPB 扫描中等待公共 funding/premiumIndex 队列，导致 report 短时间仍看不到 A 新行。已改为 A 每轮扫描开始立即写 `SCAN_STATS phase=start`，正常结束写 `phase=complete`，取 symbol 列表失败写 `phase=error`；并让 A 的 VPB 资金费率优先读 OKX。OKX market data 开启时，Binance public `premiumIndex` fallback 默认关闭，只有显式 `VPB_BINANCE_FUNDING_FALLBACK_ENABLED=1` 才恢复。仍不放宽开仓条件，不启用 Binance Kline。
 - 2026-06-05：用户指出首页 report 的“三策略现在是否正常”表格只有一个“失败”列，容易把 B/v16 的 `OPEN_SKIPPED/15m无确认信号` 看成系统故障。已修 `decision_portal.py`：首页拆成“开仓执行失败 / 平仓/强平失败 / 候选被挡住 / 主要原因”，服务红绿只按服务状态判断。策略确认门挡住属于正常策略门控，不再和真正执行失败混在一个列里。
 - 2026-06-05：用户继续指出 report 仍显得挤、`主要原因` 和 `今日重点` 还有技术词。决策 report 后续必须先给白话解释，再把原始技术原因作为辅助小字保留；`15m无确认信号` 这类 raw reason 要解释成“有候选，但15分钟确认没有跟上，所以策略按规则没开仓”。首页布局要按宽屏驾驶舱设计，今日重点前置成全宽模块，策略原因列给足阅读空间。
+- 2026-06-05：继续处理“账户状态不够新不能挡开仓”。结论分两层：开仓前的账户风控数据可用恢复期长 TTL 避免被冷却等待拖旧；下单后的成仓确认必须严格。`orderId` 只能说明订单提交到交易所，不等于已经成交成仓。以后本地记 OPEN 必须有成交数量或订单提交后的账户持仓证明；若只有 `orderId` 但 `executedQty/cumQty/fills` 为 0 且没有持仓证明，记为 `open_submitted_unconfirmed`，report 用白话解释为“订单已提交但还没确认成仓”，不得造本地假仓。
 
 ---
 ## 2026-05-29 全局运行自检与账户方向口径修复

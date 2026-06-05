@@ -55,6 +55,10 @@ class WaitingPeriodOptimizationTests(unittest.TestCase):
             )
             conn.execute(
                 "insert into events(ts,strategy,symbol,event_type,reason,stage,layer,payload_json) values(?,?,?,?,?,?,?,?)",
+                ((now - timedelta(minutes=4)).isoformat(), "B/v16", "ATOMUSDT", "OPEN_FAILED", "open_submitted_unconfirmed", "", "", "{}"),
+            )
+            conn.execute(
+                "insert into events(ts,strategy,symbol,event_type,reason,stage,layer,payload_json) values(?,?,?,?,?,?,?,?)",
                 (
                     (now - timedelta(minutes=3)).isoformat(),
                     "B/v16",
@@ -136,11 +140,12 @@ class WaitingPeriodOptimizationTests(unittest.TestCase):
             self.assertEqual(payload["safety"], self.tool.SAFETY)
             self.assertEqual(payload["status"], "safe_to_optimize_offline")
             self.assertEqual(payload["summary"]["open_skipped"], 1)
-            self.assertEqual(payload["summary"]["open_failed"], 1)
+            self.assertEqual(payload["summary"]["open_failed"], 2)
             self.assertEqual(payload["summary"]["planned_kline_requests"], 7)
             self.assertEqual(payload["top100"]["coverage_hint"], "ok")
             self.assertGreaterEqual(payload["summary"]["top100_scanned"], 3)
             self.assertIn("已有同币种/同方向仓位", payload["open_skipped"]["plain_reasons"][0]["reason"])
+            self.assertTrue(any("订单已提交但未确认成仓" in row["reason"] for row in payload["open_skipped"]["open_failed_plain_reasons"]))
             self.assertFalse(payload["readiness"]["can_raise_frequency"])
 
             self.tool.write_outputs(runtime, reports, payload)

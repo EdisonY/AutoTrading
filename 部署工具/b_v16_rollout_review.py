@@ -135,6 +135,8 @@ def classify_open_failure(payload: dict[str, Any], reason: str = "") -> str:
         return "insufficient_margin"
     if "timeout" in text or "-1007" in text or "unknown" in text:
         return "exchange_timeout_or_unknown"
+    if "open_submitted_unconfirmed" in text or "submitted_unconfirmed" in text or "no executed quantity" in text:
+        return "submitted_unconfirmed"
     if "preflight" in text or "exchange_rule" in text or "filter failure" in text or "precision" in text:
         return "exchange_rule_preflight"
     if "account_state" in text or "confirmation_state" in text:

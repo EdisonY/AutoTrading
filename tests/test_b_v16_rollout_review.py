@@ -304,6 +304,14 @@ class BV16RolloutReviewTests(unittest.TestCase):
                     "position side mismatch",
                     json.dumps({"code": -4061, "msg": "Order's position side does not match user's setting."}),
                 ),
+                (
+                    "2026-06-03T11:25:00+08:00",
+                    "EEEUSDT",
+                    "OPEN_FAILED",
+                    "long",
+                    "open_submitted_unconfirmed",
+                    json.dumps({"code": "open_submitted_unconfirmed", "msg": "order submitted but no executed quantity"}),
+                ),
             ],
         )
         rows = list(con.execute("select * from events order by id"))
@@ -332,6 +340,7 @@ class BV16RolloutReviewTests(unittest.TestCase):
         self.assertAlmostEqual(exit_models["forced_or_hard_stop"]["pnl_usdt"], -110.0)
         self.assertEqual(open_failed["min_notional"]["count"], 1)
         self.assertEqual(open_failed["position_side_mismatch"]["count"], 1)
+        self.assertEqual(open_failed["submitted_unconfirmed"]["count"], 1)
         self.assertAlmostEqual(metrics["cost_sensitivity"][0]["estimated_cost_usdt"], 0.8)
         self.assertAlmostEqual(metrics["cost_sensitivity"][2]["pnl_after_cost_usdt"], -92.0)
         self.assertTrue(metrics["cost_sensitivity"][2]["rollback_review_loss_hit"])

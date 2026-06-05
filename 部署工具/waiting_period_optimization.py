@@ -38,6 +38,8 @@ REASON_LABELS = {
     "kline_unavailable": "K线缓存不足，策略不硬开",
     "execution_preflight": "交易所规则预检不过，提前拦住",
     "exchange_error": "交易所/API 返回失败，需要继续观察",
+    "open_submitted_unconfirmed": "订单已提交但未确认成仓，等待回执/核对",
+    "open_unfilled": "交易所收到开仓请求但未返回成交数量",
     "score_low": "分数不够，策略认为优势不明显",
     "threshold_fail": "门槛未过，信号强度不足",
     "confirm_fail": "确认层未通过，二次确认不支持开仓",
@@ -215,6 +217,7 @@ def open_skipped_review(db_path: Path | None, hours: int) -> dict[str, Any]:
         "by_strategy": {},
         "top_reasons": [],
         "plain_reasons": [],
+        "open_failed_plain_reasons": [],
         "top_strategy_reasons": [],
         "scan_stats_reasons": [],
         "recent_open_failed": 0,
@@ -276,6 +279,21 @@ def open_skipped_review(db_path: Path | None, hours: int) -> dict[str, Any]:
             out["recent_open_failed"] = int(conn.execute(
                 "select count(*) from events where event_type='OPEN_FAILED' and (ts >= ? or ts >= ?)", (since, since_space)
             ).fetchone()[0])
+            failed_rows = conn.execute(
+                """
+                select reason, stage, layer
+                from events
+                where event_type='OPEN_FAILED' and (ts >= ? or ts >= ?)
+                """,
+                (since, since_space),
+            ).fetchall()
+            failed_plain_reasons: Counter[str] = Counter()
+            for row in failed_rows:
+                failed_plain_reasons[plain_reason(row["reason"], row["stage"], row["layer"])] += 1
+            out["open_failed_plain_reasons"] = [
+                {"reason": reason, "count": count}
+                for reason, count in failed_plain_reasons.most_common(12)
+            ]
             out["recent_opened"] = int(conn.execute(
                 "select count(*) from events where event_type='OPEN' and (ts >= ? or ts >= ?)", (since, since_space)
             ).fetchone()[0])

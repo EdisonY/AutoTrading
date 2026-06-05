@@ -121,6 +121,16 @@ class DecisionPortalTests(unittest.TestCase):
             "订单已经提交，但成交后的账户回执还没回来；系统会等用户流或受控确认补证，不能把它当成策略没信号。",
         )
 
+    def test_plain_strategy_reason_explains_submitted_unconfirmed_order(self):
+        text = self.tool.plain_strategy_reason(
+            "open_submitted_unconfirmed: order submitted but no executed quantity or confirmed position yet",
+            "failed",
+        )
+        self.assertEqual(
+            text,
+            "订单已提交到交易所，但还没有确认成交成仓；系统不会先建本地假仓，会等回执或下一轮核对。",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

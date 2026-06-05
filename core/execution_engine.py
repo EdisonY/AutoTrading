@@ -268,6 +268,32 @@ class ExecutionEngine:
             try:
                 confirmed_qty = self._confirm_position_qty(req.symbol, req.side, cache=confirm_cache)
             except ConfirmationStateUnavailable as exc:
+                if exec_qty > 0:
+                    return ExecutionResult(
+                        True,
+                        "open",
+                        req.symbol,
+                        req.side,
+                        exec_qty,
+                        order_id=str(raw.get("orderId", "")) if isinstance(raw, dict) else "",
+                        status="ORDER_RESPONSE_EXECUTED_CONFIRM_UNAVAILABLE",
+                        code="open_confirm_account_state_unavailable",
+                        message=str(exc),
+                        raw=raw,
+                    )
+                if self._raw_order_id(raw):
+                    return ExecutionResult(
+                        False,
+                        "open",
+                        req.symbol,
+                        req.side,
+                        qty,
+                        order_id=self._raw_order_id(raw),
+                        status="OPEN_SUBMITTED_UNCONFIRMED",
+                        code="open_submitted_unconfirmed",
+                        message="order submitted but no executed quantity or confirmed position yet",
+                        raw=raw,
+                    )
                 return ExecutionResult(
                     False,
                     "open",
@@ -282,8 +308,45 @@ class ExecutionEngine:
                 )
             if confirmed_qty > 0:
                 exec_qty = confirmed_qty
+            elif exec_qty <= 0 and self._raw_order_id(raw):
+                return ExecutionResult(
+                    False,
+                    "open",
+                    req.symbol,
+                    req.side,
+                    qty,
+                    order_id=self._raw_order_id(raw),
+                    status="OPEN_SUBMITTED_UNCONFIRMED",
+                    code="open_submitted_unconfirmed",
+                    message="order submitted but no executed quantity or confirmed position yet",
+                    raw=raw,
+                )
+        elif exec_qty <= 0 and self._raw_order_id(raw):
+            return ExecutionResult(
+                False,
+                "open",
+                req.symbol,
+                req.side,
+                qty,
+                order_id=self._raw_order_id(raw),
+                status="OPEN_SUBMITTED_UNCONFIRMED",
+                code="open_submitted_unconfirmed",
+                message="order submitted but no executed quantity and confirmation disabled",
+                raw=raw,
+            )
         if exec_qty <= 0:
-            exec_qty = qty
+            return ExecutionResult(
+                False,
+                "open",
+                req.symbol,
+                req.side,
+                qty,
+                order_id=self._raw_order_id(raw),
+                status="OPEN_UNFILLED",
+                code="open_unfilled",
+                message="open order returned no executed quantity",
+                raw=raw,
+            )
         return ExecutionResult(
             True,
             "open",
@@ -651,7 +714,20 @@ class ExecutionEngine:
             qty += float(fill.get("qty", fill.get("executedQty", 0)) or 0)
         if qty > 0:
             return qty
-        return float(raw.get("executedQty", raw.get("origQty", 0)) or 0)
+        for key in ("executedQty", "cumQty"):
+            try:
+                qty = float(raw.get(key, 0) or 0)
+            except Exception:
+                qty = 0.0
+            if qty > 0:
+                return qty
+        return 0.0
+
+    @staticmethod
+    def _raw_order_id(raw: Any) -> str:
+        if not isinstance(raw, dict):
+            return ""
+        return str(raw.get("orderId", "") or "")
 
     @staticmethod
     def _raw_message(raw: Any) -> str:

@@ -136,6 +136,8 @@ def plain_strategy_reason(reason: Any, kind: str = "skip") -> str:
         return "有候选，但被策略规则挡住；这通常不是系统故障。"
     checks = [
         (("15m", "确认"), "有候选，但15分钟确认没有跟上，所以策略按规则没开仓。"),
+        (("open_submitted_unconfirmed",), "订单已提交到交易所，但还没有确认成交成仓；系统不会先建本地假仓，会等回执或下一轮核对。"),
+        (("open_unfilled",), "交易所收到了开仓请求，但当前回包没有成交数量；系统先不当作已开仓。"),
         (("open_confirm_account_state_unavailable",), "订单已经提交，但成交后的账户回执还没回来；系统会等用户流或受控确认补证，不能把它当成策略没信号。"),
         (("close_confirm_account_state_unavailable",), "平仓已经提交，但账户回执还没确认仓位消失；系统会继续补证，不能把它当成普通失败。"),
         (("confirm_account_state_unavailable",), "交易请求已发出，但成交后账户回执还不够新；这是确认链路问题，不是策略没有机会。"),

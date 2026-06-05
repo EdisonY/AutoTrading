@@ -38,6 +38,23 @@ class FakeClient:
         self.delete_calls.append(symbol)
 
 
+class UnfilledOpenClient(FakeClient):
+    def open_long(self, *args):
+        self.open_calls.append(("open_long", args))
+        return {
+            "orderId": "new-unfilled",
+            "status": "NEW",
+            "origQty": "5",
+            "executedQty": "0",
+            "cumQty": "0",
+            "symbol": "BTCUSDT",
+        }
+
+    def get_positions(self):
+        self.get_positions_calls += 1
+        return []
+
+
 class ExecutionEngineAccountStateTest(unittest.TestCase):
     def test_confirmation_uses_fresh_central_state(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -303,6 +320,39 @@ class ExecutionEngineAccountStateTest(unittest.TestCase):
 
             self.assertEqual(client.get_positions_calls, 1)
             self.assertEqual(positions[0]["symbol"], "ETHUSDT")
+
+    def test_open_order_id_without_fill_or_confirmed_position_is_not_success(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            payload = build_account_state_payload([
+                {
+                    "ts": datetime.now(timezone.utc).isoformat(),
+                    "account": "A",
+                    "strategy": "A/v11",
+                    "positions": [],
+                }
+            ])
+            write_account_state(root, payload)
+            client = UnfilledOpenClient()
+            engine = ExecutionEngine(client, "A/v11", account_state_root=root, central_confirmation_max_age_seconds=60)
+
+            result = engine.open_position(OpenRequest(
+                symbol="BTCUSDT",
+                side="long",
+                price=100.0,
+                risk_usdt=100.0,
+                leverage=4,
+                take_profit=110.0,
+                stop_loss=90.0,
+                quantity=5.0,
+            ))
+
+            self.assertFalse(result.success)
+            self.assertEqual(result.code, "open_submitted_unconfirmed")
+            self.assertEqual(result.status, "OPEN_SUBMITTED_UNCONFIRMED")
+            self.assertEqual(result.order_id, "new-unfilled")
+            self.assertEqual(result.quantity, 5.0)
+            self.assertEqual(client.get_positions_calls, 1)
 
 
 if __name__ == "__main__":

@@ -1993,6 +1993,33 @@ class Scanner:
         now = datetime.now(CST)
         now_str = now.strftime("%Y-%m-%d %H:%M:%S")
         logger.info(f"═══ 第 {self.scan_count} 轮扫描 @ {now_str} ═══")
+        positions_before_entry = sum(len(p) for p in self.positions.values())
+        scan_stats = {
+            "ts": str(datetime.now(CST)),
+            "event": "SCAN_STATS",
+            "phase": "start",
+            "scan_count": self.scan_count,
+            "symbols": 0,
+            "top_symbols": 0,
+            "spike_symbols": 0,
+            "sentinel_symbols": len(SENTINEL_CONTEXT),
+            "timeframes": len(TIMEFRAMES),
+            "analysis_attempts": 0,
+            "raw_signals_found": 0,
+            "entry_signals_found": 0,
+            "vpb_signals_found": 0,
+            "open_attempts": 0,
+            "opened": 0,
+            "open_positions": positions_before_entry,
+            "scan_seconds": 0.0,
+        }
+        def emit_scan_stats() -> None:
+            try:
+                log_system(dict(scan_stats))
+            except Exception as exc:
+                logger.debug(f"SCAN_STATS 写入失败: {exc}")
+
+        emit_scan_stats()
 
         today_str = now.strftime("%Y-%m-%d")
         if today_str != self._sl_counts_date:
@@ -2025,28 +2052,16 @@ class Scanner:
             symbols = merge_sentinel_symbols(list(dict.fromkeys(top_symbols + spike_symbols)), limit=sentinel_limit)
         except Exception as e:
             logger.error(f"获取扫描列表失败: {e}")
+            scan_stats["phase"] = "error"
+            scan_stats["error"] = f"symbol_list_failed: {str(e)[:120]}"
+            scan_stats["scan_seconds"] = round(time.time() - cycle_started, 3)
+            emit_scan_stats()
             return
 
         logger.info(f"扫描 {len(symbols)} 个币种 × {len(TIMEFRAMES)} 个周期 (Top{len(top_symbols)}+{len(spike_symbols)}异常放量)...")
-        positions_before_entry = sum(len(p) for p in self.positions.values())
-        scan_stats = {
-            "ts": str(datetime.now(CST)),
-            "event": "SCAN_STATS",
-            "scan_count": self.scan_count,
-            "symbols": len(symbols),
-            "top_symbols": len(top_symbols),
-            "spike_symbols": len(spike_symbols),
-            "sentinel_symbols": len(SENTINEL_CONTEXT),
-            "timeframes": len(TIMEFRAMES),
-            "analysis_attempts": 0,
-            "raw_signals_found": 0,
-            "entry_signals_found": 0,
-            "vpb_signals_found": 0,
-            "open_attempts": 0,
-            "opened": 0,
-            "open_positions": positions_before_entry,
-            "scan_seconds": 0.0,
-        }
+        scan_stats["symbols"] = len(symbols)
+        scan_stats["top_symbols"] = len(top_symbols)
+        scan_stats["spike_symbols"] = len(spike_symbols)
 
         # 3. 逐周期扫描（半木夏策略）
         all_signals = {}  # {tf: [signals]}
@@ -2434,7 +2449,8 @@ class Scanner:
         scan_stats["open_positions"] = open_positions
         scan_stats["opened"] = max(0, open_positions - positions_before_entry)
         scan_stats["scan_seconds"] = round(time.time() - cycle_started, 3)
-        log_system(scan_stats)
+        scan_stats["phase"] = "complete"
+        emit_scan_stats()
 
     def _open_position(
         self,

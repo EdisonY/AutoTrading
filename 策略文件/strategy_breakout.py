@@ -35,7 +35,7 @@ import urllib.request
 
 from core.binance_api_guard import record_public_response, wait_before_public_request
 from core.binance_api_queue_client import api_queue_client_enabled, queued_api_request
-from core.external_market_data import fetch_okx_funding_rate
+from core.external_market_data import fetch_okx_funding_rate, okx_market_data_enabled
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -71,12 +71,15 @@ def fetch_json(url: str, timeout: int = 10) -> dict:
 
 def fetch_funding_rate(symbol: str) -> float:
     """获取资金费率。失败返回0"""
+    okx_enabled = okx_market_data_enabled()
     try:
         funding_rate = fetch_okx_funding_rate(symbol)
         if funding_rate is not None:
             return float(funding_rate) / 100.0
     except Exception:
         pass
+    if okx_enabled and os.environ.get("VPB_BINANCE_FUNDING_FALLBACK_ENABLED", "0").strip().lower() not in {"1", "true", "yes", "on"}:
+        return 0.0
     try:
         url = f"{MARKET_BASE_URL}/fapi/v1/premiumIndex?symbol={symbol}"
         data = fetch_json(url)

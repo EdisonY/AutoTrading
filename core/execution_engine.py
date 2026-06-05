@@ -110,6 +110,11 @@ def scanner_order_disabled_result(action: str, symbol: str, side: str, quantity:
     )
 
 
+def close_cancel_open_orders_enabled() -> bool:
+    value = os.environ.get("SCANNER_CLOSE_CANCEL_OPEN_ORDERS_ENABLED", "0").strip().lower()
+    return value in {"1", "true", "yes", "on"}
+
+
 class ExecutionEngine:
     def __init__(
         self,
@@ -293,7 +298,7 @@ class ExecutionEngine:
     def close_position(self, req: CloseRequest) -> ExecutionResult:
         if not scanner_order_enabled():
             return scanner_order_disabled_result("close", req.symbol, req.side, float(req.quantity or 0.0))
-        if req.cancel_open_orders:
+        if req.cancel_open_orders and close_cancel_open_orders_enabled():
             self._cancel_open_orders(req.symbol)
         confirm_cache: dict[str, Any] = {}
         qty = float(req.quantity or 0.0)

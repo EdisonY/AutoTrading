@@ -116,6 +116,67 @@ class ExecutionEngineAccountStateTest(unittest.TestCase):
         self.assertEqual(client.close_calls, [])
         self.assertEqual(client.get_positions_calls, 0)
 
+    def test_close_does_not_cancel_open_orders_by_default(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            payload = build_account_state_payload([
+                {
+                    "ts": datetime.now(timezone.utc).isoformat(),
+                    "account": "A",
+                    "strategy": "A/v11",
+                    "positions": [{"symbol": "BTCUSDT", "side": "LONG", "qty": 0.5}],
+                }
+            ])
+            write_account_state(root, payload)
+            client = FakeClient()
+            engine = ExecutionEngine(client, "A/v11", account_state_root=root, central_confirmation_max_age_seconds=60)
+
+            result = engine.close_position(CloseRequest(
+                symbol="BTCUSDT",
+                side="long",
+                quantity=0.5,
+                cancel_open_orders=True,
+                confirm_position=False,
+            ))
+
+            self.assertTrue(result.success)
+            self.assertEqual(client.delete_calls, [])
+            self.assertEqual(client.close_calls[0][1]["position_side"], "LONG")
+
+    def test_close_cancel_open_orders_can_be_enabled(self):
+        old_value = os.environ.get("SCANNER_CLOSE_CANCEL_OPEN_ORDERS_ENABLED")
+        os.environ["SCANNER_CLOSE_CANCEL_OPEN_ORDERS_ENABLED"] = "1"
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                payload = build_account_state_payload([
+                    {
+                        "ts": datetime.now(timezone.utc).isoformat(),
+                        "account": "A",
+                        "strategy": "A/v11",
+                        "positions": [{"symbol": "BTCUSDT", "side": "LONG", "qty": 0.5}],
+                    }
+                ])
+                write_account_state(root, payload)
+                client = FakeClient()
+                engine = ExecutionEngine(client, "A/v11", account_state_root=root, central_confirmation_max_age_seconds=60)
+
+                result = engine.close_position(CloseRequest(
+                    symbol="BTCUSDT",
+                    side="long",
+                    quantity=0.5,
+                    cancel_open_orders=True,
+                    confirm_position=False,
+                ))
+        finally:
+            if old_value is None:
+                os.environ.pop("SCANNER_CLOSE_CANCEL_OPEN_ORDERS_ENABLED", None)
+            else:
+                os.environ["SCANNER_CLOSE_CANCEL_OPEN_ORDERS_ENABLED"] = old_value
+
+        self.assertTrue(result.success)
+        self.assertEqual(client.delete_calls, ["BTCUSDT"])
+
     def test_confirmation_rest_fallback_confirms_when_central_state_is_too_old(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

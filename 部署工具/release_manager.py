@@ -109,14 +109,14 @@ CORE_FILES = [
 
 SCANNER_ACCOUNT_STATE_RECOVERY_DROPIN = file_pair(
     "部署工具/systemd/crypto-scanner-account-state-recovery.conf",
-    "systemd/crypto-scanner-account-state-recovery.conf",
+    "crypto-scanner-account-state-recovery.conf",
 )
 
 
 def scanner_account_state_recovery_post(service: str) -> str:
     return (
         f"sudo mkdir -p /etc/systemd/system/{service}.d && "
-        f"sudo cp systemd/crypto-scanner-account-state-recovery.conf "
+        f"sudo cp crypto-scanner-account-state-recovery.conf "
         f"/etc/systemd/system/{service}.d/30-account-state-recovery.conf && "
         "sudo systemctl daemon-reload"
     )

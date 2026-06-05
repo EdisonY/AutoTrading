@@ -2,6 +2,14 @@
 
 This is the durable reason-and-outcome ledger for every material design, code, configuration, deployment, rollback, optimization, or live operational change.
 
+## 2026-06-05 21:02 CST - Clarify decision portal strategy failure columns
+- Trigger / reason: User pointed out the first-screen report table under `三策略现在是否正常` showed a single `失败` column, making B/v16 strategy-confirmation skips and true execution failures look like the same kind of problem. Live inspection showed recent B/v16 rows were mostly `OPEN_SKIPPED` with `15m无确认信号`, while the true `OPEN_FAILED` count was separate and had a different cause.
+- Completed: The decision portal strategy table now separates `开仓执行失败`, `平仓/强平失败`, and `候选被挡住`, and adds a `主要原因` column. Service health red/green now follows service state, not strategy gate rejections. This makes strategy-confirmation gating visible without labeling it as a system/trading failure.
+- Not completed / remaining: This is report wording/aggregation only. It does not change A/B/C strategy thresholds, order behavior, scanner frequency, Binance queue behavior, or live positions.
+- Verification: Pending local and live report verification in this work session.
+- Live impact / deployment: Intended effect is clearer operator report semantics. No trading service restart and no Binance request should be required.
+- Files / release / commit: `部署工具/decision_portal.py`, `tests/test_decision_portal.py`, `CHANGELOG.md`, `PROJECT_STATE.md`, `记忆文档/MEMORY.md`; source commit/release to follow.
+
 ## 2026-06-05 20:24 CST - Make A/v11 heartbeat immediate and move VPB funding to OKX first
 - Trigger / reason: Live verification after `ee3d963` showed B/C were fresh and Binance queue/cooldown stayed clean, but A/v11 still did not produce a fresh `SCAN_STATS` row quickly enough after restart. Direct stderr showed A was scanning Kline/cache rows, while the A VPB module could still enqueue/wait on Binance public `premiumIndex` funding calls through `strategy-breakout`, making an end-of-cycle-only heartbeat insufficient for operator/report freshness.
 - Completed: A/v11 now emits `SCAN_STATS` at scan-cycle start with `phase=start`, updates the same stats to `phase=complete` at normal cycle end, and writes `phase=error` if symbol-list construction fails. The scan-stat write is guarded so telemetry failure cannot break scanning. A/v11 VPB funding-rate lookup now tries OKX read-only funding first; when OKX market data is enabled, it defaults missing/failed OKX funding to `0.0` instead of falling back to Binance public `premiumIndex`. The old Binance funding fallback is now opt-in through `VPB_BINANCE_FUNDING_FALLBACK_ENABLED=1`. Strategy thresholds, sizing, leverage, stops, order enablement, direct Binance Kline, scanner market-data fallback, scan interval, and universe size are unchanged.

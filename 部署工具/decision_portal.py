@@ -189,9 +189,32 @@ def event_summary(db_path: Path = EVENT_DB) -> dict[str, Any]:
                       sum(case when event_type='OPEN' or category='opened' then 1 else 0 end) as opens,
                       sum(case when event_type in ('CLOSE','FORCED_CLOSE') or category in ('closed','forced_close') then 1 else 0 end) as closes,
                       sum(case when event_type='OPEN_FAILED' or category='open_failed' then 1 else 0 end) as open_failed,
+                      sum(case when event_type='OPEN_SKIPPED' or category='open_skipped' then 1 else 0 end) as open_skipped,
                       sum(case when event_type like '%CLOSE_FAILED%' or category like '%close_failed%' then 1 else 0 end) as close_failed
                     from events
                     where strategy=? and substr(ts,1,10) >= ?
+                    """,
+                    (name, since),
+                ).fetchone()
+                skip_reason = conn.execute(
+                    """
+                    select coalesce(nullif(reason,''), stage, category, event_type) as reason, count(*) n
+                    from events
+                    where strategy=? and event_type='OPEN_SKIPPED' and substr(ts,1,10) >= ?
+                    group by coalesce(nullif(reason,''), stage, category, event_type)
+                    order by n desc
+                    limit 1
+                    """,
+                    (name, since),
+                ).fetchone()
+                failed_reason = conn.execute(
+                    """
+                    select coalesce(nullif(reason,''), stage, category, event_type) as reason, count(*) n
+                    from events
+                    where strategy=? and event_type='OPEN_FAILED' and substr(ts,1,10) >= ?
+                    group by coalesce(nullif(reason,''), stage, category, event_type)
+                    order by n desc
+                    limit 1
                     """,
                     (name, since),
                 ).fetchone()
@@ -201,7 +224,10 @@ def event_summary(db_path: Path = EVENT_DB) -> dict[str, Any]:
                     "opens": int(counts["opens"] or 0) if counts else 0,
                     "closes": int(counts["closes"] or 0) if counts else 0,
                     "open_failed": int(counts["open_failed"] or 0) if counts else 0,
+                    "open_skipped": int(counts["open_skipped"] or 0) if counts else 0,
                     "close_failed": int(counts["close_failed"] or 0) if counts else 0,
+                    "skip_reason": str(skip_reason["reason"] or "") if skip_reason else "",
+                    "failed_reason": str(failed_reason["reason"] or "") if failed_reason else "",
                 })
             out["strategies"] = strategies
         if table_exists(conn, "sentinel_scans"):
@@ -228,8 +254,15 @@ def strategy_rows(event: dict[str, Any], alerts: dict[str, Any]) -> list[dict[st
     for name in ("A/v11", "B/v16", "C/v14"):
         item = by_name.get(name, {})
         service = services.get(service_map[name], "unknown")
-        bad = int(item.get("open_failed") or 0) + int(item.get("close_failed") or 0)
-        level = "bad" if service != "active" or bad else "good"
+        open_failed = int(item.get("open_failed") or 0)
+        close_failed = int(item.get("close_failed") or 0)
+        open_skipped = int(item.get("open_skipped") or 0)
+        level = "bad" if service != "active" else "good"
+        note = "正常运行"
+        if open_failed:
+            note = item.get("failed_reason") or "有开仓执行失败"
+        elif open_skipped:
+            note = item.get("skip_reason") or "候选被策略规则挡住"
         rows.append({
             "level": level,
             "name": name,
@@ -237,7 +270,10 @@ def strategy_rows(event: dict[str, Any], alerts: dict[str, Any]) -> list[dict[st
             "age": age_text(item.get("latest")),
             "opens": str(item.get("opens", 0)),
             "closes": str(item.get("closes", 0)),
-            "bad": str(bad),
+            "open_failed": str(open_failed),
+            "close_failed": str(close_failed),
+            "open_skipped": str(open_skipped),
+            "note": note,
         })
     return rows
 
@@ -449,14 +485,17 @@ def render_strategy_table(rows: list[dict[str, str]]) -> str:
   <td>{h(row['age'])}</td>
   <td>{h(row['opens'])}</td>
   <td>{h(row['closes'])}</td>
-  <td>{h(row['bad'])}</td>
+  <td>{h(row['open_failed'])}</td>
+  <td>{h(row['close_failed'])}</td>
+  <td>{h(row['open_skipped'])}</td>
+  <td>{h(row['note'])}</td>
 </tr>
 """.strip()
         for row in rows
     )
     return f"""
 <table>
-  <thead><tr><th>策略</th><th>服务</th><th>最新数据</th><th>24h开仓</th><th>24h平仓</th><th>失败</th></tr></thead>
+  <thead><tr><th>策略</th><th>服务</th><th>最新数据</th><th>24h开仓</th><th>24h平仓</th><th>开仓执行失败</th><th>平仓/强平失败</th><th>候选被挡住</th><th>主要原因</th></tr></thead>
   <tbody>{body}</tbody>
 </table>
 """

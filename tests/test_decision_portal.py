@@ -81,6 +81,30 @@ class DecisionPortalTests(unittest.TestCase):
         self.assertNotIn("EXP-old", html)
         self.assertNotIn("replacement-quality", html)
 
+    def test_strategy_table_separates_execution_failures_from_skips(self):
+        rows = [
+            {
+                "level": "good",
+                "name": "B/v16",
+                "service": "运行中",
+                "age": "1分钟前",
+                "opens": "0",
+                "closes": "0",
+                "open_failed": "1",
+                "close_failed": "0",
+                "open_skipped": "12",
+                "note": "15m无确认信号",
+            }
+        ]
+
+        html = self.tool.render_strategy_table(rows)
+
+        self.assertIn("开仓执行失败", html)
+        self.assertIn("平仓/强平失败", html)
+        self.assertIn("候选被挡住", html)
+        self.assertIn("15m无确认信号", html)
+        self.assertNotIn("<th>失败</th>", html)
+
 
 if __name__ == "__main__":
     unittest.main()

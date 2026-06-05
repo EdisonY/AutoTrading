@@ -414,6 +414,7 @@
 - 2026-06-05：用户纠正目标是交易量或市值前100，不是小宇宙。A/v11 之前不是没跑，而是被 staged env 压到 `12 top + 12 spike + 6 sentinel`；B/C 也只到 `5+5`。已把三策略 live drop-in 改到 Binance 交易量 Top100 目标：A `100 top + 100 spike + 40 sentinel`，B `100 top + 40 sentinel`，C `100 top + 40 sentinel`。Kline network 和 scanner market-data network 仍关闭，频率不增加。市值 Top100 不是 Binance 原生字段，需要 CoinGecko/CMC 等外部市值源，先作为上线后数据源优化记录。
 - 2026-06-05：下一阶段“不增加 Binance 压力”的等待期报表增强已推进。`waiting_period_optimization.py` 现在用白话解释不开仓/不交易原因，修正 Top100 缓存读取为 `available_symbols`，显示 live pull 中 A/B/C 服务心跳，并且发现本地/镜像 SQLite 过期时把实扫覆盖标为 `stale_mirror_unknown`，不再误报 0%。该报表仍只读本地/镜像文件，不提交 Kline/depth、不重启服务、不提扫描频率、不改策略。
 - 2026-06-05：用户要求半小时后检测小放开条件并优化 report。已创建一次性 30 分钟 heartbeat 自动复检；首页 `decision_portal.py` 改为 cockpit 风格并显示 Top100 实扫和小放开闸门；`waiting_period_optimization.py` 详情页改为卡片/进度条/心跳/原因矩阵。仍是只读报表，不增加 Binance 压力。
+- 2026-06-05：无开仓继续排查后做了小放开。闸门前置检查为 queue 空、cooldown 空、近 1 小时无 `418/429/-1003`；B/C 正常扫描但有效 Top100 覆盖被 `SENTINEL_LIMIT=40` 限制，A/v11 需要重启刷新实扫。已把 A/B/C 有效覆盖提到 `sentinel_limit=100`，A 为 `100 top + 100 spike + 100 sentinel`，B/C 为 `100 top + 100 sentinel`；频率仍 120s，cache/sentinel 仍 300s，Kline network 和 scanner market-data fallback 仍关闭，策略阈值/仓位/杠杆/止损未改。短观察显示 queue/cooldown/recent_bad 均 0，A/B/C 有新实扫但还未开仓。
 
 ---
 ## 2026-05-29 全局运行自检与账户方向口径修复

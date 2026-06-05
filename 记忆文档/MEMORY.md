@@ -415,6 +415,7 @@
 - 2026-06-05：下一阶段“不增加 Binance 压力”的等待期报表增强已推进。`waiting_period_optimization.py` 现在用白话解释不开仓/不交易原因，修正 Top100 缓存读取为 `available_symbols`，显示 live pull 中 A/B/C 服务心跳，并且发现本地/镜像 SQLite 过期时把实扫覆盖标为 `stale_mirror_unknown`，不再误报 0%。该报表仍只读本地/镜像文件，不提交 Kline/depth、不重启服务、不提扫描频率、不改策略。
 - 2026-06-05：用户要求半小时后检测小放开条件并优化 report。已创建一次性 30 分钟 heartbeat 自动复检；首页 `decision_portal.py` 改为 cockpit 风格并显示 Top100 实扫和小放开闸门；`waiting_period_optimization.py` 详情页改为卡片/进度条/心跳/原因矩阵。仍是只读报表，不增加 Binance 压力。
 - 2026-06-05：无开仓继续排查后做了小放开。闸门前置检查为 queue 空、cooldown 空、近 1 小时无 `418/429/-1003`；B/C 正常扫描但有效 Top100 覆盖被 `SENTINEL_LIMIT=40` 限制，A/v11 需要重启刷新实扫。已把 A/B/C 有效覆盖提到 `sentinel_limit=100`，A 为 `100 top + 100 spike + 100 sentinel`，B/C 为 `100 top + 100 sentinel`；频率仍 120s，cache/sentinel 仍 300s，Kline network 和 scanner market-data fallback 仍关闭，策略阈值/仓位/杠杆/止损未改。短观察显示 queue/cooldown/recent_bad 均 0，A/B/C 有新实扫但还未开仓。
+- 2026-06-05：为后续多源行情组合，用户本地填写 `.env.server-secrets`，已把 Binance mainnet 与 OKX 变量安装到 Tencent/Aliyun `/etc/crypto-auto-trader/trading.env`，权限 0600。只检查长度不打印密钥，不写入 Git。Bybit/CoinGecko 仍为空。注意：这只是外部数据源凭证 staging，没有启用 Binance mainnet 交易，没有重启服务，也没有任何新凭证 API 调用；后续先做只读 adapter 和连通性检查。
 
 ---
 ## 2026-05-29 全局运行自检与账户方向口径修复

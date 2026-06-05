@@ -1878,6 +1878,14 @@ This is the durable reason-and-outcome ledger for every material design, code, c
 - Live impact / deployment: Local/report-only so far; safety marker remains `read_only_no_binance_request_no_queue_submit_no_service_restart`. No Binance request, queue submit, service restart, scan-frequency change, Kline/depth submit, or strategy parameter change.
 - Files / release / commit: `部署工具/waiting_period_optimization.py`, `tests/test_waiting_period_optimization.py`, `PROJECT_STATE.md`, `记忆文档/MEMORY.md`, `记忆文档/FUTURE_EXECUTION_PLAN.md`, `CHANGELOG.md`; Git commit/release to contain this entry.
 
+## 2026-06-05 12:40 CST - Deploy waiting-period next-stage report without restart
+- Trigger / reason: Deploy the no-pressure waiting-period report enhancement so the online command center shows the new attribution and stale-mirror guard.
+- Completed: Pushed source commit `2dcb276`, deployed Aliyun shadow release `20260605-123245-shadow-2dcb276` and Tencent research release `20260605-123245-research-2dcb276` with `--no-restart`. Ran the waiting-period report and portal generators on Aliyun only. The full reverse sync timed out and briefly left Tencent `reports/index.html` at 0 bytes, then a narrow SCP sync repaired `index.html`, `portal_latest.html`, waiting-period HTML/Markdown, and waiting-period runtime JSON.
+- Not completed / remaining: Full reverse-sync reliability still needs later hardening; current deployment used narrow sync for the required report files.
+- Verification: Tencent report files exist with nonzero size; waiting-period JSON contains safety marker `read_only_no_binance_request_no_queue_submit_no_service_restart`; `pull_live_context.py` at `12:39 CST` shows A/B/C scanners, sentinel, account-snapshot, and system-alerts active, positions `0`, upnl `0.0`, attention `P0=0/P1=0/P2=2`; journal since `12:20 CST` showed no `HTTP 418`, `HTTP 429`, `-1003`, `Traceback`, `ImportError`, `SyntaxError`, or cooldown lines.
+- Live impact / deployment: Report/research file deployment only. No Binance request, queue submit, scanner/cache/sentinel restart, scan-frequency change, Kline/depth submit, or strategy parameter change.
+- Files / release / commit: Deployment ledger only; source commit `2dcb276`, releases `20260605-123245-shadow-2dcb276` and `20260605-123245-research-2dcb276`.
+
 ## 2026-05-27 19:05 CST - Phase 6 sentinel quality review
 - Trigger / reason: Execute Phase 6 of FUTURE_EXECUTION_PLAN.md — measure sentinel signal contribution.
 - Completed: Added `部署工具/sentinel_quality_review.py`. Reads SQLite events with sentinel fields, classifies strategy response (opened/skipped/filtered/no_signal/error), computes per-reason and per-strategy stats, lists top 20 movers. Outputs `runtime/sentinel_quality_latest.json` and `reports/sentinel_quality_latest.md`. Uploaded to Aliyun and integrated into 2-hour analysis pipeline.

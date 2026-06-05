@@ -149,6 +149,32 @@ def first_existing(*paths: Path) -> Path | None:
     return None
 
 
+def account_state_candidates(*paths: Path) -> list[tuple[float, Path, dict[str, Any]]]:
+    candidates: list[tuple[float, Path, dict[str, Any]]] = []
+    for path in paths:
+        if not path.exists():
+            continue
+        payload = read_json(path)
+        rows = payload.get("accounts") if isinstance(payload.get("accounts"), list) else []
+        if not rows:
+            continue
+        newest_ts = 0.0
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            dt = parse_dt(row.get("ts") or row.get("snapshot_ts"))
+            if dt:
+                newest_ts = max(newest_ts, dt.timestamp())
+        if newest_ts <= 0:
+            try:
+                newest_ts = path.stat().st_mtime
+            except Exception:
+                newest_ts = 0.0
+        candidates.append((newest_ts, path, payload))
+    candidates.sort(key=lambda item: item[0], reverse=True)
+    return candidates
+
+
 def latest_event_dt(conn: sqlite3.Connection) -> datetime | None:
     latest: datetime | None = None
     for table in ("events", "sentinel_scans"):
@@ -238,12 +264,14 @@ def account_state_review(runtime_dir: Path, mirror_runtime: Path) -> dict[str, A
 
     This is read-only. It does not refresh account state or call Binance.
     """
-    path = first_existing(
+    candidates = account_state_candidates(
         runtime_dir / "account_state_latest.json",
         mirror_runtime / "account_state_latest.json",
         runtime_dir / "account_snapshot_latest.json",
         mirror_runtime / "account_snapshot_latest.json",
     )
+    path = candidates[0][1] if candidates else None
+    payload = candidates[0][2] if candidates else {}
     pre_entry_ttl = 7200.0
     confirm_ttl = 15.0
     out: dict[str, Any] = {
@@ -256,7 +284,6 @@ def account_state_review(runtime_dir: Path, mirror_runtime: Path) -> dict[str, A
         "plain_status": "没有账户资料文件；如果策略运行，会被账户风控挡住。",
         "accounts": [],
     }
-    payload = read_json(path or Path(""))
     rows = payload.get("accounts") if isinstance(payload.get("accounts"), list) else []
     if not rows:
         return out
@@ -608,7 +635,7 @@ def build_payload(root: Path = ROOT, hours: int = 24) -> dict[str, Any]:
     scan_coverage = scan_coverage_review(event_db, top100.get("top100_symbols") or [], hours)
     live_activity = live_activity_review(runtime_dir)
     account_state = account_state_review(runtime_dir, mirror_runtime)
-    status = "blocked_by_cooldown" if queue.get("active_cooldowns") else "safe_to_optimize_offline"
+    status = "blocked_by_cooldown" if queue.get("active_cooldowns") or queue.get("recent_bad") else "safe_to_optimize_offline"
     readiness = {
         "decision": "hold_frequency" if queue.get("active_cooldowns") or queue.get("recent_bad") else "ready_for_plan_only_data_work",
         "can_raise_frequency": False,

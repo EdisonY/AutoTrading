@@ -268,6 +268,77 @@ class WaitingPeriodOptimizationTests(unittest.TestCase):
             self.assertEqual(queue["recent_bad"], 1)
             self.assertTrue(queue["alert_rate_limit_fallback"])
 
+    def test_recent_bad_blocks_safe_status_without_active_cooldown(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            runtime = root / "runtime"
+            reports = root / "reports"
+            mirror_runtime = root / "server_logs_tencent" / "runtime"
+            runtime.mkdir(parents=True)
+            reports.mkdir()
+            mirror_runtime.mkdir(parents=True)
+            self.create_queue_db(runtime / "binance_api_queue.sqlite3")
+            self.create_event_db(mirror_runtime / "event_store.sqlite3")
+            with closing(sqlite3.connect(runtime / "binance_api_queue.sqlite3")) as conn:
+                conn.execute(
+                    "insert into api_requests(label,scope,account,path,status,result_status,error) values(?,?,?,?,?,?,?)",
+                    ("diag", "signed", "B", "/fapi/v2/positionRisk", "failed", None, "HTTP 418 / -1003"),
+                )
+                conn.commit()
+
+            payload = self.tool.build_payload(root=root, hours=24)
+
+            self.assertEqual(payload["status"], "blocked_by_cooldown")
+            self.assertGreater(payload["summary"]["recent_bad"], 0)
+
+    def test_account_state_review_chooses_newer_snapshot_over_old_first_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            runtime = root / "runtime"
+            mirror_runtime = root / "server_logs_tencent" / "runtime"
+            runtime.mkdir(parents=True)
+            mirror_runtime.mkdir(parents=True)
+            old_ts = (datetime.now(timezone.utc) - timedelta(days=5)).isoformat()
+            new_ts = datetime.now(timezone.utc).isoformat()
+            (runtime / "account_state_latest.json").write_text(
+                json.dumps({
+                    "accounts": [
+                        {
+                            "account": "A",
+                            "version": "v11",
+                            "strategy": "A/v11",
+                            "ts": old_ts,
+                            "stale": False,
+                            "open_positions": 9,
+                            "positions": [],
+                        }
+                    ]
+                }),
+                encoding="utf-8",
+            )
+            (runtime / "account_snapshot_latest.json").write_text(
+                json.dumps({
+                    "accounts": [
+                        {
+                            "account": "A",
+                            "version": "v11",
+                            "strategy": "A/v11",
+                            "ts": new_ts,
+                            "stale": False,
+                            "open_positions": 0,
+                            "positions": [],
+                        }
+                    ]
+                }),
+                encoding="utf-8",
+            )
+
+            review = self.tool.account_state_review(runtime, mirror_runtime)
+
+            self.assertFalse(review["pre_entry_blocking"])
+            self.assertEqual(review["status"], "fresh_for_pre_entry")
+            self.assertTrue(str(review["source"]).endswith("account_snapshot_latest.json"))
+
 
 if __name__ == "__main__":
     unittest.main()

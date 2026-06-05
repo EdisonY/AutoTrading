@@ -55,6 +55,23 @@ class ExternalMarketDataTests(unittest.TestCase):
         self.assertEqual(rows[0][7], "44")
         self.assertEqual(rows[1][0], "2000")
 
+    @patch.dict("os.environ", {"OKX_MARKET_DATA_NEGATIVE_TTL_SEC": "60"}, clear=False)
+    @patch("core.external_market_data.okx_market_data_enabled", return_value=True)
+    @patch("core.external_market_data.okx_public_get")
+    def test_empty_okx_klines_are_negative_cached(self, mock_get, _enabled):
+        original = dict(emd._OKX_NEGATIVE_UNTIL)
+        try:
+            emd._OKX_NEGATIVE_UNTIL.clear()
+            mock_get.return_value = {"code": "0", "data": []}
+
+            self.assertEqual(emd.fetch_okx_klines("MISSINGUSDT", "15m", 2), [])
+            self.assertEqual(emd.fetch_okx_klines("MISSINGUSDT", "15m", 2), [])
+
+            self.assertEqual(mock_get.call_count, 1)
+        finally:
+            emd._OKX_NEGATIVE_UNTIL.clear()
+            emd._OKX_NEGATIVE_UNTIL.update(original)
+
     @patch("core.external_market_data.okx_market_data_enabled", return_value=True)
     @patch("core.external_market_data.okx_public_get")
     def test_fetch_okx_ofi(self, mock_get, _enabled):

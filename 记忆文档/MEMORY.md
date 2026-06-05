@@ -420,6 +420,7 @@
 - 2026-06-05：压力分担继续扩大到 A/C。现场检查确认 B/v16 OKX 分流成功：Binance 队列里已无 B 标签，近窗口 `bad=0/cooldown=0`，B 扫 `177+` symbols。随后 A/v11、C/v14 的 Kline 也改为 cache -> OKX -> 原路径，并在 Tencent drop-in 启用 `OKX_MARKET_DATA_ENABLED=1`；`SCANNER_KLINE_NETWORK_ENABLED=0` 和 `SCANNER_MARKET_DATA_NETWORK_ENABLED=0` 继续保持。重启 A/C 后 Binance 队列仍干净，10分钟新鲜 Kline cache 文件到 `215`，A/B/C 近窗口约扫 `169/183/185` 个币。范围已经 Top100+，暂不提全策略频率；下一步若干净窗口继续，优先 B/v16 单独 `120s -> 90s` 小步试。
 - 2026-06-05：用户要求三策略全部提频并合理分配三数据源压力。已给 A/B/C 增加 env interval 控制，计划 live drop-in 全部设为 `90s`，并把每个 scanner 进程 OKX 限速从 `90/min` 降到 `60/min`。Binance Kline 仍关闭，scanner market-data fallback 仍关闭，范围/阈值/仓位/杠杆/止损不变。若出现 queue/cooldown/418/429/-1003 或 OKX 抖动，优先回滚 interval 到 `120s`，不要先动策略参数。
 - 2026-06-05：无开仓继续排查后发现：B/v16 主要被现有 15m 确认挡住，C/v14 主要是分数仍不到阈值，A/v11 有 OKX/cache 缺口导致扫描新鲜度风险。已修 OKX 外部行情热路径：OKX 预算满时快速返回而不是在 scanner loop 里 sleep；非 ASCII/不支持的 OKX symbol 直接跳过；具体 symbol/source/interval 失败会短期负缓存，避免每轮反复请求。此修复不放宽任何策略阈值、仓位、杠杆、止损，不启用 Binance Kline，也不保证立即开仓；它只降低 A/B/C 扫描被外部行情拖慢的风险。
+- 2026-06-05：A/v11 后续复查确认服务和日志在跑，但 `sentinel_scans` 没新行会让 report/人工判断误以为 A 卡死。结论：`sentinel_scans` 只适合看哨兵上下文，不应作为 A 唯一心跳。A/v11 已补每轮 `SCAN_STATS` 系统心跳；OKX 空 Kline/depth/funding/trade 结果也会负缓存，减少对无数据 market 的重复请求。仍不改策略条件、不启用 Binance Kline。
 
 ---
 ## 2026-05-29 全局运行自检与账户方向口径修复

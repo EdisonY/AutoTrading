@@ -1989,6 +1989,7 @@ class Scanner:
     def scan_cycle(self):
         """执行一轮完整扫描"""
         self.scan_count += 1
+        cycle_started = time.time()
         now = datetime.now(CST)
         now_str = now.strftime("%Y-%m-%d %H:%M:%S")
         logger.info(f"═══ 第 {self.scan_count} 轮扫描 @ {now_str} ═══")
@@ -2027,6 +2028,25 @@ class Scanner:
             return
 
         logger.info(f"扫描 {len(symbols)} 个币种 × {len(TIMEFRAMES)} 个周期 (Top{len(top_symbols)}+{len(spike_symbols)}异常放量)...")
+        positions_before_entry = sum(len(p) for p in self.positions.values())
+        scan_stats = {
+            "ts": str(datetime.now(CST)),
+            "event": "SCAN_STATS",
+            "scan_count": self.scan_count,
+            "symbols": len(symbols),
+            "top_symbols": len(top_symbols),
+            "spike_symbols": len(spike_symbols),
+            "sentinel_symbols": len(SENTINEL_CONTEXT),
+            "timeframes": len(TIMEFRAMES),
+            "analysis_attempts": 0,
+            "raw_signals_found": 0,
+            "entry_signals_found": 0,
+            "vpb_signals_found": 0,
+            "open_attempts": 0,
+            "opened": 0,
+            "open_positions": positions_before_entry,
+            "scan_seconds": 0.0,
+        }
 
         # 3. 逐周期扫描（半木夏策略）
         all_signals = {}  # {tf: [signals]}
@@ -2101,10 +2121,13 @@ class Scanner:
                     )
                     continue
                 try:
+                    scan_stats["analysis_attempts"] += 1
                     result = self.strategy_engine.analyze(sym, tf)
                     if result and result["can_trade"] and self._passes_entry_threshold(result):
                         tf_signals.append(result)
+                        scan_stats["entry_signals_found"] += 1
                     elif result and result["can_trade"]:
+                        scan_stats["raw_signals_found"] += 1
                         threshold_gate = evaluate_a_v11_entry_threshold(
                             timeframe=result["timeframe"],
                             side=result["trade_side"],
@@ -2134,6 +2157,7 @@ class Scanner:
                             ),
                         )
                     elif result:
+                        scan_stats["raw_signals_found"] += 1
                         log_sentinel_scan(
                             sym, tf, "strategy_rejected", "策略层 can_trade=False",
                             side=result.get("trade_side", ""),
@@ -2213,6 +2237,7 @@ class Scanner:
                     hm_syms = {s["symbol"] for s in all_signals.get(tf, [])}
                     if sym not in hm_syms:
                         vpb_signals_all[tf].append(vsig)
+                        scan_stats["vpb_signals_found"] += 1
                         logger.info(
                             f"  🔥 VPB[{tf}] {sym}: score={vsig['vpb_score']:+.0f} "
                             f"side={vsig['trade_side']} vol={vsig['vol_mult']:.1f}x "
@@ -2315,6 +2340,7 @@ class Scanner:
                         open_chain_cases=open_chain_cases,
                     )
                     opened_symbols.add(sym)
+                    scan_stats["open_attempts"] += 1
 
         # 再处理单周期信号
         for tf in TIMEFRAMES:
@@ -2367,6 +2393,7 @@ class Scanner:
                     force_replacement=tf_full,
                     open_chain_cases=open_chain_cases,
                 )
+                scan_stats["open_attempts"] += 1
 
         # 7. VPB 策略开仓（独立开仓，不受半木夏共振限制）
         for tf in TIMEFRAMES:
@@ -2402,6 +2429,12 @@ class Scanner:
                     force_replacement=tf_full,
                     open_chain_cases=self._open_pool_capacity_cases(replacement_cases, timeframe_full=tf_full),
                 )
+                scan_stats["open_attempts"] += 1
+        open_positions = sum(len(p) for p in self.positions.values())
+        scan_stats["open_positions"] = open_positions
+        scan_stats["opened"] = max(0, open_positions - positions_before_entry)
+        scan_stats["scan_seconds"] = round(time.time() - cycle_started, 3)
+        log_system(scan_stats)
 
     def _open_position(
         self,

@@ -140,6 +140,8 @@ def fetch_okx_klines(symbol: str, interval: str, limit: int = 200) -> list[list[
             str(row[7]),
         ])
     rows.reverse()
+    if not rows:
+        _mark_negative(key)
     return rows[-int(limit):]
 
 
@@ -163,6 +165,9 @@ def fetch_okx_ofi(symbol: str, limit: int = 20) -> float | None:
     data = (payload.get("data") or [{}])[0]
     bids = data.get("bids") or []
     asks = data.get("asks") or []
+    if not bids and not asks:
+        _mark_negative(key)
+        return None
     bid_q = sum(float(row[1]) for row in bids[:10])
     ask_q = sum(float(row[1]) for row in asks[:10])
     total = bid_q + ask_q
@@ -188,6 +193,7 @@ def fetch_okx_funding_rate(symbol: str) -> float | None:
         raise
     data = payload.get("data") or []
     if not data:
+        _mark_negative(key)
         return 0.0
     return float(data[0].get("fundingRate") or 0.0) * 100
 
@@ -211,7 +217,11 @@ def fetch_okx_cvd(symbol: str, limit: int = 100) -> float | None:
         raise
     buy_vol = 0.0
     sell_vol = 0.0
-    for trade in payload.get("data") or []:
+    trades = payload.get("data") or []
+    if not trades:
+        _mark_negative(key)
+        return None
+    for trade in trades:
         qty = float(trade.get("sz") or 0.0)
         side = str(trade.get("side") or "").lower()
         if side == "buy":

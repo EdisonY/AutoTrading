@@ -1886,6 +1886,14 @@ This is the durable reason-and-outcome ledger for every material design, code, c
 - Live impact / deployment: Report/research file deployment only. No Binance request, queue submit, scanner/cache/sentinel restart, scan-frequency change, Kline/depth submit, or strategy parameter change.
 - Files / release / commit: Deployment ledger only; source commit `2dcb276`, releases `20260605-123245-shadow-2dcb276` and `20260605-123245-research-2dcb276`.
 
+## 2026-06-05 12:53 CST - Cooldown check automation and report cockpit redesign
+- Trigger / reason: User asked to check small-release conditions after 30 minutes and, if satisfied, release the next layer; user also requested the report be rebuilt and made more polished.
+- Completed: Created a one-shot thread heartbeat automation for 30 minutes later to run the small-release gate check from `F:\AutoTrading`. Redesigned `decision_portal.py` first screen into a darker cockpit-style report with Top100 real-scan metric and a visible "小放开闸门" section. Redesigned `waiting_period_optimization.py` HTML from plain preformatted Markdown into cards, progress bars, service heartbeat, Top100 coverage matrix, no-open reason table, and safety gate panels.
+- Not completed / remaining: The 30-minute automation has not run yet. No small-release action has been taken in this change. Final deployment verification still pending in this work session.
+- Verification: `python -B -m py_compile 部署工具\decision_portal.py 部署工具\waiting_period_optimization.py`; `python -B 部署工具\waiting_period_optimization.py --root . --runtime-dir runtime --reports-dir reports`; `python -B 部署工具\decision_portal.py --out-dir reports`; `python -B 部署工具\portal_dashboard.py --out-dir reports`; `python -B -m unittest tests.test_waiting_period_optimization tests.test_decision_portal`.
+- Live impact / deployment: Local report/UI change only so far. No Binance request, queue submit, scanner/cache/sentinel restart, scan-frequency change, Kline/depth submit, or strategy parameter change.
+- Files / release / commit: `部署工具/decision_portal.py`, `部署工具/waiting_period_optimization.py`, `CHANGELOG.md`; Git commit/release to contain this entry.
+
 ## 2026-05-27 19:05 CST - Phase 6 sentinel quality review
 - Trigger / reason: Execute Phase 6 of FUTURE_EXECUTION_PLAN.md — measure sentinel signal contribution.
 - Completed: Added `部署工具/sentinel_quality_review.py`. Reads SQLite events with sentinel fields, classifies strategy response (opened/skipped/filtered/no_signal/error), computes per-reason and per-strategy stats, lists top 20 movers. Outputs `runtime/sentinel_quality_latest.json` and `reports/sentinel_quality_latest.md`. Uploaded to Aliyun and integrated into 2-hour analysis pipeline.

@@ -405,14 +405,30 @@ def status_text(state: dict[str, Any]) -> str:
     return "可以运行：当前没有红灯"
 
 
+def waiting_top100_text(waiting: dict[str, Any]) -> tuple[str, str]:
+    summary = waiting.get("summary") if isinstance(waiting.get("summary"), dict) else {}
+    coverage = waiting.get("scan_coverage") if isinstance(waiting.get("scan_coverage"), dict) else {}
+    if coverage.get("coverage_status") == "stale_mirror_unknown":
+        return "未知", "warn"
+    try:
+        pct = float(summary.get("top100_pct") or 0.0)
+    except Exception:
+        pct = 0.0
+    level = "good" if pct >= 80 else "warn" if pct >= 35 else "bad"
+    return f"{summary.get('top100_scanned', 0)}/{coverage.get('target_count', 100)}", level
+
+
 def render_badges(state: dict[str, Any]) -> str:
     q = state["queue"]
     account = state["account_summary"]
     alerts = state["alerts"]
+    waiting = state.get("waiting") or {}
+    top100_value, top100_level = waiting_top100_text(waiting)
     skeleton_summary = (state["skeleton"].get("summary") or {}) if isinstance(state["skeleton"], dict) else {}
     items = [
         ("三策略", "运行中", "good"),
         ("API队列", f"等待{q.get('active', 0)} / 冷却{q.get('cooldowns', 0)}", "bad" if q.get("active") or q.get("cooldowns") else "good"),
+        ("Top100实扫", top100_value, top100_level),
         ("持仓", str(account.get("open_positions", 0)), "good"),
         ("浮盈亏", f"{number(account.get('unrealized_pnl_usdt'))} USDT", "good"),
         ("告警", str(alerts.get("alert_count", 0)), "bad" if alerts.get("status") == "bad" else "warn" if alerts.get("status") == "warn" else "good"),
@@ -481,6 +497,7 @@ def render_cards(state: dict[str, Any]) -> str:
     replay = state["replay"]
     waiting = state.get("waiting") or {}
     waiting_summary = waiting.get("summary") if isinstance(waiting.get("summary"), dict) else {}
+    waiting_readiness = waiting.get("readiness") if isinstance(waiting.get("readiness"), dict) else {}
     replay_summary = replay.get("summary") if isinstance(replay.get("summary"), dict) else {}
     parity_summary = state["parity"].get("summary") if isinstance(state["parity"].get("summary"), dict) else {}
     research = state["research"]
@@ -490,7 +507,7 @@ def render_cards(state: dict[str, Any]) -> str:
         ("账户资金", f"wallet {number(account.get('wallet_usdt'))} / available {number(account.get('available_usdt'))}", "B/C 若显示等待 user-stream，不代表该去手动查余额。"),
         ("策略升级样本", f"成熟 {expansion.get('ready_count', 0)} / 收样 {expansion.get('maturing_count', 0)}", f"24h 样本缺口 {expansion.get('missing_samples_24h', 0)}。先收自然交易，不盲目扩。"),
         ("Replay验收", str(replay.get("status") or "missing"), f"ready {replay_summary.get('ready_components', 0)}/{replay_summary.get('total_components', 0)}，下一步 {replay.get('next_action') or '-'}。"),
-        ("等待期优化", str(waiting.get("status") or "missing"), f"只读优化：跳过 {waiting_summary.get('open_skipped', 0)}，失败 {waiting_summary.get('open_failed', 0)}，K线计划 {waiting_summary.get('planned_kline_requests', 0)}。"),
+        ("放开闸门", str(waiting_readiness.get("decision") or waiting.get("status") or "missing"), f"Top100 {waiting_summary.get('top100_scanned', 0)} 个，队列 {waiting_summary.get('active_requests', 0)}，冷却 {waiting_summary.get('active_cooldowns', 0)}。"),
         ("同输入审计", f"{float(parity_summary.get('pass_rate_pct') or 0):.1f}% pass", f"exact cases {parity_summary.get('gate_cases', 0)}，mismatch {parity_summary.get('mismatched', 0)}。"),
         ("K线/深度", str(kline_acceptance.get("status") or "missing"), "30天 K线和深度样本是后续回测升级的主燃料。"),
         ("服务器清理", f"{state['cleanup']['total_mb']} MB", "当前只列计划。删除/归档由维护任务做，保留回滚证据。"),
@@ -516,6 +533,26 @@ def render_cleanup(state: dict[str, Any]) -> str:
 """
 
 
+def render_release_gate(state: dict[str, Any]) -> str:
+    waiting = state.get("waiting") or {}
+    summary = waiting.get("summary") if isinstance(waiting.get("summary"), dict) else {}
+    readiness = waiting.get("readiness") if isinstance(waiting.get("readiness"), dict) else {}
+    checks = [
+        ("队列清空", int(summary.get("active_requests") or 0) == 0, f"当前 {summary.get('active_requests', 0)}"),
+        ("无冷却", int(summary.get("active_cooldowns") or 0) == 0, f"当前 {summary.get('active_cooldowns', 0)}"),
+        ("无坏请求", int(summary.get("recent_bad") or 0) == 0, f"当前 {summary.get('recent_bad', 0)}"),
+        ("不提频", not bool(readiness.get("can_raise_frequency")), "保持保护"),
+    ]
+    rows = "".join(
+        f'<div><span class="dot {"good" if ok else "warn"}"></span><b>{h(label)}</b><small>{h(detail)}</small></div>'
+        for label, ok, detail in checks
+    )
+    return f"""
+<div class="gate-grid">{rows}</div>
+<p class="empty">判断：{h(readiness.get("decision") or waiting.get("status") or "缺少等待期报表")}。{h(readiness.get("reason") or "")}</p>
+"""
+
+
 def render_html() -> str:
     state = build_state()
     strategies = strategy_rows(state["event"], state["alerts"])
@@ -535,26 +572,26 @@ def render_html() -> str:
 <title>AutoTrading 决策入口</title>
 <style>
 :root {{
-  --bg:#f5f7fb; --panel:#ffffff; --ink:#182033; --muted:#667085;
+  --bg:#eef2f7; --panel:#ffffff; --ink:#182033; --muted:#667085;
   --line:#d9e0ea; --good:#16a34a; --warn:#d97706; --bad:#dc2626;
-  --cyan:#0891b2; --blue:#2563eb;
+  --cyan:#0891b2; --blue:#2563eb; --night:#101820; --night2:#17212c;
 }}
 * {{ box-sizing:border-box; }}
-body {{ margin:0; background:var(--bg); color:var(--ink); font:14px/1.55 "Segoe UI", Arial, sans-serif; }}
+body {{ margin:0; background:linear-gradient(180deg,var(--night) 0,var(--night2) 300px,var(--bg) 301px); color:var(--ink); font:14px/1.55 "Segoe UI", Arial, sans-serif; }}
 .wrap {{ max-width:1280px; margin:0 auto; padding:24px; }}
-header {{ display:grid; grid-template-columns:1fr auto; gap:16px; align-items:end; margin-bottom:18px; }}
-h1 {{ margin:0; font-size:30px; letter-spacing:0; }}
-.sub {{ color:var(--muted); margin-top:6px; }}
-.status {{ padding:10px 14px; border-radius:6px; font-weight:700; color:#fff; }}
+header {{ display:grid; grid-template-columns:1fr auto; gap:16px; align-items:end; margin-bottom:18px; color:#fff; }}
+h1 {{ margin:0; font-size:34px; letter-spacing:0; }}
+.sub {{ color:#cbd5e1; margin-top:6px; }}
+.status {{ padding:10px 14px; border-radius:8px; font-weight:800; color:#fff; border:1px solid rgba(255,255,255,.22); }}
 .status.good {{ background:var(--good); }} .status.warn {{ background:var(--warn); }} .status.bad {{ background:var(--bad); }}
-.metrics {{ display:grid; grid-template-columns:repeat(6, minmax(0, 1fr)); gap:10px; margin:14px 0 18px; }}
+.metrics {{ display:grid; grid-template-columns:repeat(7, minmax(0, 1fr)); gap:10px; margin:14px 0 18px; }}
 .metric,.panel,.info {{ background:var(--panel); border:1px solid var(--line); border-radius:8px; box-shadow:0 1px 2px rgba(16,24,40,.04); }}
-.metric {{ padding:14px; min-height:84px; }}
+.metric {{ padding:14px; min-height:88px; box-shadow:0 14px 34px rgba(15,23,42,.10); }}
 .metric span,.info span {{ color:var(--muted); display:block; font-size:12px; }}
 .metric b {{ display:block; font-size:22px; margin-top:8px; }}
 .metric.good {{ border-top:4px solid var(--good); }} .metric.warn {{ border-top:4px solid var(--warn); }} .metric.bad {{ border-top:4px solid var(--bad); }}
 .grid {{ display:grid; grid-template-columns:1.25fr .75fr; gap:14px; align-items:start; }}
-.panel {{ padding:16px; margin-bottom:14px; }}
+.panel {{ padding:16px; margin-bottom:14px; box-shadow:0 10px 28px rgba(15,23,42,.06); }}
 .panel h2 {{ margin:0 0 10px; font-size:18px; }}
 .cards {{ display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:10px; }}
 .info {{ padding:14px; min-height:112px; }}
@@ -572,11 +609,14 @@ td small {{ display:block; color:var(--muted); margin-top:4px; }}
 .alerts b,.alerts span {{ display:block; }} .alerts span {{ color:var(--muted); margin-top:2px; }}
 .icon-btn {{ border:0; background:var(--blue); color:white; border-radius:6px; padding:8px 12px; cursor:pointer; font-weight:700; }}
 .icon-btn:disabled {{ opacity:.65; cursor:default; }}
+.gate-grid {{ display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px; }}
+.gate-grid div {{ border:1px solid var(--line); border-radius:8px; background:#f8fafc; padding:12px; min-height:76px; }}
+.gate-grid b {{ display:block; margin:2px 0 4px; }}
 .links {{ display:flex; flex-wrap:wrap; gap:8px; margin-top:8px; }}
 .links a {{ color:var(--blue); background:#eff6ff; border:1px solid #bfdbfe; padding:7px 10px; border-radius:6px; text-decoration:none; }}
 .top-actions {{ display:flex; flex-wrap:wrap; align-items:center; gap:10px; margin-top:10px; }}
 .refresh-btn {{ background:var(--cyan); }}
-.refresh-status {{ color:var(--muted); font-size:12px; }}
+.refresh-status {{ color:#cbd5e1; font-size:12px; }}
 .empty {{ color:var(--muted); }}
 @media (max-width: 980px) {{ .metrics,.cards,.grid {{ grid-template-columns:1fr; }} header {{ grid-template-columns:1fr; }} }}
 </style>
@@ -600,6 +640,10 @@ td small {{ display:block; color:var(--muted); margin-top:4px; }}
       <section class="panel">
         <h2>三策略现在是否正常</h2>
         {render_strategy_table(strategies)}
+      </section>
+      <section class="panel">
+        <h2>小放开闸门</h2>
+        {render_release_gate(state)}
       </section>
       <section class="panel">
         <h2>你需要确认的事项</h2>

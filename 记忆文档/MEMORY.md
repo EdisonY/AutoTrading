@@ -413,6 +413,7 @@
 - 2026-06-05：`3+3` 干净运行约 35 分钟后，继续扩到 B/C `5+5`。没有调扫描频率，因为频率比 universe 更直接增加 API 压力；当前优先扩大覆盖面，不加快请求节奏。`5+5` 重启后首轮检查仍无 cooldown、无 `418/429/-1003`，latest completed public rows `200`，只有一条正常排队中的 sentinel ticker。下一步先观察 `5+5`，再决定是否升 `8+8/10+10`。
 - 2026-06-05：用户纠正目标是交易量或市值前100，不是小宇宙。A/v11 之前不是没跑，而是被 staged env 压到 `12 top + 12 spike + 6 sentinel`；B/C 也只到 `5+5`。已把三策略 live drop-in 改到 Binance 交易量 Top100 目标：A `100 top + 100 spike + 40 sentinel`，B `100 top + 40 sentinel`，C `100 top + 40 sentinel`。Kline network 和 scanner market-data network 仍关闭，频率不增加。市值 Top100 不是 Binance 原生字段，需要 CoinGecko/CMC 等外部市值源，先作为上线后数据源优化记录。
 - 2026-06-05：下一阶段“不增加 Binance 压力”的等待期报表增强已推进。`waiting_period_optimization.py` 现在用白话解释不开仓/不交易原因，修正 Top100 缓存读取为 `available_symbols`，显示 live pull 中 A/B/C 服务心跳，并且发现本地/镜像 SQLite 过期时把实扫覆盖标为 `stale_mirror_unknown`，不再误报 0%。该报表仍只读本地/镜像文件，不提交 Kline/depth、不重启服务、不提扫描频率、不改策略。
+- 2026-06-05：用户要求半小时后检测小放开条件并优化 report。已创建一次性 30 分钟 heartbeat 自动复检；首页 `decision_portal.py` 改为 cockpit 风格并显示 Top100 实扫和小放开闸门；`waiting_period_optimization.py` 详情页改为卡片/进度条/心跳/原因矩阵。仍是只读报表，不增加 Binance 压力。
 
 ---
 ## 2026-05-29 全局运行自检与账户方向口径修复

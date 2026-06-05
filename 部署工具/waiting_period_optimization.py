@@ -654,18 +654,150 @@ def render_md(payload: dict[str, Any]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def level_for_pct(value: Any) -> str:
+    try:
+        pct = float(value)
+    except Exception:
+        pct = 0.0
+    if pct >= 80:
+        return "good"
+    if pct >= 35:
+        return "warn"
+    return "bad"
+
+
+def pct_width(value: Any) -> str:
+    try:
+        pct = max(0.0, min(100.0, float(value)))
+    except Exception:
+        pct = 0.0
+    return f"{pct:.1f}%"
+
+
 def render_html(payload: dict[str, Any]) -> str:
-    body = html.escape(render_md(payload))
+    summary = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
+    queue = payload.get("queue") if isinstance(payload.get("queue"), dict) else {}
+    top100 = payload.get("top100") if isinstance(payload.get("top100"), dict) else {}
+    coverage = payload.get("scan_coverage") if isinstance(payload.get("scan_coverage"), dict) else {}
+    skipped = payload.get("open_skipped") if isinstance(payload.get("open_skipped"), dict) else {}
+    gaps = payload.get("research_gaps") if isinstance(payload.get("research_gaps"), dict) else {}
+    readiness = payload.get("readiness") if isinstance(payload.get("readiness"), dict) else {}
+    live = payload.get("live_activity") if isinstance(payload.get("live_activity"), dict) else {}
+    measured = (coverage.get("coverage_status") or "measured") == "measured"
+    top_pct = float(summary.get("top100_pct") or 0.0)
+    generated = parse_dt(payload.get("generated_at"))
+    coverage_label = (
+        f"{summary.get('top100_scanned', 0)}/{coverage.get('target_count', 100)}"
+        if measured
+        else "未知"
+    )
+    reason_rows = "".join(
+        f"<tr><td>{html.escape(str(row.get('reason') or ''))}</td><td>{html.escape(str(row.get('count') or 0))}</td></tr>"
+        for row in skipped.get("scan_stats_reasons", [])
+        if isinstance(row, dict)
+    ) or '<tr><td colspan="2">暂无新鲜原因行；继续等扫描自然产出。</td></tr>'
+    live_rows = "".join(
+        f"""
+<tr>
+  <td>{html.escape(str(strategy))}</td>
+  <td><span class="pill {('good' if row.get('service') == 'active' else 'warn')}">{html.escape(str(row.get('service') or 'unknown'))}</span></td>
+  <td>{html.escape(str(row.get('activity_age') or '无记录'))}</td>
+</tr>
+""".strip()
+        for strategy, row in (live.get("strategies") or {}).items()
+        if isinstance(row, dict)
+    ) or '<tr><td colspan="3">暂无 live heartbeat。</td></tr>'
+    coverage_rows = "".join(
+        f"""
+<tr>
+  <td>{html.escape(str(strategy))}</td>
+  <td>{html.escape(str(row.get('scanned_symbols', 0)))}</td>
+  <td>{html.escape(str(row.get('top100_scanned', 0)))}/100</td>
+  <td><div class="bar"><i class="{level_for_pct(row.get('top100_pct'))}" style="width:{pct_width(row.get('top100_pct'))}"></i></div><small>{html.escape(str(row.get('top100_pct', 0)))}%</small></td>
+</tr>
+""".strip()
+        for strategy, row in (coverage.get("by_strategy") or {}).items()
+        if isinstance(row, dict)
+    ) or '<tr><td colspan="4">覆盖数据未知；镜像未新鲜时不显示假 0%。</td></tr>'
+    action_rows = "".join(f"<li>{html.escape(str(item))}</li>" for item in payload.get("actions", []))
     return f"""<!doctype html>
 <html lang="zh-CN">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Waiting Period Optimization</title>
+<title>等待期离线优化</title>
 <style>
-body{{margin:0;background:#f6f8fb;color:#172033;font:14px/1.6 "Segoe UI",Arial,sans-serif}}
-main{{max-width:1100px;margin:0 auto;padding:24px}}
-pre{{white-space:pre-wrap;background:#fff;border:1px solid #d7e0ec;border-radius:8px;padding:18px}}
+:root{{
+  --bg:#101418; --panel:#f8fafc; --panel2:#ffffff; --ink:#101828; --muted:#667085;
+  --line:#d7dee8; --green:#16a34a; --amber:#d97706; --red:#dc2626; --cyan:#0891b2; --violet:#7c3aed;
+}}
+*{{box-sizing:border-box}}
+body{{margin:0;background:linear-gradient(180deg,#101418 0,#17202a 320px,#eef2f7 321px);color:var(--ink);font:14px/1.55 "Segoe UI",Arial,sans-serif}}
+main{{max-width:1220px;margin:0 auto;padding:26px}}
+.hero{{color:white;display:grid;grid-template-columns:1fr auto;gap:18px;align-items:end;margin-bottom:18px}}
+h1{{margin:0;font-size:32px;letter-spacing:0}} .sub{{color:#cbd5e1;margin-top:6px}}
+.badge{{border:1px solid rgba(255,255,255,.24);background:rgba(255,255,255,.08);padding:10px 14px;border-radius:8px;font-weight:800}}
+.grid{{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:14px}}
+.card,.panel{{background:var(--panel2);border:1px solid var(--line);border-radius:8px;box-shadow:0 12px 30px rgba(15,23,42,.08)}}
+.card{{padding:15px;min-height:108px}} .card span,.panel small{{color:var(--muted);display:block;font-size:12px}}
+.card b{{display:block;font-size:24px;margin:7px 0 2px}} .card.good{{border-top:4px solid var(--green)}} .card.warn{{border-top:4px solid var(--amber)}} .card.bad{{border-top:4px solid var(--red)}} .card.info{{border-top:4px solid var(--cyan)}}
+.layout{{display:grid;grid-template-columns:1.15fr .85fr;gap:14px;align-items:start}}
+.panel{{padding:16px;margin-bottom:14px}} h2{{font-size:18px;margin:0 0 12px}}
+table{{width:100%;border-collapse:collapse}} th,td{{padding:10px 8px;border-bottom:1px solid var(--line);text-align:left;vertical-align:middle}} th{{font-size:12px;color:var(--muted)}}
+.bar{{height:10px;background:#e5e7eb;border-radius:999px;overflow:hidden;min-width:120px}} .bar i{{display:block;height:100%;border-radius:999px}} .bar .good{{background:var(--green)}} .bar .warn{{background:var(--amber)}} .bar .bad{{background:var(--red)}}
+.pill{{display:inline-block;border-radius:999px;padding:4px 9px;font-weight:800;font-size:12px;background:#e5e7eb;color:#334155}} .pill.good{{background:#dcfce7;color:#166534}} .pill.warn{{background:#fef3c7;color:#92400e}} .pill.bad{{background:#fee2e2;color:#991b1b}}
+.gate{{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}} .gate div{{border:1px solid var(--line);border-radius:8px;padding:11px;background:#f8fafc}} .gate b{{display:block;font-size:16px}}
+ul{{margin:0;padding-left:18px}} li{{margin:6px 0}} .note{{color:var(--muted);margin:0}}
+@media(max-width:900px){{.hero,.layout,.grid,.gate{{grid-template-columns:1fr}}}}
 </style></head>
-<body><main><pre>{body}</pre></main></body></html>
+<body><main>
+  <section class="hero">
+    <div>
+      <h1>等待期离线优化</h1>
+      <div class="sub">生成 {html.escape(age_text(generated))}。只读本地/镜像数据，不请求 Binance，不提交队列，不重启服务。</div>
+    </div>
+    <div class="badge">{html.escape(str(readiness.get("decision") or payload.get("status") or "unknown"))}</div>
+  </section>
+  <section class="grid">
+    <article class="card {('good' if not summary.get('active_cooldowns') else 'bad')}"><span>当前冷却</span><b>{html.escape(str(summary.get('active_cooldowns', 0)))}</b><small>必须为 0 才考虑放开</small></article>
+    <article class="card {('good' if not summary.get('active_requests') else 'warn')}"><span>队列等待</span><b>{html.escape(str(summary.get('active_requests', 0)))}</b><small>清空后再看下一层</small></article>
+    <article class="card {level_for_pct(top_pct) if measured else 'warn'}"><span>Top100 实扫</span><b>{html.escape(coverage_label)}</b><small>{html.escape(str(top_pct if measured else coverage.get('coverage_status') or 'unknown'))}{'%' if measured else ''}</small></article>
+    <article class="card info"><span>Kline/depth 计划</span><b>{html.escape(str(summary.get('planned_kline_requests', 0)))} / {html.escape(str(summary.get('planned_depth_requests', 0)))}</b><small>计划存在，但 submit 关闭</small></article>
+  </section>
+  <section class="layout">
+    <div>
+      <section class="panel">
+        <h2>小放开闸门</h2>
+        <div class="gate">
+          <div><span>提扫描频率</span><b>{'禁止' if not readiness.get('can_raise_frequency') else '可考虑'}</b><small>频率是最直接 API 压力</small></div>
+          <div><span>Kline/depth submit</span><b>{'禁止' if not readiness.get('can_submit_kline_depth') else '可考虑'}</b><small>先等稳定窗口</small></div>
+          <div><span>实验性重启</span><b>{'禁止' if not readiness.get('can_restart_for_experiment') else '可考虑'}</b><small>只做必要最小动作</small></div>
+        </div>
+        <p class="note">{html.escape(str(readiness.get('reason') or '继续观察'))}</p>
+      </section>
+      <section class="panel">
+        <h2>Top100 覆盖矩阵</h2>
+        <table><thead><tr><th>策略</th><th>实扫币种</th><th>Top100</th><th>进度</th></tr></thead><tbody>{coverage_rows}</tbody></table>
+      </section>
+      <section class="panel">
+        <h2>为什么还没开仓</h2>
+        <table><thead><tr><th>白话原因</th><th>次数</th></tr></thead><tbody>{reason_rows}</tbody></table>
+      </section>
+    </div>
+    <aside>
+      <section class="panel">
+        <h2>实时心跳</h2>
+        <table><thead><tr><th>策略</th><th>服务</th><th>最新活动</th></tr></thead><tbody>{live_rows}</tbody></table>
+      </section>
+      <section class="panel">
+        <h2>安全边界</h2>
+        <ul>{action_rows}</ul>
+      </section>
+      <section class="panel">
+        <h2>数据源</h2>
+        <p class="note">Top100 缓存：{html.escape(str(top100.get('cache_symbols', 0)))} 个，{html.escape(str(top100.get('cache_age') or '无记录'))}。覆盖源：{html.escape(str(coverage.get('source') or '无'))}。</p>
+      </section>
+    </aside>
+  </section>
+</main></body></html>
 """
 
 

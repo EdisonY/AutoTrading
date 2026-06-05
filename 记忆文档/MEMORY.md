@@ -417,6 +417,7 @@
 - 2026-06-05：无开仓继续排查后做了小放开。闸门前置检查为 queue 空、cooldown 空、近 1 小时无 `418/429/-1003`；B/C 正常扫描但有效 Top100 覆盖被 `SENTINEL_LIMIT=40` 限制，A/v11 需要重启刷新实扫。已把 A/B/C 有效覆盖提到 `sentinel_limit=100`，A 为 `100 top + 100 spike + 100 sentinel`，B/C 为 `100 top + 100 sentinel`；频率仍 120s，cache/sentinel 仍 300s，Kline network 和 scanner market-data fallback 仍关闭，策略阈值/仓位/杠杆/止损未改。短观察显示 queue/cooldown/recent_bad 均 0，A/B/C 有新实扫但还未开仓。
 - 2026-06-05：为后续多源行情组合，用户本地填写 `.env.server-secrets`，已把 Binance mainnet 与 OKX 变量安装到 Tencent/Aliyun `/etc/crypto-auto-trader/trading.env`，权限 0600。只检查长度不打印密钥，不写入 Git。Bybit/CoinGecko 仍为空。注意：这只是外部数据源凭证 staging，没有启用 Binance mainnet 交易，没有重启服务，也没有任何新凭证 API 调用；后续先做只读 adapter 和连通性检查。
 - 2026-06-05：按用户要求启用新 API 分担 Testnet 压力，先给 B/v16 加并启用 OKX 只读行情路径。`core/external_market_data.py` 提供 OKX swap K线、盘口/OFI、资金费率、trades/CVD；`scanner_v16.py` 在 `OKX_MARKET_DATA_ENABLED=1` 时优先用 OKX，失败才回原路径，OKX K线写入现有 `runtime/kline_cache`。Tencent 已启用 B/v16 drop-in `45-okx-market-data.conf` 并重启 B；观察显示 B active、Binance queue 无冷却/无 418/429/-1003、10分钟 B 扫 `171` symbols、20分钟新增 `83` 个 Kline cache 文件。这不启用 Binance mainnet 交易、不改策略参数、不动 A/C。
+- 2026-06-05：压力分担继续扩大到 A/C。现场检查确认 B/v16 OKX 分流成功：Binance 队列里已无 B 标签，近窗口 `bad=0/cooldown=0`，B 扫 `177+` symbols。随后 A/v11、C/v14 的 Kline 也改为 cache -> OKX -> 原路径，并在 Tencent drop-in 启用 `OKX_MARKET_DATA_ENABLED=1`；`SCANNER_KLINE_NETWORK_ENABLED=0` 和 `SCANNER_MARKET_DATA_NETWORK_ENABLED=0` 继续保持。重启 A/C 后 Binance 队列仍干净，10分钟新鲜 Kline cache 文件到 `215`，A/B/C 近窗口约扫 `169/183/185` 个币。范围已经 Top100+，暂不提全策略频率；下一步若干净窗口继续，优先 B/v16 单独 `120s -> 90s` 小步试。
 
 ---
 ## 2026-05-29 全局运行自检与账户方向口径修复

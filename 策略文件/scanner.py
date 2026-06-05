@@ -108,6 +108,7 @@ from core.account_state_cache import load_cached_account_state
 from core.execution_engine import CloseRequest, ExecutionEngine, OpenRequest
 from core.exchange_state import count_active_positions, count_side_positions, find_symbol_position, usdt_balance_summary
 from core.event_store import EventStoreWriter
+from core.external_market_data import fetch_okx_klines
 from core.market_watchlist import load_sentinel_context
 from core.market_data_cache import cached_available_symbols, cached_spike_symbols, cached_top_symbols, market_data_network_enabled
 from core.kline_cache import kline_network_enabled, kline_request_url, load_cached_klines, save_cached_klines
@@ -536,6 +537,13 @@ def fetch_klines(symbol: str, bar: str = "5m", limit: int = 100) -> list[list]: 
     cached = load_cached_klines(PROJECT_ROOT, symbol, bar, limit)
     if cached:
         return cached
+    try:
+        rows = fetch_okx_klines(symbol, bar, limit)
+        if rows:
+            save_cached_klines(PROJECT_ROOT, symbol, bar, limit, rows)
+            return rows
+    except Exception as e:
+        logger.debug(f"fetch_okx_klines {symbol}: {e}")
     if not kline_network_enabled():
         logger.warning(f"fetch_klines {symbol}: staged cache-only mode, no cached {bar}/{limit} rows")
         return []

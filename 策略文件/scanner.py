@@ -3448,7 +3448,7 @@ class Scanner:
 def main():
     parser = argparse.ArgumentParser(description="半木夏+VPB 双策略 Top100 双周期扫描器 (Binance Testnet)")
     parser.add_argument("--once", action="store_true", help="只跑一轮")
-    parser.add_argument("--interval", type=int, default=120, help="扫描间隔（秒），默认120=2分钟")
+    parser.add_argument("--interval", type=int, default=env_int("SCANNER_A_INTERVAL_SEC", 120), help="扫描间隔（秒），默认120=2分钟")
     args = parser.parse_args()
 
     scanner = Scanner()

@@ -2501,7 +2501,7 @@ class Scanner:
 # ═══════════════════════════════════════════════════════════════
 def main():
     parser = argparse.ArgumentParser(description="v14 四维度策略扫描器 - Account C")
-    parser.add_argument("--interval", type=int, default=120, help="扫描间隔秒数（默认120=2分钟）")
+    parser.add_argument("--interval", type=int, default=env_int("SCANNER_C_INTERVAL_SEC", 120), help="扫描间隔秒数（默认120=2分钟）")
     parser.add_argument("--once", action="store_true", help="只扫描一次然后退出")
     args = parser.parse_args()
 

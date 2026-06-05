@@ -1835,13 +1835,14 @@ class ScannerV16:
         logger.info(f"v16资金: ${self.capital:.2f} | 持仓: {total_positions}")
         log_system({"ts": str(datetime.now(CST)), "capital": round(self.capital, 4), "positions": total_positions, "status": "running"})
 
-    def run(self):
+    def run(self, interval: int | None = None):
         logger.info(
             f"v16启动 | 阈值{SCORE_MIN} | 过热封顶{SCORE_MAX} | "
             f"分档止损low/normal/high={SL_MULT_LOW_VOL}/{SL_MULT_NORMAL_VOL}/{SL_MULT_HIGH_VOL}×ATR | "
             f"止盈{TP_MULT}×ATR | OFI窗口{OFI_WINDOW}"
         )
-        interval = 120  # 2分钟
+        if interval is None:
+            interval = env_int("SCANNER_B_INTERVAL_SEC", 120)
         while True:
             try:
                 self.run_cycle()
@@ -1853,9 +1854,10 @@ class ScannerV16:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--once", action="store_true", help="单次扫描后退出")
+    parser.add_argument("--interval", type=int, default=None, help="扫描间隔秒数（默认120=2分钟）")
     args = parser.parse_args()
     scanner = ScannerV16()
     if args.once:
         scanner.run_cycle()
     else:
-        scanner.run()
+        scanner.run(args.interval)

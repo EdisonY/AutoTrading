@@ -3,7 +3,7 @@
 Author: v16 | Date: 2026-05-12
 """
 
-import json, time, logging, argparse, os, sys, bisect
+import json, time, logging, argparse, os, sys, bisect, sqlite3
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from dataclasses import dataclass
@@ -453,6 +453,9 @@ class SimPosition:
     cvd: float = 0.0
     ofi: float = 0.0
     sl_mult: float = SL_MULT
+    current_price: float = 0.0
+    recovery_close_reason: str = ""
+    recovery_close_attempts: int = 0
 
     def calc_pnl(self, ep):
         d = (ep - self.entry_price) / self.entry_price if self.side == "long" else (self.entry_price - ep) / self.entry_price
@@ -850,6 +853,7 @@ class ScannerV16:
         self.positions: dict = {tf: {} for tf in TIMEFRAMES}
         self.cooldowns: dict = {tf: {} for tf in TIMEFRAMES}
         self.sl_counts: dict = {}
+        self.residual_close_attempted_symbols: set[str] = set()
         self.capital = 1000.0
 
     def has_position(self, tf, symbol):
@@ -886,6 +890,39 @@ class ScannerV16:
             logger.debug(f"中心账户状态同币种持仓检查失败: {symbol} {e}")
         return {}
 
+    def _latest_symbol_position_event(self, symbol: str) -> dict:
+        try:
+            with sqlite3.connect(EVENT_STORE.path) as conn:
+                conn.row_factory = sqlite3.Row
+                row = conn.execute(
+                    """
+                    select event_type, reason, payload_json
+                    from events
+                    where strategy='B/v16'
+                      and symbol=?
+                      and event_type in ('OPEN','OPEN_FAILED','CLOSE','CLOSE_FAILED','FORCED_CLOSE','FORCED_CLOSE_FAILED')
+                    order by id desc
+                    limit 1
+                    """,
+                    (symbol,),
+                ).fetchone()
+            return dict(row) if row else {}
+        except Exception as e:
+            logger.debug(f"读取最新持仓事件失败: {symbol} {e}")
+            return {}
+
+    def _residual_exchange_close_reason(self, symbol: str) -> str:
+        value = os.environ.get("B_V16_CLOSE_RESIDUAL_EXCHANGE_POSITIONS_ENABLED", "1").strip().lower()
+        if value in {"0", "false", "no", "off"}:
+            return ""
+        latest = self._latest_symbol_position_event(symbol)
+        event_type = str(latest.get("event_type") or "").upper()
+        if event_type == "CLOSE":
+            return "交易所残留仓清理"
+        if event_type in {"CLOSE_FAILED", "FORCED_CLOSE_FAILED"}:
+            return "交易所残留仓重试平仓"
+        return ""
+
     def _sync_exchange_positions(self):
         """把交易所现有持仓同步进本地内存，避免重启/恢复遗漏导致硬止损失效。"""
         cached_state = load_cached_account_state(PROJECT_ROOT, "B/v16")
@@ -913,6 +950,9 @@ class ScannerV16:
                 tf = "15m"
             elif symbol in self.cooldowns.get("1h", {}):
                 tf = "1h"
+            recovery_close_reason = self._residual_exchange_close_reason(symbol)
+            if recovery_close_reason and symbol in getattr(self, "residual_close_attempted_symbols", set()):
+                continue
             pos = SimPosition(
                 symbol=symbol,
                 side=side,
@@ -930,6 +970,8 @@ class ScannerV16:
                 lowest=min(entry_price, mark_price),
                 order_id=str(p.get("orderId", "")),
                 exchange_qty=abs(amt),
+                current_price=mark_price,
+                recovery_close_reason=recovery_close_reason,
             )
             self.positions.setdefault(tf, {})[symbol] = pos
 
@@ -1657,6 +1699,12 @@ class ScannerV16:
         self._sync_exchange_positions()
         for tf in TIMEFRAMES:
             for sym, pos in list(self.positions[tf].items()):
+                if pos.recovery_close_reason and pos.recovery_close_attempts <= 0:
+                    pos.recovery_close_attempts += 1
+                    self.residual_close_attempted_symbols.add(sym)
+                    exit_price = pos.current_price or pos.entry_price
+                    self._close_position(tf, sym, pos, exit_price, pos.recovery_close_reason)
+                    continue
                 rows = fetch_klines(sym, tf, 2)
                 if not rows: continue
                 df = klines_to_df(rows)

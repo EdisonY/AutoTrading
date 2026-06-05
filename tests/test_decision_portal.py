@@ -93,7 +93,8 @@ class DecisionPortalTests(unittest.TestCase):
                 "open_failed": "1",
                 "close_failed": "0",
                 "open_skipped": "12",
-                "note": "15m无确认信号",
+                "note": "有候选，但15分钟确认没有跟上，所以策略按规则没开仓。",
+                "raw_note": "15m无确认信号",
             }
         ]
 
@@ -102,8 +103,13 @@ class DecisionPortalTests(unittest.TestCase):
         self.assertIn("开仓执行失败", html)
         self.assertIn("平仓/强平失败", html)
         self.assertIn("候选被挡住", html)
-        self.assertIn("15m无确认信号", html)
+        self.assertIn("有候选，但15分钟确认没有跟上，所以策略按规则没开仓。", html)
+        self.assertIn("原始原因：15m无确认信号", html)
         self.assertNotIn("<th>失败</th>", html)
+
+    def test_plain_strategy_reason_explains_raw_gate_reason(self):
+        text = self.tool.plain_strategy_reason("15m无确认信号", "skip")
+        self.assertEqual(text, "有候选，但15分钟确认没有跟上，所以策略按规则没开仓。")
 
 
 if __name__ == "__main__":

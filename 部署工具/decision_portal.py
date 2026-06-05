@@ -104,6 +104,68 @@ def plain_level(level: str) -> str:
     return level if level in {"good", "warn", "bad", "muted"} else "muted"
 
 
+def plain_status(value: Any) -> str:
+    text = str(value or "").strip()
+    lower = text.lower()
+    mapping = {
+        "ok": "正常",
+        "good": "正常",
+        "ready": "已准备好",
+        "missing": "缺少数据",
+        "stale_mirror_unknown": "镜像过期，暂不判断",
+        "blocked": "被挡住",
+        "watch": "观察中",
+        "pass": "通过",
+        "fail": "未通过",
+    }
+    if lower in mapping:
+        return mapping[lower]
+    if not text:
+        return "缺少数据"
+    return text.replace("_", " ")
+
+
+def plain_strategy_reason(reason: Any, kind: str = "skip") -> str:
+    raw = str(reason or "").strip()
+    lower = raw.lower()
+    if not raw:
+        if kind == "failed":
+            return "有开仓执行失败，要看详情确认是不是账户状态、交易所规则或风控拦截。"
+        if kind == "close_failed":
+            return "有平仓或强平失败，要优先看详情确认仓位是否还在。"
+        return "有候选，但被策略规则挡住；这通常不是系统故障。"
+    checks = [
+        (("15m", "确认"), "有候选，但15分钟确认没有跟上，所以策略按规则没开仓。"),
+        (("confirm_account_state_unavailable",), "账户状态不够新，系统为避免误判，按安全规则拦下。"),
+        (("fresh central account state unavailable",), "账户状态不够新，系统为避免误判，按安全规则拦下。"),
+        (("scanner_order_disabled",), "当前是观察模式，只记录信号，不允许真开仓。"),
+        (("cooldown",), "接口处在保护/冷却状态，先保护币安风控，不继续加压。"),
+        (("-1003",), "币安提示请求过多，系统应先退避，不能硬冲。"),
+        (("418",), "币安触发保护，系统应先等冷却清干净。"),
+        (("429",), "请求频率被限制，系统应先降压等待。"),
+        (("min_notional",), "订单金额不满足交易所最小下单规则，所以提前挡住。"),
+        (("-4164",), "订单金额不满足交易所最小下单规则，所以提前挡住。"),
+        (("same_symbol",), "同币种已有仓位，风控不允许重复叠仓。"),
+        (("duplicate", "position"), "同币种已有仓位，风控不允许重复叠仓。"),
+        (("insufficient", "balance"), "可用余额或保证金不够，系统没有强行开仓。"),
+        (("risk",), "风险检查没通过，所以策略没有继续下单。"),
+        (("kline",), "K线数据不够新或不完整，策略先跳过，避免用脏数据开仓。"),
+        (("no data",), "行情数据不完整，策略先跳过，避免用脏数据开仓。"),
+        (("score",), "分数还没到策略要求，属于正常筛选。"),
+        (("threshold",), "还没达到策略阈值，属于正常筛选。"),
+        (("can_trade=false",), "策略判断当前不适合交易，所以没有开仓。"),
+        (("open_skipped",), "候选被策略门控挡住；这是筛选结果，不是服务挂了。"),
+    ]
+    for keys, message in checks:
+        if all(key in lower for key in keys):
+            return message
+    if kind == "failed":
+        return f"开仓执行失败，需看详情定位：{raw}"
+    if kind == "close_failed":
+        return f"平仓/强平执行失败，需看详情定位：{raw}"
+    return f"候选被策略规则挡住：{raw}"
+
+
 def table_exists(conn: sqlite3.Connection, name: str) -> bool:
     row = conn.execute("select 1 from sqlite_master where type='table' and name=?", (name,)).fetchone()
     return bool(row)
@@ -259,10 +321,19 @@ def strategy_rows(event: dict[str, Any], alerts: dict[str, Any]) -> list[dict[st
         open_skipped = int(item.get("open_skipped") or 0)
         level = "bad" if service != "active" else "good"
         note = "正常运行"
+        raw_note = ""
+        note_kind = "normal"
         if open_failed:
-            note = item.get("failed_reason") or "有开仓执行失败"
+            raw_note = str(item.get("failed_reason") or "")
+            note = plain_strategy_reason(raw_note, "failed")
+            note_kind = "failed"
+        elif close_failed:
+            note = plain_strategy_reason("", "close_failed")
+            note_kind = "close_failed"
         elif open_skipped:
-            note = item.get("skip_reason") or "候选被策略规则挡住"
+            raw_note = str(item.get("skip_reason") or "")
+            note = plain_strategy_reason(raw_note, "skip")
+            note_kind = "skip"
         rows.append({
             "level": level,
             "name": name,
@@ -274,6 +345,8 @@ def strategy_rows(event: dict[str, Any], alerts: dict[str, Any]) -> list[dict[st
             "close_failed": str(close_failed),
             "open_skipped": str(open_skipped),
             "note": note,
+            "raw_note": raw_note,
+            "note_kind": note_kind,
         })
     return rows
 
@@ -488,16 +561,16 @@ def render_strategy_table(rows: list[dict[str, str]]) -> str:
   <td>{h(row['open_failed'])}</td>
   <td>{h(row['close_failed'])}</td>
   <td>{h(row['open_skipped'])}</td>
-  <td>{h(row['note'])}</td>
+  <td class="reason">{h(row.get('note') or plain_strategy_reason(row.get('raw_note') or '', row.get('note_kind') or 'skip'))}{('<small>原始原因：' + h(row['raw_note']) + '</small>') if row.get('raw_note') else ''}</td>
 </tr>
 """.strip()
         for row in rows
     )
     return f"""
-<table>
+<div class="table-scroll"><table class="strategy-table">
   <thead><tr><th>策略</th><th>服务</th><th>最新数据</th><th>24h开仓</th><th>24h平仓</th><th>开仓执行失败</th><th>平仓/强平失败</th><th>候选被挡住</th><th>主要原因</th></tr></thead>
   <tbody>{body}</tbody>
-</table>
+</table></div>
 """
 
 
@@ -543,16 +616,16 @@ def render_cards(state: dict[str, Any]) -> str:
     kline_acceptance = research.get("kline_acceptance") if isinstance(research.get("kline_acceptance"), dict) else {}
     stale = account.get("stale_accounts") if isinstance(account.get("stale_accounts"), list) else []
     rows = [
-        ("账户资金", f"wallet {number(account.get('wallet_usdt'))} / available {number(account.get('available_usdt'))}", "B/C 若显示等待 user-stream，不代表该去手动查余额。"),
-        ("策略升级样本", f"成熟 {expansion.get('ready_count', 0)} / 收样 {expansion.get('maturing_count', 0)}", f"24h 样本缺口 {expansion.get('missing_samples_24h', 0)}。先收自然交易，不盲目扩。"),
-        ("Replay验收", str(replay.get("status") or "missing"), f"ready {replay_summary.get('ready_components', 0)}/{replay_summary.get('total_components', 0)}，下一步 {replay.get('next_action') or '-'}。"),
-        ("放开闸门", str(waiting_readiness.get("decision") or waiting.get("status") or "missing"), f"Top100 {waiting_summary.get('top100_scanned', 0)} 个，队列 {waiting_summary.get('active_requests', 0)}，冷却 {waiting_summary.get('active_cooldowns', 0)}。"),
-        ("同输入审计", f"{float(parity_summary.get('pass_rate_pct') or 0):.1f}% pass", f"exact cases {parity_summary.get('gate_cases', 0)}，mismatch {parity_summary.get('mismatched', 0)}。"),
-        ("K线/深度", str(kline_acceptance.get("status") or "missing"), "30天 K线和深度样本是后续回测升级的主燃料。"),
-        ("服务器清理", f"{state['cleanup']['total_mb']} MB", "当前只列计划。删除/归档由维护任务做，保留回滚证据。"),
+        ("账户资金", f"总额 {number(account.get('wallet_usdt'))} / 可用 {number(account.get('available_usdt'))}", "看账户是否还有可用保证金。B/C 若显示等待推送，不代表要手动强拉余额。"),
+        ("策略升级样本", f"可考虑 {expansion.get('ready_count', 0)} / 继续收样 {expansion.get('maturing_count', 0)}", f"过去24小时还缺 {expansion.get('missing_samples_24h', 0)} 个样本。先让系统自然交易，不靠拍脑袋放大。"),
+        ("回放验收", plain_status(replay.get("status")), f"已准备 {replay_summary.get('ready_components', 0)}/{replay_summary.get('total_components', 0)} 块；下一步：{plain_status(replay.get('next_action'))}。"),
+        ("放开闸门", plain_status(waiting_readiness.get("decision") or waiting.get("status")), f"Top100 实扫 {waiting_summary.get('top100_scanned', 0)} 个；队列中 {waiting_summary.get('active_requests', 0)}；冷却 {waiting_summary.get('active_cooldowns', 0)}。"),
+        ("同输入审计", f"{float(parity_summary.get('pass_rate_pct') or 0):.1f}% 通过", f"同一批输入下，已验 {parity_summary.get('gate_cases', 0)} 个策略判断，不一致 {parity_summary.get('mismatched', 0)} 个。"),
+        ("K线/深度", plain_status(kline_acceptance.get("status")), "这是以后回测和升级策略的燃料。第一版先看是否在稳定积累，不急着一次补满。"),
+        ("服务器清理", f"{state['cleanup']['total_mb']} MB", "这里只列可清理候选。真正删除由维护任务做，回滚证据和重置记录要保留。"),
     ]
     if stale:
-        rows.insert(1, ("账户刷新", "等待 user-stream", "B/C stale 空账户是控风控模式，不强拉 signed REST。"))
+        rows.insert(1, ("账户刷新", "等交易所推送", "部分账户不主动查余额，是为了少碰 signed REST，降低币安风控风险。"))
     return "".join(
         f'<article class="info"><span>{h(title)}</span><b>{h(value)}</b><p>{h(body)}</p></article>'
         for title, value, body in rows
@@ -616,8 +689,8 @@ def render_html() -> str:
   --cyan:#0891b2; --blue:#2563eb; --night:#101820; --night2:#17212c;
 }}
 * {{ box-sizing:border-box; }}
-body {{ margin:0; background:linear-gradient(180deg,var(--night) 0,var(--night2) 300px,var(--bg) 301px); color:var(--ink); font:14px/1.55 "Segoe UI", Arial, sans-serif; }}
-.wrap {{ max-width:1280px; margin:0 auto; padding:24px; }}
+body {{ margin:0; background:linear-gradient(180deg,var(--night) 0,var(--night2) 300px,var(--bg) 301px); color:var(--ink); font:15px/1.58 "Segoe UI", Arial, sans-serif; }}
+.wrap {{ max-width:1560px; margin:0 auto; padding:26px 30px; }}
 header {{ display:grid; grid-template-columns:1fr auto; gap:16px; align-items:end; margin-bottom:18px; color:#fff; }}
 h1 {{ margin:0; font-size:34px; letter-spacing:0; }}
 .sub {{ color:#cbd5e1; margin-top:6px; }}
@@ -629,17 +702,21 @@ h1 {{ margin:0; font-size:34px; letter-spacing:0; }}
 .metric span,.info span {{ color:var(--muted); display:block; font-size:12px; }}
 .metric b {{ display:block; font-size:22px; margin-top:8px; }}
 .metric.good {{ border-top:4px solid var(--good); }} .metric.warn {{ border-top:4px solid var(--warn); }} .metric.bad {{ border-top:4px solid var(--bad); }}
-.grid {{ display:grid; grid-template-columns:1.25fr .75fr; gap:14px; align-items:start; }}
+.grid {{ display:grid; grid-template-columns:minmax(0, 1.55fr) minmax(340px, .45fr); gap:16px; align-items:start; }}
 .panel {{ padding:16px; margin-bottom:14px; box-shadow:0 10px 28px rgba(15,23,42,.06); }}
 .panel h2 {{ margin:0 0 10px; font-size:18px; }}
-.cards {{ display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:10px; }}
+.cards {{ display:grid; grid-template-columns:repeat(4, minmax(0, 1fr)); gap:12px; }}
 .info {{ padding:14px; min-height:112px; }}
 .info b {{ display:block; font-size:18px; margin:6px 0; }}
 .info p {{ margin:0; color:var(--muted); }}
+.table-scroll {{ width:100%; overflow-x:auto; }}
 table {{ width:100%; border-collapse:collapse; }}
 th,td {{ padding:10px 8px; border-bottom:1px solid var(--line); text-align:left; vertical-align:top; }}
 th {{ color:var(--muted); font-size:12px; font-weight:700; }}
 td small {{ display:block; color:var(--muted); margin-top:4px; }}
+.strategy-table {{ min-width:1120px; }}
+.strategy-table th:last-child,.strategy-table td.reason {{ width:34%; min-width:360px; }}
+.strategy-table td.reason {{ color:#263247; }}
 .dot {{ display:inline-block; width:9px; height:9px; border-radius:50%; margin-right:8px; background:var(--muted); }}
 .dot.good {{ background:var(--good); }} .dot.warn {{ background:var(--warn); }} .dot.bad {{ background:var(--bad); }}
 .alerts {{ list-style:none; padding:0; margin:0; display:grid; gap:8px; }}
@@ -657,7 +734,8 @@ td small {{ display:block; color:var(--muted); margin-top:4px; }}
 .refresh-btn {{ background:var(--cyan); }}
 .refresh-status {{ color:#cbd5e1; font-size:12px; }}
 .empty {{ color:var(--muted); }}
-@media (max-width: 980px) {{ .metrics,.cards,.grid {{ grid-template-columns:1fr; }} header {{ grid-template-columns:1fr; }} }}
+@media (max-width: 1280px) {{ .cards {{ grid-template-columns:repeat(2, minmax(0, 1fr)); }} }}
+@media (max-width: 980px) {{ .metrics,.cards,.grid {{ grid-template-columns:1fr; }} header {{ grid-template-columns:1fr; }} .wrap {{ padding:18px; }} }}
 </style>
 </head>
 <body>
@@ -674,6 +752,10 @@ td small {{ display:block; color:var(--muted); margin-top:4px; }}
     <div class="status {plain_level(state['overall'])}">{h(status_text(state))}</div>
   </header>
   <section class="metrics">{render_badges(state)}</section>
+  <section class="panel">
+    <h2>今日重点</h2>
+    <div class="cards">{render_cards(state)}</div>
+  </section>
   <section class="grid">
     <div>
       <section class="panel">
@@ -695,10 +777,6 @@ td small {{ display:block; color:var(--muted); margin-top:4px; }}
       </section>
     </div>
     <aside>
-      <section class="panel">
-        <h2>今日重点</h2>
-        <div class="cards">{render_cards(state)}</div>
-      </section>
       <section class="panel">
         <h2>红黄灯</h2>
         <ul class="alerts">{alert_list}</ul>

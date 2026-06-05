@@ -2,6 +2,14 @@
 
 This is the durable reason-and-outcome ledger for every material design, code, configuration, deployment, rollback, optimization, or live operational change.
 
+## 2026-06-05 21:22 CST - Widen and plain-language polish the decision report
+- Trigger / reason: User said the report still had ambiguous/technical wording: `主要原因` needed plain-language explanations, `今日重点` should use less jargon, and the page felt cramped for a system this capable.
+- Completed: The decision portal now translates common raw strategy reasons such as `15m无确认信号`, account-state freshness failures, cooldown/rate-limit rows, Kline gaps, score/threshold gates, duplicate-position gates, and min-notional rules into plain Chinese. Raw technical reasons remain as smaller secondary text for audit. `今日重点` cards now use plain Chinese labels and explanations. The layout is wider (`1560px` max), moves `今日重点` into a full-width panel, gives the strategy table horizontal breathing room, and makes the `主要原因` column the main readable area.
+- Not completed / remaining: This is report UI/wording only. It does not change strategy thresholds, order behavior, scanner frequency, Binance queue behavior, live positions, or data-source routing.
+- Verification: Pending local tests, generated HTML inspection, and online report verification in this work session.
+- Live impact / deployment: Intended effect is clearer daily operator reading. No trading service restart and no Binance request should be required.
+- Files / release / commit: `部署工具/decision_portal.py`, `tests/test_decision_portal.py`, `CHANGELOG.md`, `PROJECT_STATE.md`, `记忆文档/MEMORY.md`; source commit/release to follow.
+
 ## 2026-06-05 21:02 CST - Clarify decision portal strategy failure columns
 - Trigger / reason: User pointed out the first-screen report table under `三策略现在是否正常` showed a single `失败` column, making B/v16 strategy-confirmation skips and true execution failures look like the same kind of problem. Live inspection showed recent B/v16 rows were mostly `OPEN_SKIPPED` with `15m无确认信号`, while the true `OPEN_FAILED` count was separate and had a different cause.
 - Completed: The decision portal strategy table now separates `开仓执行失败`, `平仓/强平失败`, and `候选被挡住`, and adds a `主要原因` column. Service health red/green now follows service state, not strategy gate rejections. This makes strategy-confirmation gating visible without labeling it as a system/trading failure.

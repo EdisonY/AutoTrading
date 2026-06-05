@@ -423,6 +423,7 @@
 - 2026-06-05：A/v11 后续复查确认服务和日志在跑，但 `sentinel_scans` 没新行会让 report/人工判断误以为 A 卡死。结论：`sentinel_scans` 只适合看哨兵上下文，不应作为 A 唯一心跳。A/v11 已补每轮 `SCAN_STATS` 系统心跳；OKX 空 Kline/depth/funding/trade 结果也会负缓存，减少对无数据 market 的重复请求。仍不改策略条件、不启用 Binance Kline。
 - 2026-06-05：继续验收 A/v11 心跳后发现“只在 scan cycle 结束写 `SCAN_STATS`”仍不够；A 可能在 Top100+ VPB 扫描中等待公共 funding/premiumIndex 队列，导致 report 短时间仍看不到 A 新行。已改为 A 每轮扫描开始立即写 `SCAN_STATS phase=start`，正常结束写 `phase=complete`，取 symbol 列表失败写 `phase=error`；并让 A 的 VPB 资金费率优先读 OKX。OKX market data 开启时，Binance public `premiumIndex` fallback 默认关闭，只有显式 `VPB_BINANCE_FUNDING_FALLBACK_ENABLED=1` 才恢复。仍不放宽开仓条件，不启用 Binance Kline。
 - 2026-06-05：用户指出首页 report 的“三策略现在是否正常”表格只有一个“失败”列，容易把 B/v16 的 `OPEN_SKIPPED/15m无确认信号` 看成系统故障。已修 `decision_portal.py`：首页拆成“开仓执行失败 / 平仓/强平失败 / 候选被挡住 / 主要原因”，服务红绿只按服务状态判断。策略确认门挡住属于正常策略门控，不再和真正执行失败混在一个列里。
+- 2026-06-05：用户继续指出 report 仍显得挤、`主要原因` 和 `今日重点` 还有技术词。决策 report 后续必须先给白话解释，再把原始技术原因作为辅助小字保留；`15m无确认信号` 这类 raw reason 要解释成“有候选，但15分钟确认没有跟上，所以策略按规则没开仓”。首页布局要按宽屏驾驶舱设计，今日重点前置成全宽模块，策略原因列给足阅读空间。
 
 ---
 ## 2026-05-29 全局运行自检与账户方向口径修复

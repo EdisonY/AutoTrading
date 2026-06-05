@@ -917,10 +917,8 @@ class ScannerV16:
             return ""
         latest = self._latest_symbol_position_event(symbol)
         event_type = str(latest.get("event_type") or "").upper()
-        if event_type == "CLOSE":
+        if event_type in {"CLOSE", "FORCED_CLOSE"}:
             return "交易所残留仓清理"
-        if event_type in {"CLOSE_FAILED", "FORCED_CLOSE_FAILED"}:
-            return "交易所残留仓重试平仓"
         return ""
 
     def _sync_exchange_positions(self):
@@ -952,6 +950,8 @@ class ScannerV16:
                 tf = "1h"
             recovery_close_reason = self._residual_exchange_close_reason(symbol)
             if recovery_close_reason and symbol in getattr(self, "residual_close_attempted_symbols", set()):
+                continue
+            if not recovery_close_reason and self._latest_symbol_position_event(symbol).get("event_type") in {"CLOSE_FAILED", "FORCED_CLOSE_FAILED"}:
                 continue
             pos = SimPosition(
                 symbol=symbol,

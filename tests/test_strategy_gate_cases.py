@@ -807,9 +807,9 @@ class StrategyGateCasesTest(unittest.TestCase):
             scanner_v16_module.log_trade = original_log_trade
             scanner_v16_module.fetch_klines = original_fetch_klines
 
-        self.assertEqual(len(scanner.execution.requests), 1)
-        self.assertEqual(events[-1]["event"], "CLOSE_FAILED")
-        self.assertIn("ARBUSDT", scanner.positions["1h"])
+        self.assertEqual(len(scanner.execution.requests), 0)
+        self.assertEqual(events, [])
+        self.assertNotIn("ARBUSDT", scanner.positions["1h"])
 
     def test_c_v14_successful_open_chain_cases_replay(self):
         scanner = scanner_v14_module.Scanner.__new__(scanner_v14_module.Scanner)

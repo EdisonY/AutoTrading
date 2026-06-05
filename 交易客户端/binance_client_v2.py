@@ -20,6 +20,7 @@ from core.binance_order_rules import (
     SymbolRules,
     build_client_order_id,
     format_decimal,
+    format_decimal_down,
     is_tradfi_perp_symbol,
     parse_symbols,
     rules_from_symbol,
@@ -437,14 +438,9 @@ class BinanceClientV2:
             "newOrderRespType": "FULL",
         }
         if quantity > 0:
-            params["quantity"] = _format_quantity(quantity, _get_step_size(symbol)[0])
+            params["quantity"] = format_decimal_down(quantity, _get_step_size(symbol)[0], 8)
 
         result = _request("POST", "/fapi/v1/order", params)
-        if _is_reduce_only_rejected(result):
-            fallback = dict(params)
-            fallback.pop("positionSide", None)
-            fallback["reduceOnly"] = "true"
-            result = _request("POST", "/fapi/v1/order", fallback)
         self.invalidate_account_snapshot()
         return result
 

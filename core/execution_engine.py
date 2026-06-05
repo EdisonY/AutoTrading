@@ -143,6 +143,8 @@ class ExecutionEngine:
             self.require_central_confirmation = value not in {"0", "false", "no", "off"}
         else:
             self.require_central_confirmation = bool(require_central_confirmation)
+        value = os.environ.get("CENTRAL_ACCOUNT_STATE_CONFIRM_REST_FALLBACK_ENABLED", "1").strip().lower()
+        self.confirm_rest_fallback_enabled = value not in {"0", "false", "no", "off"}
 
     def calc_quantity(self, symbol: str, price: float, risk_usdt: float, leverage: int, max_quantity: float | None = None) -> float:
         qty = float(self.client.calc_size(symbol, price, risk_usdt, leverage))
@@ -580,6 +582,15 @@ class ExecutionEngine:
                 cache["positions_ts"] = now
                 cache["positions_source"] = "central_account_state"
             return central_positions
+        if self.confirm_rest_fallback_enabled:
+            if hasattr(self.client, "invalidate_account_snapshot"):
+                self.client.invalidate_account_snapshot()
+            positions = list(self.client.get_positions())
+            if cache is not None:
+                cache["positions"] = positions
+                cache["positions_ts"] = now
+                cache["positions_source"] = "exchange_rest_confirmation_fallback"
+            return positions
         if self.require_central_confirmation:
             raise ConfirmationStateUnavailable("fresh central account state unavailable for confirmation")
         if hasattr(self.client, "invalidate_account_snapshot"):

@@ -138,6 +138,17 @@ def format_decimal(value: float, step: float, precision: int = 8) -> str:
     return text.rstrip("0").rstrip(".") or "0"
 
 
+def format_decimal_down(value: float, step: float, precision: int = 8) -> str:
+    decimals = decimals_from_step(step, precision)
+    if step > 0:
+        value = floor_to_step(float(value), step)
+    else:
+        factor = 10 ** max(0, decimals)
+        value = math.floor(float(value) * factor) / factor
+    text = f"{float(value):.{decimals}f}"
+    return text.rstrip("0").rstrip(".") or "0"
+
+
 def build_client_order_id(prefix: str, symbol: str, side: str) -> str:
     safe_symbol = re.sub(r"[^A-Z0-9]", "", str(symbol).upper())[:18]
     safe_side = re.sub(r"[^A-Z]", "", str(side).upper())[:5]

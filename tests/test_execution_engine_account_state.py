@@ -116,7 +116,7 @@ class ExecutionEngineAccountStateTest(unittest.TestCase):
         self.assertEqual(client.close_calls, [])
         self.assertEqual(client.get_positions_calls, 0)
 
-    def test_confirmation_requires_fresh_central_state_by_default(self):
+    def test_confirmation_rest_fallback_confirms_when_central_state_is_too_old(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             payload = build_account_state_payload([
@@ -131,13 +131,44 @@ class ExecutionEngineAccountStateTest(unittest.TestCase):
             client = FakeClient()
             engine = ExecutionEngine(client, "A/v11", account_state_root=root, central_confirmation_max_age_seconds=60)
 
-            with self.assertRaises(ConfirmationStateUnavailable):
-                engine._get_positions_for_confirmation(
-                    {"min_observed_at": datetime.now(timezone.utc)},
-                    force_refresh=True,
-                )
+            positions = engine._get_positions_for_confirmation(
+                {"min_observed_at": datetime.now(timezone.utc)},
+                force_refresh=True,
+            )
 
-            self.assertEqual(client.get_positions_calls, 0)
+            self.assertEqual(client.get_positions_calls, 1)
+            self.assertEqual(positions[0]["symbol"], "ETHUSDT")
+
+    def test_confirmation_rest_fallback_can_be_disabled(self):
+        old_value = os.environ.get("CENTRAL_ACCOUNT_STATE_CONFIRM_REST_FALLBACK_ENABLED")
+        os.environ["CENTRAL_ACCOUNT_STATE_CONFIRM_REST_FALLBACK_ENABLED"] = "0"
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                payload = build_account_state_payload([
+                    {
+                        "ts": (datetime.now(timezone.utc) - timedelta(seconds=5)).isoformat(),
+                        "account": "A",
+                        "strategy": "A/v11",
+                        "positions": [{"symbol": "BTCUSDT", "side": "LONG", "qty": 0.5}],
+                    }
+                ])
+                write_account_state(root, payload)
+                client = FakeClient()
+                engine = ExecutionEngine(client, "A/v11", account_state_root=root, central_confirmation_max_age_seconds=60)
+
+                with self.assertRaises(ConfirmationStateUnavailable):
+                    engine._get_positions_for_confirmation(
+                        {"min_observed_at": datetime.now(timezone.utc)},
+                        force_refresh=True,
+                    )
+
+                self.assertEqual(client.get_positions_calls, 0)
+        finally:
+            if old_value is None:
+                os.environ.pop("CENTRAL_ACCOUNT_STATE_CONFIRM_REST_FALLBACK_ENABLED", None)
+            else:
+                os.environ["CENTRAL_ACCOUNT_STATE_CONFIRM_REST_FALLBACK_ENABLED"] = old_value
 
     def test_confirmation_fallback_can_be_explicitly_enabled(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -186,7 +217,7 @@ class ExecutionEngineAccountStateTest(unittest.TestCase):
             self.assertEqual(target["quantity"], 0.5)
             self.assertEqual(target["position_side"], "LONG")
 
-    def test_post_submit_confirmation_does_not_reuse_target_cache(self):
+    def test_post_submit_confirmation_does_not_reuse_target_cache_and_falls_back_to_rest(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             observed_at = datetime.now(timezone.utc) - timedelta(seconds=1)
@@ -204,13 +235,13 @@ class ExecutionEngineAccountStateTest(unittest.TestCase):
             cache = {}
             engine._close_target("BTCUSDT", "long", cache, force_refresh=True)
 
-            with self.assertRaises(ConfirmationStateUnavailable):
-                engine._get_positions_for_confirmation(
-                    {"min_observed_at": observed_at + timedelta(milliseconds=500), **cache},
-                    force_refresh=False,
-                )
+            positions = engine._get_positions_for_confirmation(
+                {"min_observed_at": observed_at + timedelta(milliseconds=500), **cache},
+                force_refresh=False,
+            )
 
-            self.assertEqual(client.get_positions_calls, 0)
+            self.assertEqual(client.get_positions_calls, 1)
+            self.assertEqual(positions[0]["symbol"], "ETHUSDT")
 
 
 if __name__ == "__main__":

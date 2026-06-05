@@ -87,6 +87,7 @@ CORE_FILES = [
     file_pair("core/event_store.py"),
     file_pair("core/execution_engine.py"),
     file_pair("core/exchange_state.py"),
+    file_pair("core/external_market_data.py"),
     file_pair("core/kline_cache.py"),
     file_pair("core/market_data_cache.py"),
     file_pair("core/market_watchlist.py"),

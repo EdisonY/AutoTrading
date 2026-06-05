@@ -29,6 +29,7 @@ from core.audit_log import write_jsonl_with_daily_shard
 from core.account_state_cache import load_cached_account_state
 from core.execution_engine import CloseRequest, ExecutionEngine, OpenRequest
 from core.exchange_state import count_active_positions, count_side_positions, find_symbol_position, usdt_balance_summary
+from core.external_market_data import fetch_okx_cvd, fetch_okx_funding_rate, fetch_okx_klines, fetch_okx_ofi
 from core.event_store import EventStoreWriter
 from core.market_watchlist import load_sentinel_context
 from core.market_data_cache import cached_available_symbols, cached_top_symbols, market_data_network_enabled
@@ -513,6 +514,13 @@ def fetch_klines(symbol, bar="15m", limit=100):
     cached = load_cached_klines(PROJECT_ROOT, symbol, bar, limit)
     if cached:
         return cached
+    try:
+        rows = fetch_okx_klines(symbol, bar, limit)
+        if rows:
+            save_cached_klines(PROJECT_ROOT, symbol, bar, limit, rows)
+            return rows
+    except Exception as e:
+        logger.debug(f"fetch_okx_klines {symbol}: {e}")
     if not kline_network_enabled():
         logger.warning(f"fetch_klines {symbol}: staged cache-only mode, no cached {bar}/{limit} rows")
         return []
@@ -531,6 +539,12 @@ def fetch_klines(symbol, bar="15m", limit=100):
 
 def fetch_ofi(symbol):
     """计算订单流不平衡 - 使用统一fetch_json"""
+    try:
+        ofi = fetch_okx_ofi(symbol)
+        if ofi is not None:
+            return float(ofi)
+    except Exception as e:
+        logger.debug(f"fetch_okx_ofi {symbol}: {e}")
     url = market_url(f"/fapi/v1/depth?symbol={symbol}&limit=20")
     try:
         raw = fetch_json(url)
@@ -546,6 +560,12 @@ def fetch_ofi(symbol):
 
 def fetch_funding_rate(symbol):
     """获取资金费率 - 使用统一fetch_json"""
+    try:
+        funding_rate = fetch_okx_funding_rate(symbol)
+        if funding_rate is not None:
+            return float(funding_rate)
+    except Exception as e:
+        logger.debug(f"fetch_okx_funding_rate {symbol}: {e}")
     url = market_url(f"/fapi/v1/fundingRate?symbol={symbol}&limit=1")
     try:
         data = fetch_json(url)
@@ -665,6 +685,14 @@ def fetch_cvd(symbol: str):
     cached = _cvd_cache.get(symbol)
     if cached and now - cached[0] < CVD_CACHE_SECONDS:
         return cached[1]
+
+    try:
+        okx_cvd = fetch_okx_cvd(symbol, CVD_LIMIT)
+        if okx_cvd is not None:
+            _cvd_cache[symbol] = (now, float(okx_cvd))
+            return float(okx_cvd)
+    except Exception as e:
+        logger.debug(f"fetch_okx_cvd {symbol} failed: {e}")
 
     trades = fetch_live_agg_trades(symbol, CVD_LIMIT)
     if not trades:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import os
 import re
 import time
 import json
@@ -260,7 +261,14 @@ def public_get_json(base_url: str, path: str, params: dict[str, Any], timeout: i
     query = urllib.parse.urlencode(params)
     url = f"{base_url}{path}?{query}" if query else f"{base_url}{path}"
     if api_queue_client_enabled():
-        data = queued_api_request(scope="public", label="order-rules", method="GET", path=path, url=url, timeout_sec=timeout + 5)
+        data = queued_api_request(
+            scope="public",
+            label="order-rules",
+            method="GET",
+            path=path,
+            url=url,
+            timeout_sec=float(os.environ.get("BINANCE_API_QUEUE_CLIENT_TIMEOUT_SEC", "180")),
+        )
         if isinstance(data, dict) and data.get("code") is not None and str(data.get("code")) != "200":
             raise RuntimeError(str(data.get("msg") or data))
         return data
@@ -283,8 +291,9 @@ def validate_market_price(base_url: str, rules: SymbolRules | None, symbol: str,
     if up <= 0 or down <= 0:
         return QuantityCheck(True, reason="no_percent_price_rule")
     try:
-        book = public_get_json(base_url, "/fapi/v1/ticker/bookTicker", {"symbol": symbol})
-        premium = public_get_json(base_url, "/fapi/v1/premiumIndex", {"symbol": symbol})
+        market_base_url = os.environ.get("BINANCE_MARKET_BASE_URL", "https://fapi.binance.com").rstrip("/")
+        book = public_get_json(market_base_url, "/fapi/v1/ticker/bookTicker", {"symbol": symbol})
+        premium = public_get_json(market_base_url, "/fapi/v1/premiumIndex", {"symbol": symbol})
         mark = float(premium.get("markPrice") or 0.0)
         bid = float(book.get("bidPrice") or 0.0)
         ask = float(book.get("askPrice") or 0.0)

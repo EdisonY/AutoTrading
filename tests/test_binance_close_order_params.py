@@ -1,10 +1,11 @@
 import importlib.util
+import os
 import sys
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from core.binance_order_rules import SymbolRules, format_decimal_down
+from core.binance_order_rules import SymbolRules, format_decimal_down, validate_market_price
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -59,6 +60,39 @@ class BinanceCloseOrderParamsTest(unittest.TestCase):
         self.assertEqual(calls[0][2]["quantity"], "10042.1")
         self.assertEqual(calls[0][2]["positionSide"], "LONG")
         self.assertNotIn("reduceOnly", calls[0][2])
+
+    def test_market_price_check_uses_mainnet_public_base_and_queue_timeout(self):
+        calls = []
+        old_base = os.environ.pop("BINANCE_MARKET_BASE_URL", None)
+        old_timeout = os.environ.get("BINANCE_API_QUEUE_CLIENT_TIMEOUT_SEC")
+        os.environ["BINANCE_API_QUEUE_CLIENT_TIMEOUT_SEC"] = "180"
+        rules = SymbolRules(symbol="BTCUSDT", percent_multiplier_up=1.1, percent_multiplier_down=0.9)
+
+        def fake_queue(**kwargs):
+            calls.append(kwargs)
+            if kwargs["path"].endswith("bookTicker"):
+                return {"bidPrice": "99", "askPrice": "101"}
+            return {"markPrice": "100"}
+
+        try:
+            with patch("core.binance_order_rules.api_queue_client_enabled", return_value=True), patch(
+                "core.binance_order_rules.queued_api_request", fake_queue
+            ):
+                result = validate_market_price("https://testnet.binancefuture.com", rules, "BTCUSDT", "long")
+        finally:
+            if old_base is None:
+                os.environ.pop("BINANCE_MARKET_BASE_URL", None)
+            else:
+                os.environ["BINANCE_MARKET_BASE_URL"] = old_base
+            if old_timeout is None:
+                os.environ.pop("BINANCE_API_QUEUE_CLIENT_TIMEOUT_SEC", None)
+            else:
+                os.environ["BINANCE_API_QUEUE_CLIENT_TIMEOUT_SEC"] = old_timeout
+
+        self.assertTrue(result.ok)
+        self.assertEqual(len(calls), 2)
+        self.assertTrue(all(call["url"].startswith("https://fapi.binance.com/") for call in calls))
+        self.assertTrue(all(call["timeout_sec"] == 180 for call in calls))
 
 
 if __name__ == "__main__":

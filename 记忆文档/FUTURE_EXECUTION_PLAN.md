@@ -30,6 +30,8 @@
 
 2026-06-05 公共行情默认源补充：A/B/C scanner 的 public ticker/depth/funding/premiumIndex 辅助路径、`market_data_service.py` 和 A/v11 VPB funding 均通过 `BINANCE_MARKET_BASE_URL`，默认 Binance mainnet public `https://fapi.binance.com`，不再默认 `testnet.binancefuture.com`。这只迁移公共行情读取默认 host；Testnet 订单、账户、listenKey、balance/positionRisk 等私有/交易接口不改。冷却未清前仍只允许 no-restart 部署和只读检查，禁止为了验证新默认源而手动探针。
 
+2026-06-06 account-state recovery TTL 补充：恢复期内开仓前账户风控与平仓目标读取统一使用 `14400s` 窗口，避免服务因 Binance cooldown 停太久后把已验证账户资料过早判旧。该窗口只用于 pre-entry/close-target 风控，不用于下单后成仓/平仓确认；post-submit 仍是 `15s` 严格证明。A/B/C strategy release bundle 会上传并安装 `crypto-scanner-account-state-recovery.conf` 到各 scanner systemd drop-in，后续部署不再依赖手工远端文件。若 report 显示 `account_state_blocking=false`，当前不开仓/未恢复应继续查 staged restore、队列/cooldown、B/C residual close 或策略门控。
+
 ### Long-term P0 - 必须先完成
 
 1. **P0-A Binance API 根治**

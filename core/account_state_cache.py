@@ -17,7 +17,8 @@ from core.account_state import (
 )
 
 
-DEFAULT_MAX_AGE_SECONDS = float(os.environ.get("BINANCE_ACCOUNT_STATE_CACHE_MAX_AGE_SEC", "7200"))
+DEFAULT_RECOVERY_MAX_AGE_SECONDS = 14400.0
+DEFAULT_MAX_AGE_SECONDS = float(os.environ.get("BINANCE_ACCOUNT_STATE_CACHE_MAX_AGE_SEC", str(int(DEFAULT_RECOVERY_MAX_AGE_SECONDS))))
 
 
 @dataclass(frozen=True)

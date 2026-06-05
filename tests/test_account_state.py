@@ -155,7 +155,7 @@ class AccountStateTest(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            state = load_central_account_state(root, "A/v11", max_age_seconds=7200)
+            state = load_central_account_state(root, "A/v11", max_age_seconds=14400)
 
             self.assertIsNotNone(state)
             self.assertEqual(state.balance["totalWalletBalance"], "900.0")
@@ -168,7 +168,7 @@ class AccountStateTest(unittest.TestCase):
                 root = Path(tmp)
                 payload = build_account_state_payload([
                     {
-                        "ts": (datetime.now(timezone.utc) - timedelta(minutes=90)).isoformat(),
+                        "ts": (datetime.now(timezone.utc) - timedelta(hours=3)).isoformat(),
                         "account": "A",
                         "strategy": "A/v11",
                         "wallet_usdt": 1000,
@@ -181,6 +181,29 @@ class AccountStateTest(unittest.TestCase):
 
                 self.assertIsNotNone(state)
                 self.assertGreater(state.age_seconds, 60)
+        finally:
+            if old_env is not None:
+                os.environ["BINANCE_ACCOUNT_STATE_CACHE_MAX_AGE_SEC"] = old_env
+
+    def test_cached_account_state_default_still_rejects_too_old_rows(self):
+        old_env = os.environ.pop("BINANCE_ACCOUNT_STATE_CACHE_MAX_AGE_SEC", None)
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                payload = build_account_state_payload([
+                    {
+                        "ts": (datetime.now(timezone.utc) - timedelta(hours=5)).isoformat(),
+                        "account": "A",
+                        "strategy": "A/v11",
+                        "wallet_usdt": 1000,
+                        "positions": [],
+                    }
+                ])
+                write_account_state(root, payload)
+
+                state = load_cached_account_state(root, "A/v11")
+
+                self.assertIsNone(state)
         finally:
             if old_env is not None:
                 os.environ["BINANCE_ACCOUNT_STATE_CACHE_MAX_AGE_SEC"] = old_env

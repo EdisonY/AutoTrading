@@ -209,7 +209,7 @@ class WaitingPeriodOptimizationTests(unittest.TestCase):
 
             self.assertEqual(queue["active_cooldowns"], 1)
 
-    def test_account_state_review_marks_stale_rows_blocking(self):
+    def test_account_state_review_allows_recovery_window_rows(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             runtime = root / "runtime"
@@ -224,6 +224,35 @@ class WaitingPeriodOptimizationTests(unittest.TestCase):
                             "version": "v16",
                             "strategy": "B/v16",
                             "ts": (datetime.now(timezone.utc) - timedelta(hours=3)).isoformat(),
+                            "stale": False,
+                            "open_positions": 1,
+                            "positions": [],
+                        }
+                    ]
+                }),
+                encoding="utf-8",
+            )
+
+            review = self.tool.account_state_review(runtime, mirror_runtime)
+
+            self.assertFalse(review["pre_entry_blocking"])
+            self.assertEqual(review["status"], "fresh_for_pre_entry")
+
+    def test_account_state_review_marks_too_old_rows_blocking(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            runtime = root / "runtime"
+            mirror_runtime = root / "server_logs_tencent" / "runtime"
+            runtime.mkdir(parents=True)
+            mirror_runtime.mkdir(parents=True)
+            (runtime / "account_state_latest.json").write_text(
+                json.dumps({
+                    "accounts": [
+                        {
+                            "account": "B",
+                            "version": "v16",
+                            "strategy": "B/v16",
+                            "ts": (datetime.now(timezone.utc) - timedelta(hours=5)).isoformat(),
                             "stale": False,
                             "open_positions": 1,
                             "positions": [],

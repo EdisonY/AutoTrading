@@ -29,6 +29,7 @@ ROOT = SCRIPT_DIR.parent
 CST = timezone(timedelta(hours=8))
 SAFETY = "read_only_no_binance_request_no_queue_submit_no_service_restart"
 STRATEGIES = ("A/v11", "B/v16", "C/v14")
+ACCOUNT_STATE_RECOVERY_TTL_SEC = 14400.0
 REASON_LABELS = {
     "duplicate_position": "已有同币种/同方向仓位，避免重复开仓",
     "account_state_unavailable": "开仓前账户资料暂时不够新；恢复期会用已验证快照/用户流补新，不该长期挡住信号",
@@ -272,7 +273,7 @@ def account_state_review(runtime_dir: Path, mirror_runtime: Path) -> dict[str, A
     )
     path = candidates[0][1] if candidates else None
     payload = candidates[0][2] if candidates else {}
-    pre_entry_ttl = 7200.0
+    pre_entry_ttl = ACCOUNT_STATE_RECOVERY_TTL_SEC
     confirm_ttl = 15.0
     out: dict[str, Any] = {
         "available": False,

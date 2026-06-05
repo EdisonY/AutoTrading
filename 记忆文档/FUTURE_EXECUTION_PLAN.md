@@ -32,6 +32,8 @@
 
 2026-06-06 account-state recovery TTL 补充：恢复期内开仓前账户风控与平仓目标读取统一使用 `14400s` 窗口，避免服务因 Binance cooldown 停太久后把已验证账户资料过早判旧。该窗口只用于 pre-entry/close-target 风控，不用于下单后成仓/平仓确认；post-submit 仍是 `15s` 严格证明。A/B/C strategy release bundle 会上传并安装 `crypto-scanner-account-state-recovery.conf` 到各 scanner systemd drop-in，后续部署不再依赖手工远端文件。若 report 显示 `account_state_blocking=false`，当前不开仓/未恢复应继续查 staged restore、队列/cooldown、B/C residual close 或策略门控。
 
+2026-06-06 recovery TTL 部署补充：Tencent A/B/C strategy、Tencent research、Aliyun shadow 已完成 no-restart 部署并核验。A/B/C scanner drop-in 已安装 `14400/14400/15`；Tencent Binance-facing services 仍 inactive，只有 system-alerts active；Tencent/Aliyun waiting report 均显示 `account_state_blocking=false`、`pre_entry_ttl_sec=14400`、`active_cooldowns=0`、`active_requests=0`。下一步恢复只能按 staged restoration 另行启动，不能把这次 no-restart deploy 误读为已恢复运行。
+
 ### Long-term P0 - 必须先完成
 
 1. **P0-A Binance API 根治**

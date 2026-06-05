@@ -136,8 +136,10 @@ def plain_strategy_reason(reason: Any, kind: str = "skip") -> str:
         return "有候选，但被策略规则挡住；这通常不是系统故障。"
     checks = [
         (("15m", "确认"), "有候选，但15分钟确认没有跟上，所以策略按规则没开仓。"),
-        (("confirm_account_state_unavailable",), "账户状态不够新，系统为避免误判，按安全规则拦下。"),
-        (("fresh central account state unavailable",), "账户状态不够新，系统为避免误判，按安全规则拦下。"),
+        (("open_confirm_account_state_unavailable",), "订单已经提交，但成交后的账户回执还没回来；系统会等用户流或受控确认补证，不能把它当成策略没信号。"),
+        (("close_confirm_account_state_unavailable",), "平仓已经提交，但账户回执还没确认仓位消失；系统会继续补证，不能把它当成普通失败。"),
+        (("confirm_account_state_unavailable",), "交易请求已发出，但成交后账户回执还不够新；这是确认链路问题，不是策略没有机会。"),
+        (("fresh central account state unavailable",), "账户资料太旧，系统先避免误判仓位；恢复期会用已验证账户状态和用户流补新，不该长期挡住开仓。"),
         (("scanner_order_disabled",), "当前是观察模式，只记录信号，不允许真开仓。"),
         (("cooldown",), "接口处在保护/冷却状态，先保护币安风控，不继续加压。"),
         (("-1003",), "币安提示请求过多，系统应先退避，不能硬冲。"),

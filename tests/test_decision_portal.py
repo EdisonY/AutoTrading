@@ -111,6 +111,16 @@ class DecisionPortalTests(unittest.TestCase):
         text = self.tool.plain_strategy_reason("15m无确认信号", "skip")
         self.assertEqual(text, "有候选，但15分钟确认没有跟上，所以策略按规则没开仓。")
 
+    def test_plain_strategy_reason_separates_post_submit_confirmation(self):
+        text = self.tool.plain_strategy_reason(
+            "下单失败(open_confirm_account_state_unavailable): fresh central account state unavailable for confirmation",
+            "failed",
+        )
+        self.assertEqual(
+            text,
+            "订单已经提交，但成交后的账户回执还没回来；系统会等用户流或受控确认补证，不能把它当成策略没信号。",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

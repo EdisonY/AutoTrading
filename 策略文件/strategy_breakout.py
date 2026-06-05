@@ -29,6 +29,7 @@ import numpy as np
 import pandas as pd
 from typing import Optional
 import json
+import os
 import urllib.error
 import urllib.request
 
@@ -47,6 +48,7 @@ VPB_VOL_MULT_MAX = 5.0        # 最高成交量倍数上限（v8: 5x+胜率仅25
 VPB_VOL_MULT_MIN = 2.0        # 最低成交量倍数（小于此值不触发量能信号）
 VPB_SL_MULT = 1.2             # VPB止损：1.2×ATR（v7: 1.5→1.2，更紧止损，突破失败就走）
 VPB_TP_MULT = 4.5             # VPB止盈：4.5×ATR（v7: 4.0→4.5，放宽止盈让利润跑）
+MARKET_BASE_URL = os.environ.get("BINANCE_MARKET_BASE_URL", "https://fapi.binance.com").strip().rstrip("/")
 
 
 def fetch_json(url: str, timeout: int = 10) -> dict:
@@ -66,9 +68,9 @@ def fetch_json(url: str, timeout: int = 10) -> dict:
 
 
 def fetch_funding_rate(symbol: str) -> float:
-    """获取资金费率（Binance Testnet）。失败返回0"""
+    """获取资金费率。失败返回0"""
     try:
-        url = f"https://testnet.binancefuture.com/fapi/v1/premiumIndex?symbol={symbol}"
+        url = f"{MARKET_BASE_URL}/fapi/v1/premiumIndex?symbol={symbol}"
         data = fetch_json(url)
         return float(data.get("lastFundingRate", 0))
     except Exception:

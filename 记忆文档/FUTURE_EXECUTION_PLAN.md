@@ -28,6 +28,8 @@
 
 2026-06-05 分析链 Kline 规则补充：`counterfactual_open_skips.py` 也不得默认请求 Testnet Kline。其 direct Kline endpoint 由 `BINANCE_KLINE_BASE_URL` 控制，默认 Binance mainnet public；更推荐的路径仍是本地 `research_store/klines`、`runtime/kline_cache` 或受控 queue backfill/ingest。Aliyun/Tencent 分析刷新不得为了补 report 直接绕过 cooldown 规则。
 
+2026-06-05 公共行情默认源补充：A/B/C scanner 的 public ticker/depth/funding/premiumIndex 辅助路径、`market_data_service.py` 和 A/v11 VPB funding 均通过 `BINANCE_MARKET_BASE_URL`，默认 Binance mainnet public `https://fapi.binance.com`，不再默认 `testnet.binancefuture.com`。这只迁移公共行情读取默认 host；Testnet 订单、账户、listenKey、balance/positionRisk 等私有/交易接口不改。冷却未清前仍只允许 no-restart 部署和只读检查，禁止为了验证新默认源而手动探针。
+
 ### Long-term P0 - 必须先完成
 
 1. **P0-A Binance API 根治**

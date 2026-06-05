@@ -18,7 +18,8 @@ if sys.platform == "win32":
         pass
 
 
-TESTNET_TICKER_URL = "https://testnet.binancefuture.com/fapi/v1/ticker/24hr"
+MARKET_BASE_URL = os.environ.get("BINANCE_MARKET_BASE_URL", "https://fapi.binance.com").strip().rstrip("/")
+TICKER_URL = f"{MARKET_BASE_URL}/fapi/v1/ticker/24hr"
 
 from core.binance_api_guard import record_public_response, wait_before_public_request
 from core.binance_api_queue_client import api_queue_client_enabled, queued_api_request
@@ -44,7 +45,7 @@ def fetch_json(url: str, timeout: int = 12):
 
 
 def build_payload(prev_volumes: dict[str, float], top_limit: int) -> tuple[dict, dict[str, float]]:
-    raw = fetch_json(TESTNET_TICKER_URL)
+    raw = fetch_json(TICKER_URL)
     rows = []
     current_volumes = {}
     for item in raw:
@@ -69,7 +70,7 @@ def build_payload(prev_volumes: dict[str, float], top_limit: int) -> tuple[dict,
     payload = {
         "ts": datetime.now(timezone.utc).isoformat(),
         "unix_ts": time.time(),
-        "source": TESTNET_TICKER_URL,
+        "source": TICKER_URL,
         "available_symbols": [sym for sym, _, _ in rows],
         "top_symbols": [sym for sym, _, _ in rows[:top_limit]],
         "spike_symbols": [sym for sym, _, _ in spikes[:top_limit]],

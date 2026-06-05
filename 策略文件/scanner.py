@@ -158,6 +158,11 @@ logging.basicConfig(
 logger = logging.getLogger("scanner")
 
 CST = timezone(timedelta(hours=8))
+MARKET_BASE_URL = os.environ.get("BINANCE_MARKET_BASE_URL", "https://fapi.binance.com").strip().rstrip("/")
+
+
+def market_url(path: str) -> str:
+    return f"{MARKET_BASE_URL}{path}"
 
 # ═══════════════════════════════════════════════════════════════
 # 配置
@@ -392,7 +397,7 @@ def fetch_top_symbols(top_n: int = 100) -> list[str]:
     if not market_data_network_enabled():
         logger.warning("fetch_top_symbols: staged cache-only mode, no cached market symbols")
         return []
-    raw = fetch_json("https://testnet.binancefuture.com/fapi/v1/ticker/24hr")
+    raw = fetch_json(market_url("/fapi/v1/ticker/24hr"))
     usdt_swaps = []
     for it in raw:
         sym = it.get("symbol", "")
@@ -416,7 +421,7 @@ def fetch_available_symbols() -> set[str]:
         logger.warning("fetch_available_symbols: staged cache-only mode, no cached available symbols")
         return set()
     try:
-        raw = fetch_json("https://testnet.binancefuture.com/fapi/v1/ticker/24hr")
+        raw = fetch_json(market_url("/fapi/v1/ticker/24hr"))
     except Exception as e:
         logger.warning(f"  哨兵市场池校验失败，保留原始哨兵名单: {e}")
         return set()
@@ -453,7 +458,7 @@ def fetch_volume_spikes(top_n: int = 100) -> list[str]:
         return []
     
     try:
-        raw = fetch_json("https://testnet.binancefuture.com/fapi/v1/ticker/24hr")
+        raw = fetch_json(market_url("/fapi/v1/ticker/24hr"))
         current_volumes = {}
         for it in raw:
             sym = it.get("symbol", "")
@@ -545,7 +550,7 @@ def fetch_klines(symbol: str, bar: str = "5m", limit: int = 100) -> list[list]: 
 
 def fetch_current_price(symbol: str) -> float:
     """拉取最新价"""
-    url = "https://testnet.binancefuture.com/fapi/v1/ticker/price?symbol=%s" % symbol
+    url = market_url("/fapi/v1/ticker/price?symbol=%s" % symbol)
     raw = fetch_json(url)
     return float(raw.get("price", 0))
 

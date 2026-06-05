@@ -162,6 +162,7 @@ OFI_WINDOW = 20     # 滚动窗口
 
 # CVD参数：新加坡服务器可直连实盘 Binance，用实盘成交主动买卖量差，避免Testnet成交稀疏失真。
 LIVE_BASE_URL = os.environ.get("BINANCE_LIVE_BASE_URL", "https://fapi.binance.com")
+MARKET_BASE_URL = os.environ.get("BINANCE_MARKET_BASE_URL", "https://fapi.binance.com").strip().rstrip("/")
 CVD_LIMIT = 120
 CVD_STRONG = 0.18
 CVD_WEAK = 0.08
@@ -184,6 +185,9 @@ SIGNAL_LOG = LOGS_DIR / "signals.jsonl"
 DECISION_LOG = LOGS_DIR / "decisions.jsonl"
 SYSTEM_LOG = LOGS_DIR / "system.jsonl"
 EVENT_STORE = EventStoreWriter(PROJECT_ROOT / "runtime" / "event_store.sqlite3")
+
+def market_url(path: str) -> str:
+    return f"{MARKET_BASE_URL}{path}"
 
 def log_jsonl(path: Path, item: dict):
     write_jsonl_with_daily_shard(path, item)
@@ -527,7 +531,7 @@ def fetch_klines(symbol, bar="15m", limit=100):
 
 def fetch_ofi(symbol):
     """计算订单流不平衡 - 使用统一fetch_json"""
-    url = f"https://testnet.binancefuture.com/fapi/v1/depth?symbol={symbol}&limit=20"
+    url = market_url(f"/fapi/v1/depth?symbol={symbol}&limit=20")
     try:
         raw = fetch_json(url)
         bids = raw.get("bids", []) or []
@@ -542,7 +546,7 @@ def fetch_ofi(symbol):
 
 def fetch_funding_rate(symbol):
     """获取资金费率 - 使用统一fetch_json"""
-    url = f"https://testnet.binancefuture.com/fapi/v1/fundingRate?symbol={symbol}&limit=1"
+    url = market_url(f"/fapi/v1/fundingRate?symbol={symbol}&limit=1")
     try:
         data = fetch_json(url)
         return float(data[-1]["fundingRate"]) * 100 if data else 0.0
@@ -558,7 +562,7 @@ def fetch_top_symbols(n=50):
     if not market_data_network_enabled():
         logger.warning("fetch_top_symbols: staged cache-only mode, no cached market symbols")
         return []
-    url = "https://testnet.binancefuture.com/fapi/v1/ticker/24hr"
+    url = market_url("/fapi/v1/ticker/24hr")
     try:
         raw = fetch_json(url)
         pairs = [t for t in raw if t.get("symbol","").endswith("USDT")]
@@ -577,7 +581,7 @@ def fetch_available_symbols():
     if not market_data_network_enabled():
         logger.warning("fetch_available_symbols: staged cache-only mode, no cached available symbols")
         return set()
-    url = "https://testnet.binancefuture.com/fapi/v1/ticker/24hr"
+    url = market_url("/fapi/v1/ticker/24hr")
     try:
         raw = fetch_json(url)
     except Exception as e:

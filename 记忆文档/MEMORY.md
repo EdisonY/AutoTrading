@@ -410,6 +410,7 @@
 - 2026-06-05：冷却期离线自检发现 `counterfactual_open_skips.py` 仍硬编码 Testnet Kline。已改为 `BINANCE_KLINE_BASE_URL` 可控且默认 Binance mainnet public；报告/分析链也不得用 Testnet Kline 作为默认数据源。后续 Kline 仍优先走 research_store/cache/受控 queue backfill。
 - 2026-06-05：按“稳定收数据、逐步扩量、别再触发风控”开始第一档扩量。live pull 显示六个核心服务 active、持仓 0、P0/P1=0；低开仓主要来自 post-reset 小宇宙，不是服务挂掉。B/v16 与 C/v14 从 `1 top + 1 sentinel` 提到 `3 top + 3 sentinel`，但 `SCANNER_KLINE_NETWORK_ENABLED=0`、`SCANNER_MARKET_DATA_NETWORK_ENABLED=0` 保持不变，避免重碰 Kline/Testnet 风控。重启 B/C 后队列空、cooldown 空、最新 public rows `200`、journal 无 `418/429/-1003`，B/C 新 scan rows 已继续增长。下一档只能在新的 clean window 后再提。
 - 2026-06-05：`3+3` 干净运行约 35 分钟后，继续扩到 B/C `5+5`。没有调扫描频率，因为频率比 universe 更直接增加 API 压力；当前优先扩大覆盖面，不加快请求节奏。`5+5` 重启后首轮检查仍无 cooldown、无 `418/429/-1003`，latest completed public rows `200`，只有一条正常排队中的 sentinel ticker。下一步先观察 `5+5`，再决定是否升 `8+8/10+10`。
+- 2026-06-05：用户纠正目标是交易量或市值前100，不是小宇宙。A/v11 之前不是没跑，而是被 staged env 压到 `12 top + 12 spike + 6 sentinel`；B/C 也只到 `5+5`。已把三策略 live drop-in 改到 Binance 交易量 Top100 目标：A `100 top + 100 spike + 40 sentinel`，B `100 top + 40 sentinel`，C `100 top + 40 sentinel`。Kline network 和 scanner market-data network 仍关闭，频率不增加。市值 Top100 不是 Binance 原生字段，需要 CoinGecko/CMC 等外部市值源，先作为上线后数据源优化记录。
 
 ---
 ## 2026-05-29 全局运行自检与账户方向口径修复

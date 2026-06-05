@@ -36,6 +36,7 @@ class WaitingPeriodOptimizationTests(unittest.TestCase):
                     id integer primary key,
                     ts text,
                     strategy text,
+                    symbol text,
                     event_type text,
                     reason text,
                     stage text,
@@ -45,12 +46,39 @@ class WaitingPeriodOptimizationTests(unittest.TestCase):
                 """
             )
             conn.execute(
-                "insert into events(ts,strategy,event_type,reason,stage,layer,payload_json) values(?,?,?,?,?,?,?)",
-                ((now - timedelta(minutes=5)).isoformat(), "A/v11", "OPEN_SKIPPED", "duplicate_position", "", "", "{}"),
+                "insert into events(ts,strategy,symbol,event_type,reason,stage,layer,payload_json) values(?,?,?,?,?,?,?,?)",
+                ((now - timedelta(minutes=5)).isoformat(), "A/v11", "BTCUSDT", "OPEN_SKIPPED", "duplicate_position", "", "", "{}"),
             )
             conn.execute(
-                "insert into events(ts,strategy,event_type,reason,stage,layer,payload_json) values(?,?,?,?,?,?,?)",
-                ((now - timedelta(minutes=4)).isoformat(), "B/v16", "OPEN_FAILED", "exchange_error", "", "", "{}"),
+                "insert into events(ts,strategy,symbol,event_type,reason,stage,layer,payload_json) values(?,?,?,?,?,?,?,?)",
+                ((now - timedelta(minutes=4)).isoformat(), "B/v16", "ETHUSDT", "OPEN_FAILED", "exchange_error", "", "", "{}"),
+            )
+            conn.execute(
+                "insert into events(ts,strategy,symbol,event_type,reason,stage,layer,payload_json) values(?,?,?,?,?,?,?,?)",
+                (
+                    (now - timedelta(minutes=3)).isoformat(),
+                    "B/v16",
+                    "",
+                    "SCAN_STATS",
+                    "",
+                    "",
+                    "",
+                    json.dumps({"score_low": 2, "confirm_fail": 1, "opened": 0}),
+                ),
+            )
+            conn.execute(
+                """
+                create table sentinel_scans(
+                    id integer primary key,
+                    ts text,
+                    strategy text,
+                    symbol text
+                )
+                """
+            )
+            conn.execute(
+                "insert into sentinel_scans(ts,strategy,symbol) values(?,?,?)",
+                ((now - timedelta(minutes=2)).isoformat(), "C/v14", "S2USDT"),
             )
             conn.commit()
 
@@ -88,7 +116,7 @@ class WaitingPeriodOptimizationTests(unittest.TestCase):
             self.create_queue_db(runtime / "binance_api_queue.sqlite3")
             self.create_event_db(mirror_runtime / "event_store.sqlite3")
             (runtime / "market_data_cache.json").write_text(
-                json.dumps({"generated_at": datetime.now(timezone.utc).isoformat(), "symbols": [f"S{i}USDT" for i in range(120)]}),
+                json.dumps({"generated_at": datetime.now(timezone.utc).isoformat(), "available_symbols": ["BTCUSDT", "ETHUSDT"] + [f"S{i}USDT" for i in range(118)]}),
                 encoding="utf-8",
             )
             (runtime / "research_store_summary_latest.json").write_text(
@@ -111,10 +139,15 @@ class WaitingPeriodOptimizationTests(unittest.TestCase):
             self.assertEqual(payload["summary"]["open_failed"], 1)
             self.assertEqual(payload["summary"]["planned_kline_requests"], 7)
             self.assertEqual(payload["top100"]["coverage_hint"], "ok")
+            self.assertGreaterEqual(payload["summary"]["top100_scanned"], 3)
+            self.assertIn("已有同币种/同方向仓位", payload["open_skipped"]["plain_reasons"][0]["reason"])
+            self.assertFalse(payload["readiness"]["can_raise_frequency"])
 
             self.tool.write_outputs(runtime, reports, payload)
             self.assertTrue((runtime / "waiting_period_optimization_latest.json").exists())
-            self.assertIn("OPEN_SKIPPED", (reports / "waiting_period_optimization_latest.md").read_text(encoding="utf-8"))
+            md = (reports / "waiting_period_optimization_latest.md").read_text(encoding="utf-8")
+            self.assertIn("OPEN_SKIPPED", md)
+            self.assertIn("Top100 实扫", md)
 
 
 if __name__ == "__main__":

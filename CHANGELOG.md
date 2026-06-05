@@ -1870,6 +1870,14 @@ This is the durable reason-and-outcome ledger for every material design, code, c
 - Files / release / commit:
 ```
 
+## 2026-06-05 12:30 CST - Waiting-period next-stage no-pressure report attribution
+- Trigger / reason: User requested the next stage to move forward while keeping Binance/API pressure stable and not increasing scanner frequency.
+- Completed: Enhanced `waiting_period_optimization.py` with plain-Chinese no-open attribution, SCAN_STATS reason summaries, Top100 cache parsing from `available_symbols`, per-strategy live heartbeat rows from pulled live context, plan-only readiness gates, and stale-mirror protection for Top100 real-scan coverage. If the local/mirrored event DB is older than the selected window, the report now marks scan coverage as `stale_mirror_unknown` instead of implying `0%`.
+- Not completed / remaining: Fresh per-symbol real-scan coverage still requires a current event-store mirror or a future lightweight live scan-summary export; this change does not raise scanner frequency, submit Kline/depth backfill, or change strategy behavior.
+- Verification: Ran `python -B 部署工具\waiting_period_optimization.py --root . --runtime-dir runtime --reports-dir reports`; `python -B -m py_compile 部署工具\waiting_period_optimization.py tests\test_waiting_period_optimization.py`; `python -B -m unittest tests.test_waiting_period_optimization`; `python -B 部署工具\portal_dashboard.py --out-dir reports`; `python -B 部署工具\decision_portal.py --out-dir reports`.
+- Live impact / deployment: Local/report-only so far; safety marker remains `read_only_no_binance_request_no_queue_submit_no_service_restart`. No Binance request, queue submit, service restart, scan-frequency change, Kline/depth submit, or strategy parameter change.
+- Files / release / commit: `部署工具/waiting_period_optimization.py`, `tests/test_waiting_period_optimization.py`, `PROJECT_STATE.md`, `记忆文档/MEMORY.md`, `记忆文档/FUTURE_EXECUTION_PLAN.md`, `CHANGELOG.md`; Git commit/release to contain this entry.
+
 ## 2026-05-27 19:05 CST - Phase 6 sentinel quality review
 - Trigger / reason: Execute Phase 6 of FUTURE_EXECUTION_PLAN.md — measure sentinel signal contribution.
 - Completed: Added `部署工具/sentinel_quality_review.py`. Reads SQLite events with sentinel fields, classifies strategy response (opened/skipped/filtered/no_signal/error), computes per-reason and per-strategy stats, lists top 20 movers. Outputs `runtime/sentinel_quality_latest.json` and `reports/sentinel_quality_latest.md`. Uploaded to Aliyun and integrated into 2-hour analysis pipeline.

@@ -268,7 +268,7 @@ class WaitingPeriodOptimizationTests(unittest.TestCase):
             self.assertEqual(queue["recent_bad"], 1)
             self.assertTrue(queue["alert_rate_limit_fallback"])
 
-    def test_recent_bad_blocks_safe_status_without_active_cooldown(self):
+    def test_recent_bad_after_cooldown_is_warning_not_active_block(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             runtime = root / "runtime"
@@ -288,8 +288,9 @@ class WaitingPeriodOptimizationTests(unittest.TestCase):
 
             payload = self.tool.build_payload(root=root, hours=24)
 
-            self.assertEqual(payload["status"], "blocked_by_cooldown")
+            self.assertEqual(payload["status"], "cooldown_clear_recent_bad_history")
             self.assertGreater(payload["summary"]["recent_bad"], 0)
+            self.assertEqual(payload["readiness"]["decision"], "ready_for_plan_only_data_work")
 
     def test_account_state_review_chooses_newer_snapshot_over_old_first_file(self):
         with tempfile.TemporaryDirectory() as tmp:

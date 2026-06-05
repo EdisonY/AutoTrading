@@ -635,13 +635,30 @@ def build_payload(root: Path = ROOT, hours: int = 24) -> dict[str, Any]:
     scan_coverage = scan_coverage_review(event_db, top100.get("top100_symbols") or [], hours)
     live_activity = live_activity_review(runtime_dir)
     account_state = account_state_review(runtime_dir, mirror_runtime)
-    status = "blocked_by_cooldown" if queue.get("active_cooldowns") or queue.get("recent_bad") else "safe_to_optimize_offline"
+    active_cooldowns = int(queue.get("active_cooldowns") or 0)
+    active_requests = int(queue.get("active_requests") or 0)
+    recent_bad = int(queue.get("recent_bad") or 0)
+    if active_cooldowns:
+        status = "blocked_by_cooldown"
+    elif active_requests:
+        status = "blocked_by_queue"
+    elif recent_bad:
+        status = "cooldown_clear_recent_bad_history"
+    else:
+        status = "safe_to_optimize_offline"
+    blocking_now = bool(active_cooldowns or active_requests)
     readiness = {
-        "decision": "hold_frequency" if queue.get("active_cooldowns") or queue.get("recent_bad") else "ready_for_plan_only_data_work",
+        "decision": "hold_frequency" if blocking_now else "ready_for_plan_only_data_work",
         "can_raise_frequency": False,
         "can_submit_kline_depth": False,
         "can_restart_for_experiment": False,
-        "reason": "有 cooldown/坏请求就只读观察" if queue.get("active_cooldowns") or queue.get("recent_bad") else "队列当前干净；只能推进离线报表、计划、回放骨架",
+        "reason": (
+            "当前仍有 cooldown 或队列未清，只读观察"
+            if blocking_now
+            else "当前冷却和队列已清；历史坏请求只作风险提示，仍按分阶段恢复计划推进"
+            if recent_bad
+            else "队列当前干净；只能推进离线报表、计划、回放骨架"
+        ),
     }
     actions = [
         "保持 A/B/C 扫描频率 120s、cache/sentinel 300s，不上调频率。",

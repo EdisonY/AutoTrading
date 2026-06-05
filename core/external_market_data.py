@@ -17,6 +17,7 @@ from typing import Any
 
 OKX_BASE_URL = os.environ.get("OKX_MARKET_BASE_URL", "https://www.okx.com").strip().rstrip("/")
 _OKX_REQUEST_TIMES: list[float] = []
+_OKX_NEGATIVE_UNTIL: dict[str, float] = {}
 
 
 def okx_market_data_enabled() -> bool:
@@ -24,15 +25,36 @@ def okx_market_data_enabled() -> bool:
     return value in {"1", "true", "yes", "on"}
 
 
-def _okx_rate_limit() -> None:
+def _okx_rate_limit() -> bool:
     max_per_min = int(os.environ.get("OKX_MARKET_DATA_MAX_PER_MIN", "90"))
     now = time.time()
     while _OKX_REQUEST_TIMES and _OKX_REQUEST_TIMES[0] < now - 60:
         _OKX_REQUEST_TIMES.pop(0)
     if max_per_min > 0 and len(_OKX_REQUEST_TIMES) >= max_per_min:
-        sleep_for = max(0.1, 60 - (now - _OKX_REQUEST_TIMES[0]))
-        time.sleep(min(sleep_for, 5.0))
+        return False
     _OKX_REQUEST_TIMES.append(time.time())
+    return True
+
+
+def _negative_key(kind: str, symbol: str, interval: str | None = None) -> str:
+    parts = [kind, okx_inst_id(symbol)]
+    if interval:
+        parts.append(okx_bar(interval))
+    return ":".join(parts)
+
+
+def _negative_blocked(key: str) -> bool:
+    until = _OKX_NEGATIVE_UNTIL.get(key, 0.0)
+    if until <= time.time():
+        _OKX_NEGATIVE_UNTIL.pop(key, None)
+        return False
+    return True
+
+
+def _mark_negative(key: str) -> None:
+    ttl = int(os.environ.get("OKX_MARKET_DATA_NEGATIVE_TTL_SEC", "3600"))
+    if ttl > 0:
+        _OKX_NEGATIVE_UNTIL[key] = time.time() + ttl
 
 
 def okx_inst_id(symbol: str) -> str:
@@ -43,6 +65,14 @@ def okx_inst_id(symbol: str) -> str:
         base = sym[:-4]
         return f"{base}-USDT-SWAP"
     return sym
+
+
+def okx_symbol_supported(symbol: str) -> bool:
+    sym = str(symbol or "").upper().strip()
+    if not sym.endswith("USDT"):
+        return False
+    base = sym[:-4]
+    return bool(base) and base.isascii() and base.replace("-", "").isalnum()
 
 
 def okx_bar(interval: str) -> str:
@@ -62,7 +92,8 @@ def okx_bar(interval: str) -> str:
 
 
 def okx_public_get(path: str, params: dict[str, Any], timeout: int = 10) -> dict[str, Any]:
-    _okx_rate_limit()
+    if not _okx_rate_limit():
+        raise RuntimeError("okx_rate_budget_exhausted")
     query = urllib.parse.urlencode({k: v for k, v in params.items() if v is not None})
     url = f"{OKX_BASE_URL}{path}"
     if query:
@@ -78,10 +109,20 @@ def okx_public_get(path: str, params: dict[str, Any], timeout: int = 10) -> dict
 def fetch_okx_klines(symbol: str, interval: str, limit: int = 200) -> list[list[str]]:
     if not okx_market_data_enabled():
         return []
-    payload = okx_public_get(
-        "/api/v5/market/candles",
-        {"instId": okx_inst_id(symbol), "bar": okx_bar(interval), "limit": int(limit)},
-    )
+    if not okx_symbol_supported(symbol):
+        return []
+    key = _negative_key("klines", symbol, interval)
+    if _negative_blocked(key):
+        return []
+    try:
+        payload = okx_public_get(
+            "/api/v5/market/candles",
+            {"instId": okx_inst_id(symbol), "bar": okx_bar(interval), "limit": int(limit)},
+        )
+    except Exception as exc:
+        if "okx_rate_budget_exhausted" not in str(exc):
+            _mark_negative(key)
+        raise
     rows = []
     for row in payload.get("data") or []:
         if len(row) < 8:
@@ -105,10 +146,20 @@ def fetch_okx_klines(symbol: str, interval: str, limit: int = 200) -> list[list[
 def fetch_okx_ofi(symbol: str, limit: int = 20) -> float | None:
     if not okx_market_data_enabled():
         return None
-    payload = okx_public_get(
-        "/api/v5/market/books",
-        {"instId": okx_inst_id(symbol), "sz": int(limit)},
-    )
+    if not okx_symbol_supported(symbol):
+        return None
+    key = _negative_key("books", symbol)
+    if _negative_blocked(key):
+        return None
+    try:
+        payload = okx_public_get(
+            "/api/v5/market/books",
+            {"instId": okx_inst_id(symbol), "sz": int(limit)},
+        )
+    except Exception as exc:
+        if "okx_rate_budget_exhausted" not in str(exc):
+            _mark_negative(key)
+        raise
     data = (payload.get("data") or [{}])[0]
     bids = data.get("bids") or []
     asks = data.get("asks") or []
@@ -121,10 +172,20 @@ def fetch_okx_ofi(symbol: str, limit: int = 20) -> float | None:
 def fetch_okx_funding_rate(symbol: str) -> float | None:
     if not okx_market_data_enabled():
         return None
-    payload = okx_public_get(
-        "/api/v5/public/funding-rate",
-        {"instId": okx_inst_id(symbol)},
-    )
+    if not okx_symbol_supported(symbol):
+        return None
+    key = _negative_key("funding", symbol)
+    if _negative_blocked(key):
+        return None
+    try:
+        payload = okx_public_get(
+            "/api/v5/public/funding-rate",
+            {"instId": okx_inst_id(symbol)},
+        )
+    except Exception as exc:
+        if "okx_rate_budget_exhausted" not in str(exc):
+            _mark_negative(key)
+        raise
     data = payload.get("data") or []
     if not data:
         return 0.0
@@ -134,10 +195,20 @@ def fetch_okx_funding_rate(symbol: str) -> float | None:
 def fetch_okx_cvd(symbol: str, limit: int = 100) -> float | None:
     if not okx_market_data_enabled():
         return None
-    payload = okx_public_get(
-        "/api/v5/market/trades",
-        {"instId": okx_inst_id(symbol), "limit": int(limit)},
-    )
+    if not okx_symbol_supported(symbol):
+        return None
+    key = _negative_key("trades", symbol)
+    if _negative_blocked(key):
+        return None
+    try:
+        payload = okx_public_get(
+            "/api/v5/market/trades",
+            {"instId": okx_inst_id(symbol), "limit": int(limit)},
+        )
+    except Exception as exc:
+        if "okx_rate_budget_exhausted" not in str(exc):
+            _mark_negative(key)
+        raise
     buy_vol = 0.0
     sell_vol = 0.0
     for trade in payload.get("data") or []:

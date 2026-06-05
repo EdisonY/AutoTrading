@@ -13,6 +13,30 @@ class ExternalMarketDataTests(unittest.TestCase):
         self.assertEqual(emd.okx_bar("1h"), "1H")
         self.assertEqual(emd.okx_bar("15m"), "15m")
 
+    def test_okx_symbol_supported_rejects_non_ascii(self):
+        self.assertTrue(emd.okx_symbol_supported("BTCUSDT"))
+        self.assertFalse(emd.okx_symbol_supported("币安人生USDT"))
+
+    @patch.dict("os.environ", {"OKX_MARKET_DATA_MAX_PER_MIN": "0"}, clear=False)
+    def test_okx_rate_budget_exhausted_does_not_sleep(self):
+        original = list(emd._OKX_REQUEST_TIMES)
+        try:
+            emd._OKX_REQUEST_TIMES[:] = [0.0]
+            with patch("core.external_market_data.time.time", return_value=10.0):
+                self.assertTrue(emd._okx_rate_limit())
+        finally:
+            emd._OKX_REQUEST_TIMES[:] = original
+
+    @patch.dict("os.environ", {"OKX_MARKET_DATA_MAX_PER_MIN": "1"}, clear=False)
+    def test_okx_rate_budget_returns_false_when_full(self):
+        original = list(emd._OKX_REQUEST_TIMES)
+        try:
+            emd._OKX_REQUEST_TIMES[:] = [100.0]
+            with patch("core.external_market_data.time.time", return_value=120.0):
+                self.assertFalse(emd._okx_rate_limit())
+        finally:
+            emd._OKX_REQUEST_TIMES[:] = original
+
     @patch("core.external_market_data.okx_market_data_enabled", return_value=True)
     @patch("core.external_market_data.okx_public_get")
     def test_fetch_okx_klines_returns_binance_shape(self, mock_get, _enabled):

@@ -26,6 +26,8 @@
 
 2026-06-05 Kline 风控恢复规则补充：Testnet Kline 不能再作为 scanner direct fallback。A/v11 fresh-run 中 BTCUSDT 15m Kline `200` 后，ETHUSDT 15m Testnet Kline 立即触发 `HTTP 418/-1003`，global cooldown 到 `2026-06-05 10:06:50 CST`。当前规则：scanner 先读本地 cache；direct Kline 网络默认 off，且必须同时设置 `SCANNER_KLINE_NETWORK_ENABLED=1` 与 `SCANNER_DIRECT_KLINE_NETWORK_ALLOWED=1` 才会联网；显式联网时默认 Kline base URL 是 Binance mainnet public `https://fapi.binance.com`。`research_kline_backfill.py --submit` 也写显式 mainnet public Kline URL。后续 post-cooldown 恢复先做只读 queue/cooldown/journal 检查，再恢复 cache-only scanner；Kline 补数走受控 queue/backfill/ingest，不用 Testnet Kline 直连。
 
+2026-06-05 分析链 Kline 规则补充：`counterfactual_open_skips.py` 也不得默认请求 Testnet Kline。其 direct Kline endpoint 由 `BINANCE_KLINE_BASE_URL` 控制，默认 Binance mainnet public；更推荐的路径仍是本地 `research_store/klines`、`runtime/kline_cache` 或受控 queue backfill/ingest。Aliyun/Tencent 分析刷新不得为了补 report 直接绕过 cooldown 规则。
+
 ### Long-term P0 - 必须先完成
 
 1. **P0-A Binance API 根治**

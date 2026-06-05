@@ -6,6 +6,7 @@ import argparse
 import html
 import json
 import math
+import os
 import re
 import sqlite3
 import sys
@@ -47,7 +48,8 @@ from core.binance_api_queue_client import api_queue_client_enabled, queued_api_r
 
 CST = timezone(timedelta(hours=8))
 UTC = timezone.utc
-KLINE_URL = "https://testnet.binancefuture.com/fapi/v1/klines"
+KLINE_BASE_URL = os.environ.get("BINANCE_KLINE_BASE_URL", "https://fapi.binance.com").strip().rstrip("/")
+KLINE_URL = f"{KLINE_BASE_URL}/fapi/v1/klines"
 HORIZONS = (15, 30, 60, 120)
 STRATEGIES = ("A/v11", "B/v16", "C/v14")
 NUMBER_RE = re.compile(r"\d+(?:\.\d+)?")

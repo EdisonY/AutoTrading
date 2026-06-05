@@ -404,6 +404,7 @@
 - 2026-06-04：新版在线决策 report 第一版已上线为主入口 `http://39.105.156.210:8090/`，本地 `reports/index.html` 只作拉取后的备份。后验发现首页已清掉旧 `账户快照采集失败/HTTP 418` P0，但 `/api/attention` 仍读 Tencent 镜像 DB，导致确认 API 返回旧 P0。已修 `crypto-attention-api.service`，默认读写 Aliyun 本地 attention DB；公网 `/api/attention` 现为 open `P0=0/P1=0/P2=2`，且不含旧 418 快照项。此修复只影响 Aliyun report/API，不触发 Binance 请求。
 - 2026-06-05：决策 report 首页确认区收口。`你需要确认的事项` 以后只显示当前 open P0/P1，历史已清除项和 P2 观察项不再占首页确认区；策略进化/回滚项用白话中文解释，不直接让用户读 `EXP-*` 和英文 action code。首页新增 `刷新报表`，调用 Aliyun `/api/report/refresh` 后台跑轻量报表刷新链路，只同步镜像和重建 report，不提交 Binance 队列、不跑 scanner、不跑账户 baseline、不强拉 Binance。
 - 2026-06-05：恢复尝试确认 Testnet Kline 是当前最大风控触发点。A/v11 BTCUSDT 15m Kline 返回 `200` 后，ETHUSDT 15m Testnet Kline 立刻触发 `HTTP 418/-1003`，global cooldown 到 `2026-06-05 10:06:50 CST`。已停 A/B/C scanner、market-data-cache、sentinel、api-queue，并把 ETHUSDT Kline row 手动 failed/no-retry。代码已改为 scanner direct Kline 默认关闭且需双开关；若后续显式允许 direct Kline，默认走 Binance mainnet public `https://fapi.binance.com`，不是 Testnet。Kline backfill 队列提交也显式写 mainnet public URL。冷却期间只做 no-restart 部署、测试和文档，不启动 public producer。
+- 2026-06-05：冷却期离线自检发现 `counterfactual_open_skips.py` 仍硬编码 Testnet Kline。已改为 `BINANCE_KLINE_BASE_URL` 可控且默认 Binance mainnet public；报告/分析链也不得用 Testnet Kline 作为默认数据源。后续 Kline 仍优先走 research_store/cache/受控 queue backfill。
 
 ---
 ## 2026-05-29 全局运行自检与账户方向口径修复

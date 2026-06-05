@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import os
 import sys
 import tempfile
 import unittest
@@ -68,6 +69,21 @@ class CounterfactualReplayFillTests(unittest.TestCase):
         self.assertEqual(result.end_price, 101.0)
         self.assertAlmostEqual(result.sim_pnl_usdt, 3.598, places=3)
         self.assertEqual(result.replay_fill["exit_reason"], "take_profit")
+
+    def test_kline_url_defaults_to_mainnet_public(self):
+        self.assertEqual("https://fapi.binance.com/fapi/v1/klines", self.tool.KLINE_URL)
+
+    def test_kline_url_can_be_overridden_by_env(self):
+        old = os.environ.get("BINANCE_KLINE_BASE_URL")
+        try:
+            os.environ["BINANCE_KLINE_BASE_URL"] = "https://example.test/"
+            tool = load_counterfactual()
+            self.assertEqual("https://example.test/fapi/v1/klines", tool.KLINE_URL)
+        finally:
+            if old is None:
+                os.environ.pop("BINANCE_KLINE_BASE_URL", None)
+            else:
+                os.environ["BINANCE_KLINE_BASE_URL"] = old
 
     def test_evaluate_can_apply_partial_fill_cap(self):
         event_ts = datetime(2026, 6, 1, 0, 0, 30, tzinfo=timezone.utc)

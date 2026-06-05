@@ -171,6 +171,22 @@ def read_account_state_payload(root: str | Path, *, allow_legacy: bool = True) -
     return None
 
 
+def _account_state_payloads(root: str | Path, *, allow_legacy: bool) -> list[dict[str, Any]]:
+    runtime = Path(root) / "runtime"
+    names = [ACCOUNT_STATE_FILENAME]
+    if allow_legacy:
+        names.append(LEGACY_ACCOUNT_SNAPSHOT_FILENAME)
+    payloads: list[dict[str, Any]] = []
+    for name in names:
+        try:
+            payload = json.loads((runtime / name).read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if isinstance(payload, dict) and isinstance(payload.get("accounts"), list):
+            payloads.append(payload)
+    return payloads
+
+
 def load_central_account_state(
     root: str | Path,
     strategy: str,
@@ -179,39 +195,42 @@ def load_central_account_state(
     min_observed_at: datetime | None = None,
     allow_legacy: bool = True,
 ) -> CentralAccountState | None:
-    payload = read_account_state_payload(root, allow_legacy=allow_legacy)
-    if not payload:
-        return None
     wanted = strategy.upper()
-    for raw in payload.get("accounts") or []:
-        if not isinstance(raw, dict):
-            continue
-        row = normalize_account_row(raw)
-        if str(row.get("strategy") or "").upper() != wanted:
-            continue
-        if row.get("stale"):
+    best: tuple[datetime, dict[str, Any]] | None = None
+    for payload in _account_state_payloads(root, allow_legacy=allow_legacy):
+        for raw in payload.get("accounts") or []:
+            if not isinstance(raw, dict):
+                continue
+            row = normalize_account_row(raw)
+            if str(row.get("strategy") or "").upper() != wanted:
+                continue
+            ts = parse_ts(row.get("ts"))
+            if not ts:
+                continue
+            observed_at = ts.astimezone(timezone.utc)
+            if best is None or observed_at > best[0]:
+                best = (observed_at, row)
+    if best is None:
+        return None
+    observed_at, row = best
+    if row.get("stale"):
+        return None
+    if min_observed_at is not None:
+        required = min_observed_at if min_observed_at.tzinfo else min_observed_at.replace(tzinfo=timezone.utc)
+        if observed_at < required.astimezone(timezone.utc):
             return None
-        ts = parse_ts(row.get("ts"))
-        if not ts:
-            return None
-        observed_at = ts.astimezone(timezone.utc)
-        if min_observed_at is not None:
-            required = min_observed_at if min_observed_at.tzinfo else min_observed_at.replace(tzinfo=timezone.utc)
-            if observed_at < required.astimezone(timezone.utc):
-                return None
-        age = (datetime.now(timezone.utc) - ts.astimezone(timezone.utc)).total_seconds()
-        if age < 0 or age > float(max_age_seconds):
-            return None
-        return CentralAccountState(
-            account=str(row.get("account") or ""),
-            strategy=str(row.get("strategy") or strategy),
-            age_seconds=age,
-            balance=balance_to_binance_row(row),
-            positions=[
-                position_to_binance_row(pos)
-                for pos in row.get("positions") or []
-                if isinstance(pos, dict) and str(pos.get("symbol") or "")
-            ],
-            raw=row,
-        )
-    return None
+    age = (datetime.now(timezone.utc) - observed_at).total_seconds()
+    if age < 0 or age > float(max_age_seconds):
+        return None
+    return CentralAccountState(
+        account=str(row.get("account") or ""),
+        strategy=str(row.get("strategy") or strategy),
+        age_seconds=age,
+        balance=balance_to_binance_row(row),
+        positions=[
+            position_to_binance_row(pos)
+            for pos in row.get("positions") or []
+            if isinstance(pos, dict) and str(pos.get("symbol") or "")
+        ],
+        raw=row,
+    )

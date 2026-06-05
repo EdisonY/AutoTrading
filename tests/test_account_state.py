@@ -2,7 +2,7 @@ import json
 import os
 import tempfile
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from core.account_state import build_account_state_payload, load_central_account_state, write_account_state
@@ -116,6 +116,74 @@ class AccountStateTest(unittest.TestCase):
             state = load_central_account_state(root, "C/v14", max_age_seconds=60)
             self.assertIsNotNone(state)
             self.assertEqual(state.positions[0]["positionAmt"], "-1.0")
+
+    def test_loader_uses_newer_legacy_snapshot_when_central_file_is_older(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            runtime = root / "runtime"
+            runtime.mkdir()
+            old_ts = (datetime.now(timezone.utc) - timedelta(hours=3)).isoformat()
+            new_ts = (datetime.now(timezone.utc) - timedelta(minutes=20)).isoformat()
+            (runtime / "account_state_latest.json").write_text(
+                json.dumps({
+                    "accounts": [
+                        {
+                            "ts": old_ts,
+                            "account": "A",
+                            "strategy": "A/v11",
+                            "stale": False,
+                            "wallet_usdt": 100,
+                            "positions": [{"symbol": "OLDUSDT", "side": "LONG", "qty": 1}],
+                        }
+                    ]
+                }),
+                encoding="utf-8",
+            )
+            (runtime / "account_snapshot_latest.json").write_text(
+                json.dumps({
+                    "accounts": [
+                        {
+                            "ts": new_ts,
+                            "account": "A",
+                            "strategy": "A/v11",
+                            "stale": False,
+                            "wallet_usdt": 900,
+                            "positions": [{"symbol": "NEWUSDT", "side": "SHORT", "qty": 2}],
+                        }
+                    ]
+                }),
+                encoding="utf-8",
+            )
+
+            state = load_central_account_state(root, "A/v11", max_age_seconds=7200)
+
+            self.assertIsNotNone(state)
+            self.assertEqual(state.balance["totalWalletBalance"], "900.0")
+            self.assertEqual(state.positions[0]["symbol"], "NEWUSDT")
+
+    def test_cached_account_state_default_allows_recovery_window(self):
+        old_env = os.environ.pop("BINANCE_ACCOUNT_STATE_CACHE_MAX_AGE_SEC", None)
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                payload = build_account_state_payload([
+                    {
+                        "ts": (datetime.now(timezone.utc) - timedelta(minutes=90)).isoformat(),
+                        "account": "A",
+                        "strategy": "A/v11",
+                        "wallet_usdt": 1000,
+                        "positions": [],
+                    }
+                ])
+                write_account_state(root, payload)
+
+                state = load_cached_account_state(root, "A/v11")
+
+                self.assertIsNotNone(state)
+                self.assertGreater(state.age_seconds, 60)
+        finally:
+            if old_env is not None:
+                os.environ["BINANCE_ACCOUNT_STATE_CACHE_MAX_AGE_SEC"] = old_env
 
 
 if __name__ == "__main__":

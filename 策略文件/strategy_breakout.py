@@ -53,7 +53,8 @@ MARKET_BASE_URL = os.environ.get("BINANCE_MARKET_BASE_URL", "https://fapi.binanc
 
 def fetch_json(url: str, timeout: int = 10) -> dict:
     if api_queue_client_enabled():
-        data = queued_api_request(scope="public", label="strategy-breakout", method="GET", path=url, url=url, timeout_sec=timeout + 5)
+        queue_timeout = max(timeout + 5, int(float(os.environ.get("BINANCE_API_QUEUE_CLIENT_TIMEOUT_SEC", "180"))))
+        data = queued_api_request(scope="public", label="strategy-breakout", method="GET", path=url, url=url, timeout_sec=queue_timeout)
         if isinstance(data, dict) and data.get("code") is not None and str(data.get("code")) != "200":
             raise RuntimeError(str(data.get("msg") or data))
         return data

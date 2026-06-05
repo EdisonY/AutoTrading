@@ -354,6 +354,7 @@ def build_state() -> dict[str, Any]:
     account = read_first_json(RUNTIME_DIR / "account_snapshot_latest.json", MIRROR_RUNTIME_DIR / "account_snapshot_latest.json")
     evolution = read_first_json(RUNTIME_DIR / "strategy_evolution_latest.json", MIRROR_RUNTIME_DIR / "strategy_evolution_latest.json")
     replay = read_first_json(RUNTIME_DIR / "replay_readiness_latest.json", MIRROR_RUNTIME_DIR / "replay_readiness_latest.json")
+    waiting = read_first_json(RUNTIME_DIR / "waiting_period_optimization_latest.json", MIRROR_RUNTIME_DIR / "waiting_period_optimization_latest.json")
     parity = read_first_json(RUNTIME_DIR / "replay_live_parity_latest.json", MIRROR_RUNTIME_DIR / "replay_live_parity_latest.json")
     skeleton = read_first_json(RUNTIME_DIR / "long_term_skeleton_latest.json", MIRROR_RUNTIME_DIR / "long_term_skeleton_latest.json")
     research = read_first_json(RUNTIME_DIR / "research_store_summary_latest.json", MIRROR_RUNTIME_DIR / "research_store_summary_latest.json")
@@ -382,6 +383,7 @@ def build_state() -> dict[str, Any]:
         "account_summary": account_summary,
         "evolution": evolution,
         "replay": replay,
+        "waiting": waiting,
         "parity": parity,
         "skeleton": skeleton,
         "research": research,
@@ -477,6 +479,8 @@ def render_cards(state: dict[str, Any]) -> str:
     evolution = state["evolution"].get("summary") or {}
     expansion = evolution.get("expansion_readiness") if isinstance(evolution.get("expansion_readiness"), dict) else {}
     replay = state["replay"]
+    waiting = state.get("waiting") or {}
+    waiting_summary = waiting.get("summary") if isinstance(waiting.get("summary"), dict) else {}
     replay_summary = replay.get("summary") if isinstance(replay.get("summary"), dict) else {}
     parity_summary = state["parity"].get("summary") if isinstance(state["parity"].get("summary"), dict) else {}
     research = state["research"]
@@ -486,6 +490,7 @@ def render_cards(state: dict[str, Any]) -> str:
         ("账户资金", f"wallet {number(account.get('wallet_usdt'))} / available {number(account.get('available_usdt'))}", "B/C 若显示等待 user-stream，不代表该去手动查余额。"),
         ("策略升级样本", f"成熟 {expansion.get('ready_count', 0)} / 收样 {expansion.get('maturing_count', 0)}", f"24h 样本缺口 {expansion.get('missing_samples_24h', 0)}。先收自然交易，不盲目扩。"),
         ("Replay验收", str(replay.get("status") or "missing"), f"ready {replay_summary.get('ready_components', 0)}/{replay_summary.get('total_components', 0)}，下一步 {replay.get('next_action') or '-'}。"),
+        ("等待期优化", str(waiting.get("status") or "missing"), f"只读优化：跳过 {waiting_summary.get('open_skipped', 0)}，失败 {waiting_summary.get('open_failed', 0)}，K线计划 {waiting_summary.get('planned_kline_requests', 0)}。"),
         ("同输入审计", f"{float(parity_summary.get('pass_rate_pct') or 0):.1f}% pass", f"exact cases {parity_summary.get('gate_cases', 0)}，mismatch {parity_summary.get('mismatched', 0)}。"),
         ("K线/深度", str(kline_acceptance.get("status") or "missing"), "30天 K线和深度样本是后续回测升级的主燃料。"),
         ("服务器清理", f"{state['cleanup']['total_mb']} MB", "当前只列计划。删除/归档由维护任务做，保留回滚证据。"),
@@ -620,6 +625,7 @@ td small {{ display:block; color:var(--muted); margin-top:4px; }}
         <div class="links">
           <a href="/reports/portal_latest.html">完整旧版详情</a>
           <a href="/reports/replay_readiness_latest.md">Replay 验收</a>
+          <a href="/reports/waiting_period_optimization_latest.html">等待期优化</a>
           <a href="/reports/long_term_skeleton_latest.md">长期目标骨架</a>
           <a href="/reports/strategy_evolution_latest.html">策略进化</a>
           <a href="/reports/research_store_summary_latest.md">研究仓</a>

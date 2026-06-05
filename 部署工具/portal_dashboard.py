@@ -58,6 +58,8 @@ REPLAY_PARITY_JSON = ROOT / "runtime" / "replay_live_parity_latest.json"
 REPLAY_PARITY_MD = REPORTS_DIR / "replay_live_parity_latest.md"
 REPLAY_READINESS_JSON = ROOT / "runtime" / "replay_readiness_latest.json"
 REPLAY_READINESS_MD = REPORTS_DIR / "replay_readiness_latest.md"
+WAITING_OPT_JSON = ROOT / "runtime" / "waiting_period_optimization_latest.json"
+WAITING_OPT_HTML = REPORTS_DIR / "waiting_period_optimization_latest.html"
 ROLLBACK_WATCH_JSON = ROOT / "runtime" / "rollback_watch_review_latest.json"
 ROLLBACK_WATCH_MD = REPORTS_DIR / "rollback_watch_review_latest.md"
 ROLLBACK_EXECUTION_JSON = ROOT / "runtime" / "rollback_execution_plan_latest.json"
@@ -895,6 +897,39 @@ def replay_readiness_summary(path: Path | None) -> dict[str, Any]:
         "summary": payload.get("summary") if isinstance(payload.get("summary"), dict) else empty["summary"],
         "components": payload.get("components") if isinstance(payload.get("components"), list) else [],
         "blockers": payload.get("blockers") if isinstance(payload.get("blockers"), list) else [],
+    }
+
+
+def waiting_optimization_summary(path: Path | None) -> dict[str, Any]:
+    empty = {
+        "available": False,
+        "path": WAITING_OPT_HTML,
+        "age": "No waiting-period optimization report",
+        "fresh": False,
+        "status": "missing",
+        "safety": "",
+        "summary": {},
+        "top100": {},
+        "open_skipped": {},
+        "research_gaps": {},
+        "actions": [],
+    }
+    payload = read_json(path) if path else None
+    if not isinstance(payload, dict):
+        return empty
+    generated_at = parse_dt(payload.get("generated_at"))
+    return {
+        "available": True,
+        "path": WAITING_OPT_HTML,
+        "age": age_text(generated_at),
+        "fresh": bool(generated_at and (datetime.now(CST) - generated_at).total_seconds() < 4 * 3600),
+        "status": payload.get("status") or "missing",
+        "safety": payload.get("safety") or "",
+        "summary": payload.get("summary") if isinstance(payload.get("summary"), dict) else {},
+        "top100": payload.get("top100") if isinstance(payload.get("top100"), dict) else {},
+        "open_skipped": payload.get("open_skipped") if isinstance(payload.get("open_skipped"), dict) else {},
+        "research_gaps": payload.get("research_gaps") if isinstance(payload.get("research_gaps"), dict) else {},
+        "actions": payload.get("actions") if isinstance(payload.get("actions"), list) else [],
     }
 
 
@@ -1842,6 +1877,8 @@ def function_status_cards(data: dict[str, Any]) -> list[dict[str, str]]:
     replay_parity_summary_data = replay_parity.get("summary") or {}
     replay_readiness = data.get("replay_readiness") or {}
     replay_readiness_summary_data = replay_readiness.get("summary") or {}
+    waiting_opt = data.get("waiting_optimization") or {}
+    waiting_opt_summary_data = waiting_opt.get("summary") or {}
     rollback_watch = data.get("rollback_watch") or {}
     rollback_watch_summary_data = rollback_watch.get("summary") or {}
     rollback_execution = data.get("rollback_execution") or {}
@@ -2116,6 +2153,20 @@ def function_status_cards(data: dict[str, Any]) -> list[dict[str, str]]:
                 f"next {replay_readiness.get('next_action') or '-'}; 更新 {replay_readiness.get('age')}。"
                 if replay_readiness.get("available")
                 else "补数后 replay/fill 是否足够进入治理判断的统一验收报告尚未生成。"
+            ),
+        },
+        {
+            "level": "bad" if int(waiting_opt_summary_data.get("active_cooldowns") or 0) else "ok" if waiting_opt.get("fresh") else "warn",
+            "name": "等待期离线优化",
+            "value": waiting_opt.get("status") if waiting_opt.get("available") else "未生成",
+            "body": (
+                f"OPEN_SKIPPED {int(waiting_opt_summary_data.get('open_skipped') or 0)}，"
+                f"OPEN_FAILED {int(waiting_opt_summary_data.get('open_failed') or 0)}，"
+                f"K线计划 {int(waiting_opt_summary_data.get('planned_kline_requests') or 0)}，"
+                f"深度计划 {int(waiting_opt_summary_data.get('planned_depth_requests') or 0)}；"
+                f"安全口径 {waiting_opt.get('safety') or '-'}；更新 {waiting_opt.get('age')}。"
+                if waiting_opt.get("available")
+                else "等待期优化报告尚未生成；离线可推进项不可见。"
             ),
         },
         {
@@ -2816,6 +2867,8 @@ def build_data() -> dict[str, Any]:
     data["replay_parity_html"] = REPLAY_PARITY_MD
     data["replay_readiness"] = replay_readiness_summary(REPLAY_READINESS_JSON)
     data["replay_readiness_html"] = REPLAY_READINESS_MD
+    data["waiting_optimization"] = waiting_optimization_summary(WAITING_OPT_JSON)
+    data["waiting_optimization_html"] = WAITING_OPT_HTML
     data["rollback_watch"] = rollback_watch_summary(ROLLBACK_WATCH_JSON)
     data["rollback_watch_html"] = ROLLBACK_WATCH_MD
     data["rollback_execution"] = rollback_execution_summary(ROLLBACK_EXECUTION_JSON)
@@ -3468,6 +3521,34 @@ def render_html(out_dir: Path) -> str:
 """.strip()
         for r in (replay_readiness.get("blockers") or [])
     ) or '<tr><td colspan="3">当前无验收阻塞项</td></tr>'
+    waiting_opt = data.get("waiting_optimization") or {}
+    waiting_opt_summary_data = waiting_opt.get("summary") or {}
+    waiting_top100 = waiting_opt.get("top100") or {}
+    waiting_open_skipped = waiting_opt.get("open_skipped") or {}
+    waiting_gaps = waiting_opt.get("research_gaps") or {}
+    waiting_reason_rows = "".join(
+        f"""
+<tr>
+  <td>{h(r.get('reason'))}</td>
+  <td>{int(r.get('count') or 0)}</td>
+</tr>
+""".strip()
+        for r in (waiting_open_skipped.get("top_reasons") or [])[:8]
+    ) or '<tr><td colspan="2">暂无 OPEN_SKIPPED 原因</td></tr>'
+    waiting_strategy_rows = "".join(
+        f"""
+<tr>
+  <td>{h(r.get('strategy'))}</td>
+  <td>{h(r.get('reason'))}</td>
+  <td>{int(r.get('count') or 0)}</td>
+</tr>
+""".strip()
+        for r in (waiting_open_skipped.get("top_strategy_reasons") or [])[:8]
+    ) or '<tr><td colspan="3">暂无策略/原因组合</td></tr>'
+    waiting_action_rows = "".join(
+        f"<tr><td>{h(item)}</td></tr>"
+        for item in (waiting_opt.get("actions") or [])
+    ) or '<tr><td>暂无等待期动作</td></tr>'
     long_term_skeleton = data.get("long_term_skeleton") or {}
     long_term_skeleton_summary_data = long_term_skeleton.get("summary") or {}
     long_term_skeleton_rows = "".join(
@@ -3722,6 +3803,14 @@ def render_html(out_dir: Path) -> str:
             data["replay_readiness_html"],
             "看Replay验收",
             "blue",
+        ),
+        route_card(
+            "等待时还能做什么",
+            "不加币安压力",
+            "看 OPEN_SKIPPED/no-open 原因、Top100覆盖、K线/深度缺口和报表新鲜度；只读分析，不提交队列。",
+            data["waiting_optimization_html"],
+            "看等待期优化",
+            "green",
         ),
         route_card(
             "回滚能不能决策",
@@ -4086,6 +4175,24 @@ th {{ background:#f1f5f9; color:#334155; }}
     <table class="subtable">
       <thead><tr><th>阻塞组件</th><th>状态</th><th>说明</th></tr></thead>
       <tbody>{replay_readiness_blocker_rows}</tbody>
+    </table>
+  </section>
+
+  <section class="section panel">
+    <h2>等待期离线优化</h2>
+    <p class="note">只读回答“等待 Binance 稳定时还能推进什么”。状态 {h(waiting_opt.get('status', '-'))}；active {int(waiting_opt_summary_data.get('active_requests') or 0)}；cooldown {int(waiting_opt_summary_data.get('active_cooldowns') or 0)}；OPEN_SKIPPED {int(waiting_opt_summary_data.get('open_skipped') or 0)}；OPEN_FAILED {int(waiting_opt_summary_data.get('open_failed') or 0)}；K线计划 {int(waiting_opt_summary_data.get('planned_kline_requests') or 0)}；深度计划 {int(waiting_opt_summary_data.get('planned_depth_requests') or 0)}；安全口径 {h(waiting_opt.get('safety') or '-')}；更新 {h(waiting_opt.get('age'))}。</p>
+    <p class="note">Top100：{h(waiting_top100.get('target') or '-')}；缓存币种 {int(waiting_top100.get('cache_symbols') or 0)}；覆盖 {h(waiting_top100.get('coverage_hint') or '-')}；K线验收 {h(waiting_gaps.get('kline_status') or '-')}；这里不运行 backfill submit，不提高扫描频率。</p>
+    <table>
+      <thead><tr><th>主要不开仓原因</th><th>次数</th></tr></thead>
+      <tbody>{waiting_reason_rows}</tbody>
+    </table>
+    <table class="subtable">
+      <thead><tr><th>策略</th><th>原因</th><th>次数</th></tr></thead>
+      <tbody>{waiting_strategy_rows}</tbody>
+    </table>
+    <table class="subtable">
+      <thead><tr><th>等待期动作</th></tr></thead>
+      <tbody>{waiting_action_rows}</tbody>
     </table>
   </section>
 

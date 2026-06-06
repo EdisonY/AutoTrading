@@ -23,6 +23,7 @@ $PYTHON decision_attention.py || echo "[WARN] attention ledger failed"
 $PYTHON long_term_skeleton_review.py --runtime-dir $REMOTE_DIR/runtime --reports-dir $REMOTE_DIR/reports || echo "[WARN] long-term skeleton review failed"
 $PYTHON waiting_period_optimization.py --root $REMOTE_DIR --runtime-dir $REMOTE_DIR/runtime --reports-dir $REMOTE_DIR/reports || echo "[WARN] waiting-period optimization failed"
 $PYTHON portal_dashboard.py --out-dir $REMOTE_DIR/reports || echo "[WARN] portal generation failed"
+$PYTHON decision_portal.py --out-dir $REMOTE_DIR/reports || echo "[WARN] decision portal generation failed"
 
 timeout 75s $PYTHON sync_aliyun_reports_to_tencent.py \
   --max-file-mb 1.2 \

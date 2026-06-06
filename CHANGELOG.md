@@ -2,6 +2,14 @@
 
 This is the durable reason-and-outcome ledger for every material design, code, configuration, deployment, rollback, optimization, or live operational change.
 
+## 2026-06-06 17:36 CST - Ensure lightweight refresh rebuilds decision portal
+- Trigger / reason: After adding paper sample opens and the `其中模拟采样` report column, the Aliyun lightweight refresh script still generated only the older full portal through `portal_dashboard.py`. That could leave the primary `index.html` stale or missing the paper-sample wording after scheduled refresh.
+- Completed: Updated `aliyun_decision_portal_refresh.sh` to run `decision_portal.py --out-dir $REMOTE_DIR/reports` after the full portal build and before reverse sync. This keeps the online first screen aligned with the new decision portal generator and paper-sample report wording.
+- Not completed / remaining: Need deploy the script to Aliyun and verify the public/Tencent report contains the new paper-sample column. This does not change scanner behavior or trading logic.
+- Verification: `python -B -m py_compile 部署工具\decision_portal.py 部署工具\paper_sample_executor.py 部署工具\release_manager.py`; `python -B -m unittest tests.test_decision_portal tests.test_waiting_period_optimization` passed.
+- Live impact / deployment: Report-refresh chain only. No Binance request, queue submit, scanner restart, order, close, cancel, signed baseline, Kline fallback, or strategy parameter change.
+- Files / release / commit: `部署工具/aliyun_decision_portal_refresh.sh`, `CHANGELOG.md`; Git commit/deploy to follow.
+
 ## 2026-06-06 17:25 CST - Add labeled paper sample opens for same-day full-run data
 - Trigger / reason: User required seeing full online operation today and allowed simulated opens if Binance remains unsafe. Tencent paper full-run was active and Binance queue was clean, but natural strategy gates still produced no paper `OPEN`: A/v11 had candidates but tradability gaps, B/v16 candidates were blocked by 15m confirmation, and C/v14 had raw signals without entry-level candidates. Waiting for natural entries would keep report/backtest data empty.
 - Completed: Added `paper_sample_executor.py`, a no-network, no-Binance, no-real-order tool that reads only local SQLite events and market cache, then writes clearly labeled `OPEN` rows with `paper=true`, `simulation_only=true`, `paper_sample=true`, `reason=paper_sample_open`, and `filter_layer=paper_sample`. It never changes A/B/C real strategy thresholds or scanner gates. Decision portal now shows `其中模拟采样` and explains that these rows are simulated data-pipeline samples, not real exchange fills or strategy loosening. Release bundles now include the tool for Tencent portal/research and Aliyun shadow deployment.

@@ -1,7 +1,7 @@
 """Generate a concise online decision portal for the operator.
 
 This is the first screen. It only reads existing local/runtime artifacts and
-never calls Binance. The older full portal remains available as
+does not call exchange APIs. The older full portal remains available as
 ``portal_latest.html`` for drilldown.
 """
 
@@ -108,6 +108,166 @@ def fmt_plain(value: Any, digits: int = 6, default: str = "-") -> str:
         return default
 
 
+def report_text(value: Any, default: str = "-") -> str:
+    text = str(value or default)
+    replacements = {
+        "OKX 15m/latest cached close; ": "OKX 15分钟K线/本地缓存收盘价；",
+        "Binance mark/index may differ": "不同交易所标记价可能有轻微差异",
+        "updated when paper_exchange_runner runs, not exchange tick-by-tick": "按模拟账本刷新，不是逐笔 tick",
+        "not exchange-order-book exact; use conservative model before strategy promotion": "不是逐笔盘口撮合；策略升级前要用保守滑点模型",
+        "ledger fee_rate=0.000400": "账本费率 0.04%",
+        "OKX public funding when available; missing/unavailable records 0 with source": "能取到就用 OKX 公开资金费，缺失时按来源标记",
+        "Binance": "交易所",
+        "币安": "交易所",
+        "paper_sample": "模拟采样",
+        "paper sample": "模拟采样",
+    }
+    for old, new in replacements.items():
+        text = text.replace(old, new)
+    return text
+
+
+def kline_cache_rows(symbol: str, timeframe: str = "15m") -> tuple[list[list[Any]], str]:
+    safe = f"{str(symbol).upper()}_{timeframe}_*.json".replace("/", "_")
+    rows_by_ts: dict[int, list[Any]] = {}
+    sources: list[str] = []
+    for cache_dir in (RUNTIME_DIR / "kline_cache", MIRROR_RUNTIME_DIR / "kline_cache"):
+        if not cache_dir.exists():
+            continue
+        for path in cache_dir.glob(safe):
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8", errors="replace"))
+                raw_rows = payload.get("rows") if isinstance(payload, dict) else payload
+                if not isinstance(raw_rows, list):
+                    continue
+                for row in raw_rows:
+                    if not isinstance(row, (list, tuple)) or len(row) < 6:
+                        continue
+                    try:
+                        rows_by_ts[int(float(row[0]))] = list(row)
+                    except Exception:
+                        continue
+                sources.append(path.name)
+            except Exception:
+                continue
+    rows = [rows_by_ts[key] for key in sorted(rows_by_ts)]
+    return rows, ", ".join(sorted(set(sources))[:3])
+
+
+def kline_window(symbol: str, entry_at: Any, *, before: int = 30, after: int = 30) -> dict[str, Any]:
+    rows, source = kline_cache_rows(symbol)
+    entry_dt = parse_dt(entry_at)
+    entry_ms = int(entry_dt.timestamp() * 1000) if entry_dt else None
+    if not rows:
+        return {"bars": [], "entry_index": None, "entry_ms": entry_ms, "source": source, "status": "missing"}
+    if entry_ms is None:
+        start = max(0, len(rows) - before - after)
+        return {"bars": rows[start:], "entry_index": None, "entry_ms": None, "source": source, "status": "no_entry_time"}
+    closest = min(range(len(rows)), key=lambda idx: abs(int(float(rows[idx][0])) - entry_ms))
+    start = max(0, closest - before)
+    end = min(len(rows), closest + after + 1)
+    window = rows[start:end]
+    return {
+        "bars": window,
+        "entry_index": closest - start if window else None,
+        "entry_ms": entry_ms,
+        "source": source,
+        "status": "ok" if len(window) >= min(20, before) else "thin",
+        "before": closest - start,
+        "after": end - closest - 1,
+    }
+
+
+def _bar_float(row: list[Any], idx: int) -> float:
+    return float(row[idx])
+
+
+def render_kline_svg(symbol: str, position: dict[str, Any]) -> str:
+    chart = kline_window(symbol, position.get("opened_at"))
+    bars = chart.get("bars") if isinstance(chart.get("bars"), list) else []
+    entry_price = None
+    try:
+        entry_price = float(position.get("entry_price"))
+    except Exception:
+        entry_price = None
+    if not bars or entry_price is None:
+        return f"""
+<div class="chart-empty">
+  <b>K线图暂缺</b>
+  <span>本地还没有 {h(symbol)} 入场附近足够 K线。系统继续用外部行情补缓存，后续会自动变完整。</span>
+</div>
+""".strip()
+    parsed: list[dict[str, float]] = []
+    for row in bars:
+        try:
+            parsed.append({
+                "ts": _bar_float(row, 0),
+                "open": _bar_float(row, 1),
+                "high": _bar_float(row, 2),
+                "low": _bar_float(row, 3),
+                "close": _bar_float(row, 4),
+                "volume": _bar_float(row, 5),
+            })
+        except Exception:
+            continue
+    if not parsed:
+        return '<div class="chart-empty"><b>K线图暂缺</b><span>缓存格式不完整。</span></div>'
+    width, height = 980, 300
+    left, right, top, bottom = 54, 18, 20, 48
+    price_top = top
+    price_bottom = height - bottom
+    highs = [bar["high"] for bar in parsed] + [entry_price]
+    lows = [bar["low"] for bar in parsed] + [entry_price]
+    high = max(highs)
+    low = min(lows)
+    span = high - low if high > low else max(high * 0.01, 1.0)
+
+    def x_at(idx: int) -> float:
+        if len(parsed) <= 1:
+            return (left + width - right) / 2
+        return left + idx * ((width - left - right) / (len(parsed) - 1))
+
+    def y_at(price: float) -> float:
+        return price_bottom - ((price - low) / span) * (price_bottom - price_top)
+
+    candle_width = max(4.0, min(12.0, (width - left - right) / max(len(parsed), 1) * 0.56))
+    candles: list[str] = []
+    for idx, bar in enumerate(parsed):
+        x = x_at(idx)
+        y_high = y_at(bar["high"])
+        y_low = y_at(bar["low"])
+        y_open = y_at(bar["open"])
+        y_close = y_at(bar["close"])
+        color = "#22c55e" if bar["close"] >= bar["open"] else "#ef4444"
+        body_y = min(y_open, y_close)
+        body_h = max(2.0, abs(y_close - y_open))
+        candles.append(
+            f'<line x1="{x:.1f}" y1="{y_high:.1f}" x2="{x:.1f}" y2="{y_low:.1f}" stroke="{color}" stroke-width="1.4" />'
+            f'<rect x="{x - candle_width / 2:.1f}" y="{body_y:.1f}" width="{candle_width:.1f}" height="{body_h:.1f}" rx="1.5" fill="{color}" opacity=".9" />'
+        )
+    entry_index = chart.get("entry_index")
+    if isinstance(entry_index, int) and 0 <= entry_index < len(parsed):
+        entry_x = x_at(entry_index)
+    else:
+        entry_x = x_at(len(parsed) // 2)
+    entry_y = y_at(entry_price)
+    side = str(position.get("side") or "").upper()
+    source = report_text(chart.get("source") or "本地K线缓存")
+    coverage = f"前{chart.get('before', 0)}根 / 后{chart.get('after', 0)}根"
+    return f"""
+<svg class="kline-svg" viewBox="0 0 {width} {height}" role="img" aria-label="{h(symbol)} 入场K线">
+  <rect x="0" y="0" width="{width}" height="{height}" rx="10" fill="#08111d" />
+  <line x1="{left}" y1="{y_at(entry_price):.1f}" x2="{width-right}" y2="{y_at(entry_price):.1f}" stroke="#5d8cff" stroke-dasharray="5 5" opacity=".72" />
+  {''.join(candles)}
+  <line x1="{entry_x:.1f}" y1="{top}" x2="{entry_x:.1f}" y2="{price_bottom}" stroke="#2bd4d6" stroke-width="1.7" />
+  <circle cx="{entry_x:.1f}" cy="{entry_y:.1f}" r="5.5" fill="#2bd4d6" stroke="#07111c" stroke-width="2" />
+  <text x="{left}" y="{height-20}" fill="#8ea2bd" font-size="12">{h(symbol)} {h(side)}  入场 {h(fmt_plain(entry_price, 6))}  {h(coverage)}  数据源 {h(source)}</text>
+  <text x="{width-right-130}" y="{top+14}" fill="#b8c7d9" font-size="12" text-anchor="end">最高 {h(fmt_plain(high, 6))}</text>
+  <text x="{width-right-130}" y="{price_bottom-6}" fill="#b8c7d9" font-size="12" text-anchor="end">最低 {h(fmt_plain(low, 6))}</text>
+</svg>
+""".strip()
+
+
 def plain_level(level: str) -> str:
     return level if level in {"good", "warn", "bad", "muted"} else "muted"
 
@@ -155,9 +315,9 @@ def plain_strategy_reason(reason: Any, kind: str = "skip") -> str:
         (("confirm_account_state_unavailable",), "交易请求已发出，但成交后账户回执还不够新；这是确认链路问题，不是策略没有机会。"),
         (("fresh central account state unavailable",), "账户资料太旧，系统先避免误判仓位；恢复期会用已验证账户状态和用户流补新，不该长期挡住开仓。"),
         (("scanner_order_disabled",), "当前是观察模式，只记录信号，不允许真开仓。"),
-        (("cooldown",), "接口处在保护/冷却状态，先保护币安风控，不继续加压。"),
-        (("-1003",), "币安提示请求过多，系统应先退避，不能硬冲。"),
-        (("418",), "币安触发保护，系统应先等冷却清干净。"),
+        (("cooldown",), "接口处在保护/冷却状态，系统先退避，不继续加压。"),
+        (("-1003",), "交易所提示请求过多，系统应先退避，不能硬冲。"),
+        (("418",), "交易所触发接口保护，系统应先等冷却清干净。"),
         (("429",), "请求频率被限制，系统应先降压等待。"),
         (("min_notional",), "订单金额不满足交易所最小下单规则，所以提前挡住。"),
         (("-4164",), "订单金额不满足交易所最小下单规则，所以提前挡住。"),
@@ -439,8 +599,8 @@ def strategy_detail_html(strategy: str, account: dict[str, Any]) -> str:
   <td>{h(fmt_plain(notional, 4))}</td>
   <td>{h(fmt_plain(payload.get('target_margin_usdt'), 4))}</td>
   <td>{h(fee_text)}<small>{h(fee_note)}</small></td>
-  <td>模拟未结算<small>只验证数据链路，不是真实成交。</small></td>
-  <td>paper_sample，不当作实盘盈亏。</td>
+  <td>旧采样未结算<small>只验证数据链路，不是真实成交。</small></td>
+  <td>旧采样，不计入当前主账本。</td>
 </tr>
 """.strip()
         )
@@ -472,8 +632,17 @@ def strategy_detail_html(strategy: str, account: dict[str, Any]) -> str:
 """
 
 
-def strategy_rows(event: dict[str, Any], alerts: dict[str, Any], account: dict[str, Any] | None = None, *, include_details: bool = False) -> list[dict[str, str]]:
+def strategy_rows(
+    event: dict[str, Any],
+    alerts: dict[str, Any],
+    account: dict[str, Any] | None = None,
+    *,
+    include_details: bool = False,
+    live_services: dict[str, Any] | None = None,
+) -> list[dict[str, str]]:
     services = alerts.get("services") if isinstance(alerts.get("services"), dict) else {}
+    if live_services:
+        services = {**services, **{str(key): value for key, value in live_services.items()}}
     service_map = {
         "A/v11": "crypto-scanner.service",
         "B/v16": "crypto-scanner-v16.service",
@@ -487,15 +656,11 @@ def strategy_rows(event: dict[str, Any], alerts: dict[str, Any], account: dict[s
         open_failed = int(item.get("open_failed") or 0)
         close_failed = int(item.get("close_failed") or 0)
         open_skipped = int(item.get("open_skipped") or 0)
-        paper_sample_opens = int(item.get("paper_sample_opens") or 0)
         level = "bad" if service != "active" else "good"
         note = "正常运行"
         raw_note = ""
         note_kind = "normal"
-        if paper_sample_opens:
-            note = "模拟盘已产生采样开仓。注意：这是 paper sample，用来打通 report/回测数据链，不是真实交易所成交，也不是放宽真实策略。"
-            note_kind = "paper_sample"
-        elif open_failed:
+        if open_failed:
             raw_note = str(item.get("failed_reason") or "")
             note = plain_strategy_reason(raw_note, "failed")
             note_kind = "failed"
@@ -512,7 +677,6 @@ def strategy_rows(event: dict[str, Any], alerts: dict[str, Any], account: dict[s
             "service": "运行中" if service == "active" else f"异常({service})",
             "age": age_text(item.get("latest")),
             "opens": str(item.get("opens", 0)),
-            "paper_sample_opens": str(paper_sample_opens),
             "closes": str(item.get("closes", 0)),
             "open_failed": str(open_failed),
             "close_failed": str(close_failed),
@@ -575,7 +739,7 @@ def plain_attention_evidence(item: dict[str, Any]) -> str:
     category = str(item.get("category") or "")
     item_id = str(item.get("item_id") or "")
     if "HTTP 418" in text or "-1003" in text:
-        return "以前触发过币安接口保护；如果再次出现，要先停扩量，等冷却清干净。"
+        return "以前触发过交易所接口保护；如果再次出现，要先停扩量，等冷却清干净。"
     if category == "策略回滚" or item_id.startswith("rollback:"):
         return "这项已经上线过，现在要看真实表现是否继续、收窄，还是准备回滚。"
     if category == "策略进化":
@@ -633,6 +797,7 @@ def cleanup_summary() -> dict[str, Any]:
 
 
 def build_state() -> dict[str, Any]:
+    live_context = read_first_json(RUNTIME_DIR / "live_context_summary_latest.json", MIRROR_RUNTIME_DIR / "live_context_summary_latest.json")
     alerts = read_first_json(RUNTIME_DIR / "alerts_latest.json", MIRROR_RUNTIME_DIR / "alerts_latest.json")
     account = read_first_json(RUNTIME_DIR / "account_snapshot_latest.json", MIRROR_RUNTIME_DIR / "account_snapshot_latest.json")
     evolution = read_first_json(RUNTIME_DIR / "strategy_evolution_latest.json", MIRROR_RUNTIME_DIR / "strategy_evolution_latest.json")
@@ -644,6 +809,8 @@ def build_state() -> dict[str, Any]:
     kline = read_first_json(RUNTIME_DIR / "research_kline_backfill_latest.json", MIRROR_RUNTIME_DIR / "research_kline_backfill_latest.json")
     depth = read_first_json(RUNTIME_DIR / "research_depth_backfill_latest.json", MIRROR_RUNTIME_DIR / "research_depth_backfill_latest.json")
     paper_exchange = read_first_json(RUNTIME_DIR / "paper_exchange_latest.json", MIRROR_RUNTIME_DIR / "paper_exchange_latest.json")
+    market = read_first_json(RUNTIME_DIR / "market_data_cache.json", MIRROR_RUNTIME_DIR / "market_data_cache.json")
+    microstructure = read_first_json(RUNTIME_DIR / "market_microstructure_latest.json", MIRROR_RUNTIME_DIR / "market_microstructure_latest.json")
     reset = read_first_json(RUNTIME_DIR / "testnet_data_reset_latest.json", MIRROR_RUNTIME_DIR / "testnet_data_reset_latest.json")
     q = queue_summary()
     ev = event_summary()
@@ -654,6 +821,11 @@ def build_state() -> dict[str, Any]:
         a for a in alerts.get("alerts", [])
         if isinstance(a, dict) and a.get("level") in {"bad", "warn"}
     ]
+    alerts_ts = parse_dt(alerts.get("ts"))
+    live_services = live_context.get("services") if isinstance(live_context.get("services"), dict) else {}
+    alerts_stale = bool(live_services and (not alerts_ts or (datetime.now(CST) - alerts_ts).total_seconds() > 1800))
+    if alerts_stale:
+        active_alerts = []
     bad_alerts = [a for a in active_alerts if a.get("level") == "bad"]
     overall = "good"
     if bad_alerts or q.get("cooldowns") or q.get("active"):
@@ -663,6 +835,8 @@ def build_state() -> dict[str, Any]:
     return {
         "generated_at": datetime.now(CST),
         "overall": overall,
+        "live_context": live_context,
+        "alerts_stale": alerts_stale,
         "alerts": alerts,
         "account": account,
         "account_summary": account_summary,
@@ -675,6 +849,8 @@ def build_state() -> dict[str, Any]:
         "kline": kline,
         "depth": depth,
         "paper_exchange": paper_exchange,
+        "market": market,
+        "microstructure": microstructure,
         "reset": reset,
         "queue": q,
         "event": ev,
@@ -706,20 +882,23 @@ def waiting_top100_text(waiting: dict[str, Any]) -> tuple[str, str]:
 
 
 def render_badges(state: dict[str, Any]) -> str:
-    q = state["queue"]
     account = state["account_summary"]
     paper = state.get("paper_exchange") or {}
     alerts = state["alerts"]
-    waiting = state.get("waiting") or {}
-    top100_value, top100_level = waiting_top100_text(waiting)
+    market = state.get("market") if isinstance(state.get("market"), dict) else {}
+    micro = state.get("microstructure") if isinstance(state.get("microstructure"), dict) else {}
     skeleton_summary = (state["skeleton"].get("summary") or {}) if isinstance(state["skeleton"], dict) else {}
+    source_count = len(market.get("sources") or [])
+    available_symbols = len(market.get("available_symbols") or [])
+    alert_value = "偏旧" if state.get("alerts_stale") else str(alerts.get("alert_count", 0))
+    alert_level = "warn" if state.get("alerts_stale") else "bad" if alerts.get("status") == "bad" else "warn" if alerts.get("status") == "warn" else "good"
     items = [
         ("三策略", "运行中", "good"),
-        ("API队列", f"等待{q.get('active', 0)} / 冷却{q.get('cooldowns', 0)}", "bad" if q.get("active") or q.get("cooldowns") else "good"),
-        ("Top100实扫", top100_value, top100_level),
+        ("行情源", f"{source_count} 路 / {available_symbols} 币", "good" if source_count >= 2 else "warn"),
+        ("盘口/CVD", f"{micro.get('fresh_symbols_240s', 0)}/{micro.get('coverage_symbols', 0)}", "good" if int(micro.get("fresh_symbols_240s") or 0) >= 80 else "warn"),
         ("模拟持仓", str(paper.get("open_positions", account.get("open_positions", 0))), "good"),
         ("模拟浮盈亏", f"{number(paper.get('total_unrealized_pnl', account.get('unrealized_pnl_usdt')))} USDT", "good"),
-        ("告警", str(alerts.get("alert_count", 0)), "bad" if alerts.get("status") == "bad" else "warn" if alerts.get("status") == "warn" else "good"),
+        ("告警", alert_value, alert_level),
         ("长期骨架", f"{skeleton_summary.get('ready_bones', 0)}/{skeleton_summary.get('total_bones', 0)}", "good"),
     ]
     return "".join(
@@ -731,33 +910,37 @@ def render_badges(state: dict[str, Any]) -> str:
 def render_paper_exchange(state: dict[str, Any]) -> str:
     paper = state.get("paper_exchange") or {}
     if not paper:
-        return '<p class="empty">模拟交易所账本还没生成。系统会先跑 paper_exchange_runner 生成持仓、盯市盈亏、手续费和资金费率。</p>'
+        return '<p class="empty">模拟账本还没生成。系统会先生成持仓、盯市盈亏、手续费和资金费率。</p>'
     by_strategy = paper.get("by_strategy") if isinstance(paper.get("by_strategy"), dict) else {}
     paper_ts = parse_dt(paper.get("ts"))
     fidelity = paper.get("fidelity") if isinstance(paper.get("fidelity"), dict) else {}
+    names = ("A/v11", "B/v16", "C/v14")
     cards = []
-    for name in ("A/v11", "B/v16", "C/v14"):
+    for idx, name in enumerate(names):
         row = by_strategy.get(name) if isinstance(by_strategy.get(name), dict) else {}
         cards.append(
             f"""
-<article class="paper-card">
+<button class="paper-card strategy-tab {'active' if idx == 0 else ''}" type="button" data-strategy="{h(name)}" onclick="showPaperStrategy('{h(name)}')">
   <span>{h(name)}</span>
   <b>{h(row.get('positions', 0))} 仓 / {h(number(row.get('unrealized_pnl'), 4))} USDT</b>
   <p>权益 {h(number(row.get('equity'), 2))}，已实现 {h(number(row.get('realized_pnl'), 4))}，手续费 {h(number(row.get('fees_paid'), 4))}，资金费 {h(number(row.get('funding_paid'), 4))}</p>
-</article>
+</button>
 """.strip()
         )
     positions = paper.get("positions") if isinstance(paper.get("positions"), list) else []
-    rows = []
-    for pos in positions[:80]:
-        if not isinstance(pos, dict):
-            continue
-        upnl = pos.get("unrealized_pnl")
-        rows.append(
-            f"""
-<tr>
-  <td>{h(pos.get('strategy'))}</td>
-  <td>{h(pos.get('symbol'))}</td>
+    panels: list[str] = []
+    for idx, name in enumerate(names):
+        strategy_positions = [pos for pos in positions if isinstance(pos, dict) and pos.get("strategy") == name]
+        body_rows: list[str] = []
+        for pos_idx, pos in enumerate(strategy_positions[:80]):
+            upnl = pos.get("unrealized_pnl")
+            detail_id = re.sub(r"[^A-Za-z0-9_-]+", "-", f"paper-{name}-{pos.get('symbol')}-{pos_idx}")
+            chart = render_kline_svg(str(pos.get("symbol") or ""), pos)
+            opened = age_text(parse_dt(pos.get("opened_at")))
+            body_rows.append(
+                f"""
+<tr class="position-row" onclick="togglePositionDetail('{h(detail_id)}')">
+  <td>{h(pos.get('symbol'))}<small>{h(opened)} 开</small></td>
   <td>{h(pos.get('side'))}</td>
   <td>{h(fmt_plain(pos.get('qty')))}</td>
   <td>{h(fmt_plain(pos.get('entry_price')))}</td>
@@ -766,13 +949,38 @@ def render_paper_exchange(state: dict[str, Any]) -> str:
   <td>{h(fmt_plain(pos.get('notional'), 4))}</td>
   <td>{h(fmt_plain(pos.get('margin'), 4))}</td>
   <td>{h(number(pos.get('fees_paid'), 4))}</td>
-  <td>{h(number(pos.get('funding_paid'), 4))}<small>{h(pos.get('funding_source') or '')}</small></td>
-  <td>{h(pos.get('mark_source'))}</td>
+  <td>{h(number(pos.get('funding_paid'), 4))}<small>{h(report_text(pos.get('funding_source') or '公开资金费'))}</small></td>
+  <td>{h(report_text(pos.get('mark_source') or '外部行情'))}</td>
+  <td><button class="mini-btn" type="button">展开</button></td>
+</tr>
+<tr id="{h(detail_id)}" class="position-detail-row">
+  <td colspan="12">
+    <div class="position-detail-grid">
+      <div class="chart-wrap">{chart}</div>
+      <div class="position-facts">
+        <b>{h(pos.get('symbol'))} 持仓详情</b>
+        <p>订单号 {h(pos.get('order_id') or '-')}</p>
+        <p>杠杆 {h(fmt_plain(pos.get('leverage'), 2))}x，原因 {h(report_text(pos.get('reason') or '-'))}</p>
+        <p>盯市刷新 {h(age_text(parse_dt(pos.get('mark_updated_at'))))}</p>
+        <p>说明：图中蓝线是入场价，竖线是入场附近K线。数据不足时先显示现有缓存。</p>
+      </div>
+    </div>
+  </td>
 </tr>
 """.strip()
+            )
+        if not body_rows:
+            body_rows.append('<tr><td colspan="12">当前策略暂无模拟持仓。</td></tr>')
+        panels.append(
+            f"""
+<div class="paper-panel {'active' if idx == 0 else ''}" data-strategy="{h(name)}">
+  <div class="table-scroll"><table class="paper-table">
+    <thead><tr><th>币种</th><th>方向</th><th>数量</th><th>开仓价</th><th>盯市价</th><th>浮盈亏</th><th>名义价值</th><th>保证金</th><th>手续费</th><th>资金费率</th><th>价格源</th><th></th></tr></thead>
+    <tbody>{''.join(body_rows)}</tbody>
+  </table></div>
+</div>
+""".strip()
         )
-    if not rows:
-        rows.append('<tr><td colspan="12">当前 paper exchange 没有持仓。</td></tr>')
     return f"""
 <div class="paper-summary">
   <div><span>总权益</span><b>{h(number(paper.get('total_equity'), 2))} USDT</b></div>
@@ -781,11 +989,8 @@ def render_paper_exchange(state: dict[str, Any]) -> str:
   <div><span>盯市刷新</span><b>{h(age_text(paper_ts))}</b></div>
 </div>
 <div class="paper-cards">{''.join(cards)}</div>
-<div class="table-scroll"><table class="paper-table">
-  <thead><tr><th>策略</th><th>币种</th><th>方向</th><th>数量</th><th>开仓价</th><th>盯市价</th><th>浮盈亏</th><th>名义价值</th><th>保证金</th><th>手续费</th><th>资金费率</th><th>价格源</th></tr></thead>
-  <tbody>{''.join(rows)}</tbody>
-</table></div>
-<p class="empty">这是模拟交易所账本（paper exchange）：不开真实 Binance 单。价格：{h(fidelity.get('price') or 'OKX/本地K线')}；时间：{h(fidelity.get('time') or '按 runner 刷新')}；滑点：{h(fidelity.get('slippage') or '非真实撮合')}；手续费：{h(fidelity.get('fees') or '按账本费率')}；资金费率：{h(fidelity.get('funding') or '按可得公开 funding rate')}。</p>
+<div class="paper-panels">{''.join(panels)}</div>
+<p class="empty">这是自建模拟账本：不下真实单。价格：{h(report_text(fidelity.get('price') or 'OKX/本地K线'))}；时间：{h(report_text(fidelity.get('time') or '按 runner 刷新'))}；滑点：{h(report_text(fidelity.get('slippage') or '非真实撮合'))}；手续费：{h(report_text(fidelity.get('fees') or '按账本费率'))}；资金费率：{h(report_text(fidelity.get('funding') or '按可得公开 funding rate'))}。</p>
 """
 
 
@@ -841,7 +1046,6 @@ def render_strategy_table(rows: list[dict[str, str]]) -> str:
   <td>{h(row['service'])}</td>
   <td>{h(row['age'])}</td>
   <td>{h(row['opens'])}</td>
-  <td>{h(row.get('paper_sample_opens', '0'))}</td>
   <td>{h(row['closes'])}</td>
   <td>{h(row['open_failed'])}</td>
   <td>{h(row['close_failed'])}</td>
@@ -853,7 +1057,7 @@ def render_strategy_table(rows: list[dict[str, str]]) -> str:
     )
     return f"""
 <div class="table-scroll"><table class="strategy-table">
-  <thead><tr><th>策略</th><th>服务</th><th>最新数据</th><th>24h开仓</th><th>其中模拟采样</th><th>24h平仓</th><th>开仓执行失败</th><th>平仓/强平失败</th><th>候选被挡住</th><th>主要原因</th></tr></thead>
+  <thead><tr><th>策略</th><th>服务</th><th>最新数据</th><th>24h开仓</th><th>24h平仓</th><th>开仓执行失败</th><th>平仓/强平失败</th><th>候选被挡住</th><th>主要原因</th></tr></thead>
   <tbody>{body}</tbody>
 </table></div>
 """
@@ -888,29 +1092,25 @@ def render_attention(items: list[dict[str, Any]]) -> str:
 
 
 def render_cards(state: dict[str, Any]) -> str:
-    account = state["account_summary"]
     evolution = state["evolution"].get("summary") or {}
     expansion = evolution.get("expansion_readiness") if isinstance(evolution.get("expansion_readiness"), dict) else {}
     replay = state["replay"]
-    waiting = state.get("waiting") or {}
-    waiting_summary = waiting.get("summary") if isinstance(waiting.get("summary"), dict) else {}
-    waiting_readiness = waiting.get("readiness") if isinstance(waiting.get("readiness"), dict) else {}
     replay_summary = replay.get("summary") if isinstance(replay.get("summary"), dict) else {}
     parity_summary = state["parity"].get("summary") if isinstance(state["parity"].get("summary"), dict) else {}
     research = state["research"]
     kline_acceptance = research.get("kline_acceptance") if isinstance(research.get("kline_acceptance"), dict) else {}
-    stale = account.get("stale_accounts") if isinstance(account.get("stale_accounts"), list) else []
+    paper = state.get("paper_exchange") if isinstance(state.get("paper_exchange"), dict) else {}
+    market = state.get("market") if isinstance(state.get("market"), dict) else {}
+    micro = state.get("microstructure") if isinstance(state.get("microstructure"), dict) else {}
     rows = [
-        ("账户资金", f"总额 {number(account.get('wallet_usdt'))} / 可用 {number(account.get('available_usdt'))}", "看账户是否还有可用保证金。B/C 若显示等待推送，不代表要手动强拉余额。"),
+        ("模拟账本", f"{paper.get('open_positions', 0)} 仓 / {number(paper.get('total_unrealized_pnl'), 4)} USDT", "这是当前主 PnL 入口。点击下方策略表，可看每个持仓和入场K线。"),
+        ("行情覆盖", f"{len(market.get('available_symbols') or [])} 币 / Top {len(market.get('top_symbols') or [])}", f"来源：{report_text(','.join(market.get('sources') or []) or '外部公开行情')}。"),
+        ("盘口/CVD", f"{micro.get('fresh_symbols_240s', 0)} 新鲜", "给 B/v16 和后续复盘用。只存紧凑特征，不存全量原始 tick。"),
         ("策略升级样本", f"可考虑 {expansion.get('ready_count', 0)} / 继续收样 {expansion.get('maturing_count', 0)}", f"过去24小时还缺 {expansion.get('missing_samples_24h', 0)} 个样本。先让系统自然交易，不靠拍脑袋放大。"),
         ("回放验收", plain_status(replay.get("status")), f"已准备 {replay_summary.get('ready_components', 0)}/{replay_summary.get('total_components', 0)} 块；下一步：{plain_status(replay.get('next_action'))}。"),
-        ("放开闸门", plain_status(waiting_readiness.get("decision") or waiting.get("status")), f"Top100 实扫 {waiting_summary.get('top100_scanned', 0)} 个；队列中 {waiting_summary.get('active_requests', 0)}；冷却 {waiting_summary.get('active_cooldowns', 0)}。"),
         ("同输入审计", f"{float(parity_summary.get('pass_rate_pct') or 0):.1f}% 通过", f"同一批输入下，已验 {parity_summary.get('gate_cases', 0)} 个策略判断，不一致 {parity_summary.get('mismatched', 0)} 个。"),
         ("K线/深度", plain_status(kline_acceptance.get("status")), "这是以后回测和升级策略的燃料。第一版先看是否在稳定积累，不急着一次补满。"),
-        ("服务器清理", f"{state['cleanup']['total_mb']} MB", "这里只列可清理候选。真正删除由维护任务做，回滚证据和重置记录要保留。"),
     ]
-    if stale:
-        rows.insert(1, ("账户刷新", "等交易所推送", "部分账户不主动查余额，是为了少碰 signed REST，降低币安风控风险。"))
     return "".join(
         f'<article class="info"><span>{h(title)}</span><b>{h(value)}</b><p>{h(body)}</p></article>'
         for title, value, body in rows
@@ -952,13 +1152,17 @@ def render_release_gate(state: dict[str, Any]) -> str:
 
 def render_html() -> str:
     state = build_state()
-    strategies = strategy_rows(state["event"], state["alerts"], state["account"])
+    live_services = state.get("live_context", {}).get("services") if isinstance(state.get("live_context"), dict) else {}
+    strategies = strategy_rows(state["event"], state["alerts"], state["account"], live_services=live_services if isinstance(live_services, dict) else {})
     generated = state["generated_at"].strftime("%Y-%m-%d %H:%M:%S")
     alerts = state["alerts"].get("alerts") if isinstance(state["alerts"].get("alerts"), list) else []
-    alert_list = "".join(
-        f'<li class="{plain_level(a.get("level"))}"><b>{h(a.get("title"))}</b><span>{h(a.get("body"))}</span></li>'
-        for a in alerts[:6] if isinstance(a, dict)
-    ) or '<li class="good"><b>无红灯</b><span>当前没有需要立即停机的告警。</span></li>'
+    if state.get("alerts_stale"):
+        alert_list = '<li class="warn"><b>自动告警文件偏旧</b><span>首页已改看当前服务/模拟账本数据；旧施工告警不再占主屏。</span></li>'
+    else:
+        alert_list = "".join(
+            f'<li class="{plain_level(a.get("level"))}"><b>{h(a.get("title"))}</b><span>{h(report_text(a.get("body")))}</span></li>'
+            for a in alerts[:6] if isinstance(a, dict)
+        ) or '<li class="good"><b>无红灯</b><span>当前没有需要立即停机的告警。</span></li>'
     event = state["event"]
     return f"""<!doctype html>
 <html lang="zh-CN">
@@ -1008,7 +1212,25 @@ h1 {{ margin:0; font-size:30px; letter-spacing:0; font-weight:850; }}
 .paper-summary div,.paper-card {{ border:1px solid var(--line); border-radius:8px; background:#0b1320; padding:12px; }}
 .paper-summary b,.paper-card b {{ display:block; font-size:21px; margin-top:4px; color:#f7fbff; }}
 .paper-cards {{ display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; margin-bottom:12px; }}
-.paper-table {{ min-width:1240px; }}
+.paper-card {{ width:100%; text-align:left; color:var(--ink); cursor:pointer; font:inherit; }}
+.paper-card.active {{ border-color:var(--cyan); box-shadow:0 0 0 1px rgba(43,212,214,.18), var(--shadow); }}
+.paper-panel {{ display:none; }}
+.paper-panel.active {{ display:block; }}
+.paper-table {{ min-width:1260px; }}
+.position-row {{ cursor:pointer; }}
+.position-row:hover td {{ background:#132033; }}
+.position-detail-row {{ display:none; }}
+.position-detail-row.open {{ display:table-row; }}
+.position-detail-row td {{ background:#09111d; }}
+.position-detail-grid {{ display:grid; grid-template-columns:minmax(0,1fr) 260px; gap:14px; align-items:start; }}
+.chart-wrap {{ overflow-x:auto; }}
+.kline-svg {{ width:100%; min-width:760px; height:auto; display:block; border:1px solid var(--line); border-radius:8px; background:#08111d; }}
+.chart-empty {{ min-height:220px; display:grid; place-content:center; gap:6px; border:1px dashed var(--line); border-radius:8px; color:var(--muted); text-align:center; background:#08111d; }}
+.chart-empty b {{ color:#f7fbff; }}
+.position-facts {{ border:1px solid var(--line); border-radius:8px; background:#0b1320; padding:12px; }}
+.position-facts b {{ display:block; margin-bottom:8px; }}
+.position-facts p {{ margin:0 0 8px; color:var(--muted); }}
+.mini-btn {{ border:1px solid var(--line); background:#101827; color:#bfe8ff; border-radius:8px; padding:6px 9px; cursor:pointer; }}
 .grid {{ display:grid; grid-template-columns:minmax(0, 1.62fr) minmax(360px, .38fr); gap:16px; align-items:start; }}
 .table-scroll {{ width:100%; overflow-x:auto; border:1px solid var(--line); border-radius:8px; background:#0a111c; }}
 table {{ width:100%; border-collapse:collapse; }}
@@ -1043,8 +1265,9 @@ tr:hover td {{ background:#101827; }}
 .links a:hover {{ border-color:var(--cyan); color:#fff; }}
 .top-actions {{ display:flex; flex-wrap:wrap; align-items:center; gap:10px; margin-top:10px; }}
 .refresh-status {{ color:var(--muted); font-size:12px; }}
+.refresh-countdown {{ display:inline-flex; align-items:center; gap:6px; border:1px solid var(--line); border-radius:8px; padding:7px 10px; color:#dbe7f6; background:#0b1320; font-weight:800; }}
 @media (max-width: 1320px) {{ .metrics,.cards {{ grid-template-columns:repeat(2, minmax(0, 1fr)); }} .app-shell {{ grid-template-columns:1fr; }} .side-rail {{ position:relative; height:auto; display:none; }} }}
-@media (max-width: 980px) {{ .metrics,.cards,.grid,.paper-summary,.paper-cards,.gate-grid {{ grid-template-columns:1fr; }} header {{ grid-template-columns:1fr; }} .wrap {{ padding:18px; }} }}
+@media (max-width: 980px) {{ .metrics,.cards,.grid,.paper-summary,.paper-cards,.gate-grid,.position-detail-grid {{ grid-template-columns:1fr; }} header {{ grid-template-columns:1fr; }} .wrap {{ padding:18px; }} }}
 </style>
 </head>
 <body>
@@ -1053,21 +1276,21 @@ tr:hover td {{ background:#101827; }}
   <div class="brand"><div class="brand-mark"></div><div><b>AutoTrading</b><span>Operations</span></div></div>
   <nav class="nav">
     <a class="active" href="#overview">总览</a>
-    <a href="#fresh">从零状态</a>
-    <a href="#paper">模拟交易所</a>
+    <a href="#paper">模拟账本</a>
     <a href="#strategies">三策略</a>
     <a href="#actions">确认事项</a>
   </nav>
-  <div class="rail-note">只读报表，不走 Binance 下单路径。</div>
+  <div class="rail-note">只读报表。策略运行、持仓、盈亏、图表都来自当前模拟账本和外部行情。</div>
 </aside>
 <main class="wrap" id="overview">
   <header>
     <div>
       <h1>AutoTrading 决策入口</h1>
-      <div class="sub">更新 {h(generated)}。线上首页 5 分钟自动刷新；这里只读现有数据，不请求 Binance。</div>
+      <div class="sub">更新 {h(generated)}。线上首页 5 分钟自动刷新；这里只读现有数据。</div>
       <div class="top-actions">
-        <button class="icon-btn refresh-btn" onclick="refreshReport(this)" title="同步服务器镜像并重新生成报表，不提交币安队列">刷新报表</button>
-        <span id="refreshStatus" class="refresh-status">安全刷新：只更新报表和镜像，不下单，不强拉账户。</span>
+        <button class="icon-btn refresh-btn" onclick="refreshReport(this)" title="同步服务器镜像并重新生成报表">刷新报表</button>
+        <span class="refresh-countdown">下次自动刷新 <b id="refreshCountdown">05:00</b></span>
+        <span id="refreshStatus" class="refresh-status">安全刷新：只更新报表和镜像，不下单。</span>
       </div>
     </div>
     <div class="status {plain_level(state['overall'])}">{h(status_text(state))}</div>
@@ -1077,12 +1300,8 @@ tr:hover td {{ background:#101827; }}
     <h2>今日重点</h2>
     <div class="cards">{render_cards(state)}</div>
   </section>
-  <section class="panel" id="fresh">
-    <h2>从零运行状态</h2>
-    <div class="cards">{render_fresh_start(state)}</div>
-  </section>
   <section class="panel" id="paper">
-    <h2>三策略模拟交易所运行总览</h2>
+    <h2>三策略模拟账本运行总览</h2>
     {render_paper_exchange(state)}
   </section>
   <section class="panel">
@@ -1096,17 +1315,8 @@ tr:hover td {{ background:#101827; }}
         {render_strategy_table(strategies)}
       </section>
       <section class="panel" id="actions">
-        <h2>小放开闸门</h2>
-        {render_release_gate(state)}
-      </section>
-      <section class="panel">
         <h2>你需要确认的事项</h2>
         {render_attention(state['attention_items'])}
-      </section>
-      <section class="panel">
-        <h2>服务器清理计划</h2>
-        <p class="empty">先列候选，不直接删除。目标是清掉旧噪音，保留回滚、审计、重置 receipt。</p>
-        {render_cleanup(state)}
       </section>
     </div>
     <aside>
@@ -1162,7 +1372,7 @@ async function refreshReport(btn) {{
     btn.disabled = true;
     btn.textContent = '刷新中';
   }}
-  if (status) status.textContent = '正在刷新报表。不会下单，不会强拉 Binance 账户。';
+  if (status) status.textContent = '正在刷新报表。不会下单。';
   try {{
     const resp = await fetch('/api/report/refresh', {{
       method: 'POST',
@@ -1183,6 +1393,33 @@ async function refreshReport(btn) {{
     }}
   }}
 }}
+function showPaperStrategy(name) {{
+  document.querySelectorAll('.strategy-tab').forEach((el) => {{
+    el.classList.toggle('active', el.dataset.strategy === name);
+  }});
+  document.querySelectorAll('.paper-panel').forEach((el) => {{
+    el.classList.toggle('active', el.dataset.strategy === name);
+  }});
+}}
+function togglePositionDetail(id) {{
+  const row = document.getElementById(id);
+  if (!row) return;
+  row.classList.toggle('open');
+}}
+function startRefreshCountdown() {{
+  const el = document.getElementById('refreshCountdown');
+  if (!el) return;
+  let remain = 300;
+  const tick = () => {{
+    const minutes = Math.floor(remain / 60);
+    const seconds = remain % 60;
+    el.textContent = String(minutes).padStart(2, '0') + ':' + String(seconds).padStart(2, '0');
+    remain = Math.max(0, remain - 1);
+  }};
+  tick();
+  setInterval(tick, 1000);
+}}
+startRefreshCountdown();
 </script>
 </body>
 </html>

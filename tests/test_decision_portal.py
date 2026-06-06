@@ -170,7 +170,7 @@ class DecisionPortalTests(unittest.TestCase):
         self.assertIn("估算：按 taker 0.04%", html)
         self.assertIn("待补资金费率流水", html)
 
-    def test_paper_exchange_summary_is_first_class_report_section(self):
+    def test_paper_exchange_summary_is_tabbed_report_section(self):
         html = self.tool.render_paper_exchange({
                 "paper_exchange": {
                     "mode": "paper_exchange",
@@ -198,6 +198,7 @@ class DecisionPortalTests(unittest.TestCase):
                         "qty": 0.01,
                         "entry_price": 100,
                         "mark_price": 101,
+                        "opened_at": "2026-06-06T13:00:00+00:00",
                         "unrealized_pnl": 1,
                         "notional": 101,
                         "margin": 25.25,
@@ -210,13 +211,41 @@ class DecisionPortalTests(unittest.TestCase):
             }
         })
 
-        self.assertIn("paper exchange", html)
+        self.assertIn("自建模拟账本", html)
         self.assertIn("盯市刷新", html)
-        self.assertIn("OKX 15m/latest cached close", html)
-        self.assertIn("not exchange-order-book exact", html)
+        self.assertIn("OKX 15分钟K线/本地缓存收盘价", html)
+        self.assertIn("不是逐笔盘口撮合", html)
+        self.assertIn("strategy-tab active", html)
+        self.assertIn("paper-panel active", html)
+        self.assertIn("position-detail-row", html)
         self.assertIn("BTCUSDT", html)
         self.assertIn("手续费", html)
         self.assertIn("资金费率", html)
+        self.assertNotIn("Binance", html)
+
+    def test_render_html_has_countdown_and_no_legacy_report_sections(self):
+        old_read_first_json = self.tool.read_first_json
+        old_queue_summary = self.tool.queue_summary
+        old_event_summary = self.tool.event_summary
+        old_attention_items = self.tool.attention_items
+        try:
+            self.tool.read_first_json = lambda *paths: {}
+            self.tool.queue_summary = lambda: {"active": 0, "cooldowns": 0, "last": [], "counts": {}}
+            self.tool.event_summary = lambda: {"strategies": [], "events": 0}
+            self.tool.attention_items = lambda: ({}, [])
+            html = self.tool.render_html()
+        finally:
+            self.tool.read_first_json = old_read_first_json
+            self.tool.queue_summary = old_queue_summary
+            self.tool.event_summary = old_event_summary
+            self.tool.attention_items = old_attention_items
+
+        self.assertIn("refreshCountdown", html)
+        self.assertIn("下次自动刷新", html)
+        self.assertNotIn("从零运行状态", html)
+        self.assertNotIn("服务器清理计划", html)
+        self.assertNotIn("小放开闸门", html)
+        self.assertNotIn("Binance", html)
 
 
 if __name__ == "__main__":

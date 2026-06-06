@@ -2,6 +2,14 @@
 
 This is the durable reason-and-outcome ledger for every material design, code, configuration, deployment, rollback, optimization, or live operational change.
 
+## 2026-06-06 21:36 CST - Restyle decision report as dark operations dashboard
+- Trigger / reason: User provided the Behance Nord Analytics banking operations dashboard reference and asked the daily report page to use that style.
+- Completed: Restyled `decision_portal.py` from a light card page into a dark financial-operations cockpit: left navigation rail, dark KPI tiles, dense operator panels, dark data tables, sticky table headers, blue/cyan accent actions, green/yellow/red status accents, wider report surface, and Chinese navigation/status wording. Existing report content remains: fresh-start status, paper exchange PnL/fees/funding table, replay/evolution maturity, strategy health table, release gate, confirmation items, alerts, and drilldowns.
+- Not completed / remaining: This is a visual/report polish pass, not a new charting library or live trading change. Future polish can add sparkline charts or richer interactive filtering, but those are not required for this style landing.
+- Verification: Local `decision_portal.py` generation passed, focused unit tests passed (`tests.test_decision_portal`, `tests.test_waiting_period_optimization`, `tests.test_execution_engine_account_state`, `33` tests OK), and Edge headless screenshot `runtime/report-nord-preview-3.png` was inspected for first-screen layout.
+- Live impact / deployment: Report-only source change. No Binance request, queue submit, scanner/account/cache/user-stream start, order, close, cancel, leverage/margin, signed baseline, or strategy behavior change.
+- Files / release / commit: `部署工具/decision_portal.py`, `CHANGELOG.md`, `PROJECT_STATE.md`, `记忆文档/MEMORY.md`; deployment receipt follows.
+
 ## 2026-06-06 21:02 CST - Prepare fresh-start reset and report maturity view
 - Trigger / reason: User asked to keep polishing the report, clean all historical dirty data, start from zero, and clarify whether replay/evolution only needs enough holding signals.
 - Completed: Updated `runtime_data_reset.py` so generated runtime reset can archive/remove paper exchange state/latest, queue summary, waiting-period report, and long-term skeleton runtime files together with existing generated runtime files. Updated `paper_exchange_runner.py` with an OKX-compatible default bootstrap universe so a true clean runtime with no old event store or market-data cache can still open fresh paper exchange positions from public OKX Klines. Updated `decision_portal.py` with first-screen `从零运行状态` and `复盘 / 进化成熟度` sections. The report now explicitly explains that replay/evolution needs complete trade loops: open, holding market context, close, fees, funding, and skipped candidates; holding/open samples alone are not enough to prove strategy quality.

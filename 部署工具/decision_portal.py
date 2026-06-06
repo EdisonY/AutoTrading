@@ -120,6 +120,10 @@ def plain_status(value: Any) -> str:
         "good": "正常",
         "ready": "已准备好",
         "missing": "缺少数据",
+        "data_gap": "数据缺口",
+        "coverage_gap": "覆盖不足",
+        "ready_for_plan_only_data_work": "只做离线数据工作",
+        "run_staged_kline_depth_ingest_then_replay_review": "先补K线/深度，再复盘",
         "stale_mirror_unknown": "镜像过期，暂不判断",
         "blocked": "被挡住",
         "watch": "观察中",
@@ -963,78 +967,98 @@ def render_html() -> str:
 <title>AutoTrading 决策入口</title>
 <style>
 :root {{
-  --bg:#eef2f7; --panel:#ffffff; --ink:#182033; --muted:#667085;
-  --line:#d9e0ea; --good:#16a34a; --warn:#d97706; --bad:#dc2626;
-  --up:#22c55e; --down:#ef4444;
-  --cyan:#0891b2; --blue:#2563eb; --night:#101820; --night2:#17212c;
+  --bg:#070b12; --panel:#0d1420; --panel2:#101a29; --panel3:#121f31;
+  --ink:#edf4ff; --muted:#8ea2bd; --soft:#b8c7d9; --line:#213044;
+  --good:#21d18b; --warn:#f4b740; --bad:#ff5b6e; --up:#22c55e; --down:#ef4444;
+  --blue:#5d8cff; --cyan:#2bd4d6; --violet:#8b7cff; --shadow:0 24px 70px rgba(0,0,0,.35);
 }}
 * {{ box-sizing:border-box; }}
-body {{ margin:0; background:linear-gradient(180deg,var(--night) 0,var(--night2) 300px,var(--bg) 301px); color:var(--ink); font:15px/1.58 "Segoe UI", Arial, sans-serif; }}
-.wrap {{ max-width:1560px; margin:0 auto; padding:26px 30px; }}
-header {{ display:grid; grid-template-columns:1fr auto; gap:16px; align-items:end; margin-bottom:18px; color:#fff; }}
-h1 {{ margin:0; font-size:34px; letter-spacing:0; }}
-.sub {{ color:#cbd5e1; margin-top:6px; }}
-.status {{ padding:10px 14px; border-radius:8px; font-weight:800; color:#fff; border:1px solid rgba(255,255,255,.22); }}
-.status.good {{ background:var(--good); }} .status.warn {{ background:var(--warn); }} .status.bad {{ background:var(--bad); }}
-.metrics {{ display:grid; grid-template-columns:repeat(7, minmax(0, 1fr)); gap:10px; margin:14px 0 18px; }}
-.metric,.panel,.info {{ background:var(--panel); border:1px solid var(--line); border-radius:8px; box-shadow:0 1px 2px rgba(16,24,40,.04); }}
-.metric {{ padding:14px; min-height:88px; box-shadow:0 14px 34px rgba(15,23,42,.10); }}
-.metric span,.info span {{ color:var(--muted); display:block; font-size:12px; }}
-.metric b {{ display:block; font-size:22px; margin-top:8px; }}
-.metric.good {{ border-top:4px solid var(--good); }} .metric.warn {{ border-top:4px solid var(--warn); }} .metric.bad {{ border-top:4px solid var(--bad); }}
-.paper-summary {{ display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px; margin-bottom:12px; }}
-.paper-summary div,.paper-card {{ border:1px solid var(--line); border-radius:8px; background:#f8fafc; padding:12px; }}
-.paper-summary span,.paper-card span {{ color:var(--muted); display:block; font-size:12px; }}
-.paper-summary b,.paper-card b {{ display:block; font-size:20px; margin-top:4px; }}
-.paper-cards {{ display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; margin-bottom:12px; }}
-.paper-card p {{ margin:6px 0 0; color:var(--muted); }}
-.paper-table {{ min-width:1240px; background:#fff; }}
-.grid {{ display:grid; grid-template-columns:minmax(0, 1.55fr) minmax(340px, .45fr); gap:16px; align-items:start; }}
-.panel {{ padding:16px; margin-bottom:14px; box-shadow:0 10px 28px rgba(15,23,42,.06); }}
-.panel h2 {{ margin:0 0 10px; font-size:18px; }}
+body {{ margin:0; min-height:100vh; background:radial-gradient(circle at 20% 0%, rgba(43,212,214,.18), transparent 34%), linear-gradient(180deg,#08111e 0%,#070b12 42%,#09101a 100%); color:var(--ink); font:15px/1.58 "Inter","Segoe UI",Arial,sans-serif; }}
+.app-shell {{ min-height:100vh; display:grid; grid-template-columns:240px minmax(0,1fr); }}
+.side-rail {{ position:sticky; top:0; height:100vh; padding:24px 18px; background:linear-gradient(180deg,#0b1320,#070b12); border-right:1px solid var(--line); }}
+.brand {{ display:flex; align-items:center; gap:10px; margin-bottom:28px; }}
+.brand-mark {{ width:34px; height:34px; border-radius:8px; background:linear-gradient(135deg,var(--cyan),var(--blue)); box-shadow:0 0 30px rgba(43,212,214,.28); }}
+.brand b {{ display:block; font-size:15px; }} .brand span {{ display:block; color:var(--muted); font-size:12px; }}
+.nav {{ display:grid; gap:8px; }}
+.nav a {{ color:var(--soft); text-decoration:none; padding:10px 12px; border-radius:8px; border:1px solid transparent; background:transparent; }}
+.nav a.active,.nav a:hover {{ color:var(--ink); border-color:var(--line); background:#101827; }}
+.rail-note {{ position:absolute; left:18px; right:18px; bottom:22px; color:var(--muted); font-size:12px; border:1px solid var(--line); border-radius:8px; padding:12px; background:#0b1320; }}
+.wrap {{ max-width:1680px; width:100%; margin:0 auto; padding:24px 28px 40px; }}
+header {{ display:grid; grid-template-columns:minmax(0,1fr) auto; gap:18px; align-items:start; margin-bottom:18px; }}
+h1 {{ margin:0; font-size:30px; letter-spacing:0; font-weight:850; }}
+.sub {{ color:var(--muted); margin-top:6px; max-width:920px; }}
+.status {{ padding:10px 14px; border-radius:8px; font-weight:850; color:#06101a; background:var(--muted); border:1px solid rgba(255,255,255,.12); box-shadow:var(--shadow); }}
+.status.good {{ background:var(--good); }} .status.warn {{ background:var(--warn); }} .status.bad {{ background:var(--bad); color:#fff; }}
+.metrics {{ display:grid; grid-template-columns:repeat(auto-fit, minmax(168px, 1fr)); gap:12px; margin:14px 0 18px; }}
+.metric,.panel,.info {{ background:linear-gradient(180deg,rgba(18,31,49,.96),rgba(13,20,32,.96)); border:1px solid var(--line); border-radius:8px; box-shadow:var(--shadow); }}
+.metric {{ padding:15px; min-height:98px; position:relative; overflow:hidden; }}
+.metric:after {{ content:""; position:absolute; left:14px; right:14px; bottom:10px; height:3px; border-radius:99px; background:linear-gradient(90deg,var(--blue),transparent); opacity:.55; }}
+.metric span,.info span,.paper-summary span,.paper-card span {{ color:var(--muted); display:block; font-size:12px; letter-spacing:.02em; }}
+.metric b {{ display:block; font-size:22px; margin-top:8px; color:var(--ink); word-break:keep-all; }}
+.metric.good {{ border-top:3px solid var(--good); }} .metric.warn {{ border-top:3px solid var(--warn); }} .metric.bad {{ border-top:3px solid var(--bad); }}
+.panel {{ padding:16px; margin-bottom:14px; }}
+.panel h2 {{ margin:0 0 12px; font-size:17px; font-weight:850; color:#f7fbff; }}
 .cards {{ display:grid; grid-template-columns:repeat(4, minmax(0, 1fr)); gap:12px; }}
-.info {{ padding:14px; min-height:112px; }}
-.info b {{ display:block; font-size:18px; margin:6px 0; }}
-.info p {{ margin:0; color:var(--muted); }}
-.table-scroll {{ width:100%; overflow-x:auto; }}
+.info {{ padding:14px; min-height:120px; background:linear-gradient(180deg,#101b2b,#0b1320); }}
+.info b {{ display:block; font-size:18px; margin:6px 0; color:#f7fbff; }}
+.info p,.empty,.paper-card p {{ margin:0; color:var(--muted); }}
+.paper-summary {{ display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px; margin-bottom:12px; }}
+.paper-summary div,.paper-card {{ border:1px solid var(--line); border-radius:8px; background:#0b1320; padding:12px; }}
+.paper-summary b,.paper-card b {{ display:block; font-size:21px; margin-top:4px; color:#f7fbff; }}
+.paper-cards {{ display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; margin-bottom:12px; }}
+.paper-table {{ min-width:1240px; }}
+.grid {{ display:grid; grid-template-columns:minmax(0, 1.62fr) minmax(360px, .38fr); gap:16px; align-items:start; }}
+.table-scroll {{ width:100%; overflow-x:auto; border:1px solid var(--line); border-radius:8px; background:#0a111c; }}
 table {{ width:100%; border-collapse:collapse; }}
-th,td {{ padding:10px 8px; border-bottom:1px solid var(--line); text-align:left; vertical-align:top; }}
-th {{ color:var(--muted); font-size:12px; font-weight:700; }}
-td small {{ display:block; color:var(--muted); margin-top:4px; }}
-.strategy-table {{ min-width:1120px; }}
-.strategy-table th:last-child,.strategy-table td.reason {{ width:34%; min-width:360px; }}
-.strategy-table td.reason {{ color:#263247; }}
-.strategy-detail {{ margin-top:10px; border:1px solid #cbd5e1; border-radius:8px; background:#f8fafc; }}
-.strategy-detail summary {{ cursor:pointer; padding:8px 10px; font-weight:800; color:#1d4ed8; }}
+th,td {{ padding:10px 9px; border-bottom:1px solid var(--line); text-align:left; vertical-align:top; }}
+th {{ color:var(--muted); font-size:12px; font-weight:800; background:#0b1422; position:sticky; top:0; z-index:1; }}
+td {{ color:#dbe7f6; }} td small {{ display:block; color:var(--muted); margin-top:4px; }}
+tr:hover td {{ background:#101827; }}
+.strategy-table {{ min-width:1160px; }}
+.strategy-table th:last-child,.strategy-table td.reason {{ width:34%; min-width:370px; }}
+.strategy-table td.reason {{ color:#dbe7f6; }}
+.strategy-detail {{ margin-top:10px; border:1px solid var(--line); border-radius:8px; background:#0b1320; }}
+.strategy-detail summary {{ cursor:pointer; padding:8px 10px; font-weight:850; color:#9bdcff; }}
 .detail-note {{ margin:0; padding:0 10px 8px; color:var(--muted); }}
-.position-table {{ min-width:1320px; font-size:13px; background:#fff; }}
+.position-table {{ min-width:1320px; font-size:13px; }}
 .position-table th,.position-table td {{ padding:8px 7px; }}
-.up {{ color:var(--up); font-weight:800; }}
-.down {{ color:var(--down); font-weight:800; }}
+.up {{ color:var(--up); font-weight:850; }}
+.down {{ color:var(--down); font-weight:850; }}
 .muted {{ color:var(--muted); }}
-.dot {{ display:inline-block; width:9px; height:9px; border-radius:50%; margin-right:8px; background:var(--muted); }}
-.dot.good {{ background:var(--good); }} .dot.warn {{ background:var(--warn); }} .dot.bad {{ background:var(--bad); }}
+.dot {{ display:inline-block; width:9px; height:9px; border-radius:50%; margin-right:8px; background:var(--muted); box-shadow:0 0 12px currentColor; }}
+.dot.good {{ background:var(--good); color:var(--good); }} .dot.warn {{ background:var(--warn); color:var(--warn); }} .dot.bad {{ background:var(--bad); color:var(--bad); }}
 .alerts {{ list-style:none; padding:0; margin:0; display:grid; gap:8px; }}
-.alerts li {{ border-left:4px solid var(--line); padding:9px 10px; background:#f8fafc; border-radius:6px; }}
+.alerts li {{ border-left:4px solid var(--line); padding:10px; background:#0b1320; border-radius:8px; }}
 .alerts li.good {{ border-color:var(--good); }} .alerts li.warn {{ border-color:var(--warn); }} .alerts li.bad {{ border-color:var(--bad); }}
 .alerts b,.alerts span {{ display:block; }} .alerts span {{ color:var(--muted); margin-top:2px; }}
-.icon-btn {{ border:0; background:var(--blue); color:white; border-radius:6px; padding:8px 12px; cursor:pointer; font-weight:700; }}
+.icon-btn {{ border:0; background:linear-gradient(135deg,var(--cyan),var(--blue)); color:#06101a; border-radius:8px; padding:8px 12px; cursor:pointer; font-weight:850; }}
 .icon-btn:disabled {{ opacity:.65; cursor:default; }}
 .gate-grid {{ display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px; }}
-.gate-grid div {{ border:1px solid var(--line); border-radius:8px; background:#f8fafc; padding:12px; min-height:76px; }}
+.gate-grid div {{ border:1px solid var(--line); border-radius:8px; background:#0b1320; padding:12px; min-height:76px; }}
 .gate-grid b {{ display:block; margin:2px 0 4px; }}
 .links {{ display:flex; flex-wrap:wrap; gap:8px; margin-top:8px; }}
-.links a {{ color:var(--blue); background:#eff6ff; border:1px solid #bfdbfe; padding:7px 10px; border-radius:6px; text-decoration:none; }}
+.links a {{ color:#bfe8ff; background:#0b1320; border:1px solid var(--line); padding:7px 10px; border-radius:8px; text-decoration:none; }}
+.links a:hover {{ border-color:var(--cyan); color:#fff; }}
 .top-actions {{ display:flex; flex-wrap:wrap; align-items:center; gap:10px; margin-top:10px; }}
-.refresh-btn {{ background:var(--cyan); }}
-.refresh-status {{ color:#cbd5e1; font-size:12px; }}
-.empty {{ color:var(--muted); }}
-@media (max-width: 1280px) {{ .cards {{ grid-template-columns:repeat(2, minmax(0, 1fr)); }} }}
-@media (max-width: 980px) {{ .metrics,.cards,.grid {{ grid-template-columns:1fr; }} header {{ grid-template-columns:1fr; }} .wrap {{ padding:18px; }} }}
+.refresh-status {{ color:var(--muted); font-size:12px; }}
+@media (max-width: 1320px) {{ .metrics,.cards {{ grid-template-columns:repeat(2, minmax(0, 1fr)); }} .app-shell {{ grid-template-columns:1fr; }} .side-rail {{ position:relative; height:auto; display:none; }} }}
+@media (max-width: 980px) {{ .metrics,.cards,.grid,.paper-summary,.paper-cards,.gate-grid {{ grid-template-columns:1fr; }} header {{ grid-template-columns:1fr; }} .wrap {{ padding:18px; }} }}
 </style>
 </head>
 <body>
-<main class="wrap">
+<div class="app-shell">
+<aside class="side-rail">
+  <div class="brand"><div class="brand-mark"></div><div><b>AutoTrading</b><span>Operations</span></div></div>
+  <nav class="nav">
+    <a class="active" href="#overview">总览</a>
+    <a href="#fresh">从零状态</a>
+    <a href="#paper">模拟交易所</a>
+    <a href="#strategies">三策略</a>
+    <a href="#actions">确认事项</a>
+  </nav>
+  <div class="rail-note">只读报表，不走 Binance 下单路径。</div>
+</aside>
+<main class="wrap" id="overview">
   <header>
     <div>
       <h1>AutoTrading 决策入口</h1>
@@ -1051,11 +1075,11 @@ td small {{ display:block; color:var(--muted); margin-top:4px; }}
     <h2>今日重点</h2>
     <div class="cards">{render_cards(state)}</div>
   </section>
-  <section class="panel">
+  <section class="panel" id="fresh">
     <h2>从零运行状态</h2>
     <div class="cards">{render_fresh_start(state)}</div>
   </section>
-  <section class="panel">
+  <section class="panel" id="paper">
     <h2>三策略模拟交易所运行总览</h2>
     {render_paper_exchange(state)}
   </section>
@@ -1065,11 +1089,11 @@ td small {{ display:block; color:var(--muted); margin-top:4px; }}
   </section>
   <section class="grid">
     <div>
-      <section class="panel">
+      <section class="panel" id="strategies">
         <h2>三策略现在是否正常</h2>
         {render_strategy_table(strategies)}
       </section>
-      <section class="panel">
+      <section class="panel" id="actions">
         <h2>小放开闸门</h2>
         {render_release_gate(state)}
       </section>
@@ -1103,6 +1127,7 @@ td small {{ display:block; color:var(--muted); margin-top:4px; }}
     </aside>
   </section>
 </main>
+</div>
 <script>
 async function ackItem(itemId, btn) {{
   if (!itemId || !btn) return;

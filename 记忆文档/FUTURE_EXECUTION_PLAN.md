@@ -36,6 +36,8 @@
 
 2026-06-06 全面恢复阻断补充：`09:14 CST` 后尝试恢复时，账户资料已超过 `14400s`，不能直接开 scanner。按顺序只启动 API queue，并尝试 A/v11 单账户 baseline；首个 signed `/fapi/v2/balance` 返回 `HTTP 418/-1003`，queue global cooldown 到约 `2026-06-06 09:49:57.944 CST`。API queue 已停止，后续恢复必须等冷却后重新只读检查，且不得在冷却内启动 user-stream/listenKey、account baseline、scanner/cache/sentinel。
 
+2026-06-06 10:35 安全观察恢复补充：`09:49:57 CST` cooldown 后只读检查 clean，已按层恢复到 no-order observation：API queue active；A/B/C listenKey rows `1621`-`1623` 均 `200`；market-data-cache row `1624` 与 sentinel row `1625` 均 public ticker `200`；account-snapshot 以 `ACCOUNT_SNAPSHOT_SOURCE=central` active；A/B/C scanner active 但由远端 `50-safe-observe.conf` 强制 `SCANNER_ORDER_ENABLED=0`、Kline/market Binance fallback off、TTL `14400/14400/15`、scanner interval `300s`。这一步的验收是“服务和扫描骨架活着且无新 418/429/-1003”，不是 order-enabled 交易验收。下一步顺序：先观察/降低 public backlog（A exchangeInfo、B depth/aggTrades/funding、C ticker-price），再处理账户证据和 B/C residual close blocker；未完成前不得移除 `50-safe-observe.conf` 或把 scanner 恢复到 order-enabled。
+
 ### Long-term P0 - 必须先完成
 
 1. **P0-A Binance API 根治**

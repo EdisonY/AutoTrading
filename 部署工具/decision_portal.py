@@ -640,6 +640,7 @@ def build_state() -> dict[str, Any]:
     kline = read_first_json(RUNTIME_DIR / "research_kline_backfill_latest.json", MIRROR_RUNTIME_DIR / "research_kline_backfill_latest.json")
     depth = read_first_json(RUNTIME_DIR / "research_depth_backfill_latest.json", MIRROR_RUNTIME_DIR / "research_depth_backfill_latest.json")
     paper_exchange = read_first_json(RUNTIME_DIR / "paper_exchange_latest.json", MIRROR_RUNTIME_DIR / "paper_exchange_latest.json")
+    reset = read_first_json(RUNTIME_DIR / "testnet_data_reset_latest.json", MIRROR_RUNTIME_DIR / "testnet_data_reset_latest.json")
     q = queue_summary()
     ev = event_summary()
     att_summary, att_items = attention_items()
@@ -670,6 +671,7 @@ def build_state() -> dict[str, Any]:
         "kline": kline,
         "depth": depth,
         "paper_exchange": paper_exchange,
+        "reset": reset,
         "queue": q,
         "event": ev,
         "attention_summary": att_summary,
@@ -779,6 +781,50 @@ def render_paper_exchange(state: dict[str, Any]) -> str:
 </table></div>
 <p class="empty">这是模拟交易所账本：不开真实 Binance 单。价格来自本地 K线/OKX 公开行情；手续费按账本费率扣；资金费率按可得公开 funding rate 结算，缺数据时记 0 并标来源。</p>
 """
+
+
+def render_fresh_start(state: dict[str, Any]) -> str:
+    reset = state.get("reset") if isinstance(state.get("reset"), dict) else {}
+    db_reset = reset.get("db_reset") if isinstance(reset.get("db_reset"), dict) else {}
+    after = db_reset.get("counts_after") if isinstance(db_reset.get("counts_after"), dict) else {}
+    paper = state.get("paper_exchange") if isinstance(state.get("paper_exchange"), dict) else {}
+    event = state.get("event") if isinstance(state.get("event"), dict) else {}
+    archive_root = reset.get("archive_root") or "暂无本轮归档"
+    reset_at = parse_dt(reset.get("generated_at"))
+    status = "已从零开始" if reset.get("apply") and after else "等待清理"
+    rows = [
+        ("清理状态", status, f"归档位置：{archive_root}"),
+        ("事件库", f"{event.get('events', 0)} 条", "清零后这里只应出现新 paper/open/close/scan 事件。"),
+        ("模拟账本", f"{paper.get('open_positions', 0)} 仓", "主 PnL 只看新 paper exchange，不混旧真实残留。"),
+        ("清理时间", age_text(reset_at), "归档保留证据，当前运行从 reset receipt 之后重新算。"),
+    ]
+    return "".join(
+        f'<article class="info"><span>{h(title)}</span><b>{h(value)}</b><p>{h(body)}</p></article>'
+        for title, value, body in rows
+    )
+
+
+def render_evolution_readiness(state: dict[str, Any]) -> str:
+    paper = state.get("paper_exchange") if isinstance(state.get("paper_exchange"), dict) else {}
+    fills = paper.get("recent_fills") if isinstance(paper.get("recent_fills"), list) else []
+    opens = sum(1 for row in fills if isinstance(row, dict) and row.get("action") == "OPEN")
+    closes = sum(1 for row in fills if isinstance(row, dict) and row.get("action") == "CLOSE")
+    positions = int(paper.get("open_positions") or 0)
+    verdict = "能复盘骨架，暂不能升级策略"
+    if closes >= 30:
+        verdict = "可以开始小样本进化复核"
+    elif positions >= 15:
+        verdict = "正在收持仓样本，等平仓闭环"
+    rows = [
+        ("当前判断", verdict, "不是只等持仓数量；要等开仓、持仓、平仓、费用、行情上下文成套闭环。"),
+        ("开仓样本", str(opens), "足够看执行和持仓展示，但还不足以证明策略优劣。"),
+        ("平仓样本", str(closes), "进化需要 CLOSED 样本。只有浮盈亏还不能算胜率、PF、回撤。"),
+        ("下一步", "继续收完整交易", "优先自然产生 CLOSE；满 30 笔闭环后再看参数升级，满 100 笔更可靠。"),
+    ]
+    return "".join(
+        f'<article class="info"><span>{h(title)}</span><b>{h(value)}</b><p>{h(body)}</p></article>'
+        for title, value, body in rows
+    )
 
 
 def render_strategy_table(rows: list[dict[str, str]]) -> str:
@@ -1006,8 +1052,16 @@ td small {{ display:block; color:var(--muted); margin-top:4px; }}
     <div class="cards">{render_cards(state)}</div>
   </section>
   <section class="panel">
+    <h2>从零运行状态</h2>
+    <div class="cards">{render_fresh_start(state)}</div>
+  </section>
+  <section class="panel">
     <h2>三策略模拟交易所运行总览</h2>
     {render_paper_exchange(state)}
+  </section>
+  <section class="panel">
+    <h2>复盘 / 进化成熟度</h2>
+    <div class="cards">{render_evolution_readiness(state)}</div>
   </section>
   <section class="grid">
     <div>

@@ -37,6 +37,16 @@ from core.paper_exchange import PaperExchange, STRATEGIES, safe_float
 
 
 CST = timezone(timedelta(hours=8))
+DEFAULT_BOOTSTRAP_SYMBOLS = [
+    "BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "DOGEUSDT",
+    "BNBUSDT", "ADAUSDT", "LINKUSDT", "AVAXUSDT", "SUIUSDT",
+    "TRXUSDT", "DOTUSDT", "BCHUSDT", "LTCUSDT", "UNIUSDT",
+    "APTUSDT", "NEARUSDT", "AAVEUSDT", "FILUSDT", "ARBUSDT",
+    "OPUSDT", "INJUSDT", "TIAUSDT", "WIFUSDT", "SEIUSDT",
+    "ORDIUSDT", "ETCUSDT", "ATOMUSDT", "FETUSDT", "RENDERUSDT",
+    "JUPUSDT", "PYTHUSDT", "ENAUSDT", "ONDOUSDT", "WLDUSDT",
+    "1000PEPEUSDT", "1000BONKUSDT", "1000FLOKIUSDT", "GALAUSDT", "LDOUSDT",
+]
 
 
 def read_json(path: Path) -> dict[str, Any]:
@@ -146,6 +156,8 @@ def recent_candidates(root: Path, strategy: str, limit: int) -> list[dict[str, A
 
 def bootstrap_candidates(root: Path, strategy: str, limit: int) -> list[dict[str, Any]]:
     rows = market_rows(root)
+    if not rows:
+        rows = [{"symbol": symbol, "change_pct": 0.0} for symbol in DEFAULT_BOOTSTRAP_SYMBOLS]
     offset = {"A/v11": 0, "B/v16": 17, "C/v14": 34}.get(strategy, 0)
     ordered = rows[offset:] + rows[:offset]
     out = []

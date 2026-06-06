@@ -36,6 +36,11 @@ RUNTIME_FILES = [
     "runtime/research_store_summary_latest.json",
     "runtime/market_mover_watchlist.json",
     "runtime/market_data_cache.json",
+    "runtime/paper_exchange_state.json",
+    "runtime/paper_exchange_latest.json",
+    "runtime/binance_api_queue_summary_latest.json",
+    "runtime/waiting_period_optimization_latest.json",
+    "runtime/long_term_skeleton_latest.json",
 ]
 
 LOG_AND_SCANNER_FILES = [

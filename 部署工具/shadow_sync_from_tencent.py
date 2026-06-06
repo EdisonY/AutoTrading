@@ -69,6 +69,7 @@ REPORT_FILES = [
     "runtime/market_data_cache.json",
     "runtime/market_mover_watchlist.json",
     "runtime/paper_exchange_latest.json",
+    "runtime/testnet_data_reset_latest.json",
 ]
 
 SQLITE_FILES = [

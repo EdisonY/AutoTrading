@@ -448,6 +448,7 @@
 - 2026-06-06：决策 report 的三策略表格要能展开看持仓明细。浮盈亏可用账户快照/交易所快照作为当前实盘口径；手续费如果没有逐笔 commission/fill ledger，只能按费率估算并标明“估算”；资金费率如果没有 funding income 流水，必须标“待补资金费率流水”，不能写假精确 after-cost PnL。
 - 2026-06-06：用户明确拒绝继续看旧的、挤的、混杂口径 report，要求今天必须看到 A/B/C 能全量运行、能开平仓、能看价格、PnL、手续费和资金费率。当前安全落地口径改为 `paper_exchange`：用本地 Kline cache/OKX 公共行情盯市，维护独立模拟交易所账本，report 主屏优先展示模拟持仓/浮盈亏/费用/资金费率。不要再把旧 Binance 残留仓、paper_sample 骨架样本、真实交易所风险提示混成主 PnL。真实 Binance 下单仍因反复 `418/-1003` 风控单独 gate，不作为今天全量数据链路 blocker。
 - 2026-06-06：用户要求历史脏数据全部清理、从头开始，并继续打磨 report。规则：清理要先停写入服务，再归档旧 runtime/event/log/paper ledger，不能删除 durable memory、审批、代码和 attention ack 历史。report 主屏必须显示“从零运行状态”和“复盘/进化成熟度”。复盘/进化不是只等足够持仓信号；必须等完整交易闭环：开仓、持仓期间行情、平仓、手续费、资金费率、被挡候选和策略上下文。只有持仓浮盈亏时，可以验 report/执行骨架，但不能证明策略胜率、PF 或参数升级。
+- 2026-06-06：本轮从零重置已执行。Tencent 归档 `/opt/crypto-auto-trader/archive/testnet_data_reset/20260606-210624`，`events/sentinel_scans/account_snapshots` 从 `1555/24551/51` 清到 `0/0/0`，保留 attention/baseline。随后新 paper exchange 写入 `15` 条新 OPEN，A/B/C 各 `5`。注意 Aliyun 公网页面必须同步 `runtime/testnet_data_reset_latest.json`，否则会用旧镜像显示“等待清理/旧事件数”。
 
 ---
 ## 2026-05-29 全局运行自检与账户方向口径修复

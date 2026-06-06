@@ -267,6 +267,42 @@ class WaitingPeriodOptimizationTests(unittest.TestCase):
             self.assertTrue(review["pre_entry_blocking"])
             self.assertEqual(review["status"], "blocking_pre_entry")
 
+    def test_account_state_blocking_holds_restore_readiness(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            runtime = root / "runtime"
+            reports = root / "reports"
+            mirror_runtime = root / "server_logs_tencent" / "runtime"
+            runtime.mkdir(parents=True)
+            reports.mkdir()
+            mirror_runtime.mkdir(parents=True)
+            self.create_queue_db(runtime / "binance_api_queue.sqlite3")
+            self.create_event_db(mirror_runtime / "event_store.sqlite3")
+            (runtime / "account_state_latest.json").write_text(
+                json.dumps({
+                    "accounts": [
+                        {
+                            "account": "A",
+                            "version": "v11",
+                            "strategy": "A/v11",
+                            "ts": (datetime.now(timezone.utc) - timedelta(hours=5)).isoformat(),
+                            "stale": True,
+                            "snapshot_error": "old 418",
+                            "open_positions": 1,
+                            "positions": [],
+                        }
+                    ]
+                }),
+                encoding="utf-8",
+            )
+
+            payload = self.tool.build_payload(root=root, hours=24)
+
+            self.assertEqual(payload["status"], "blocked_by_account_state")
+            self.assertTrue(payload["summary"]["account_state_blocking"])
+            self.assertEqual(payload["readiness"]["decision"], "hold_frequency")
+            self.assertIn("账户资料仍会挡开仓", payload["readiness"]["reason"])
+
     def test_alert_rate_limit_fallback_marks_cooldown_when_queue_db_missing(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -308,6 +344,22 @@ class WaitingPeriodOptimizationTests(unittest.TestCase):
             mirror_runtime.mkdir(parents=True)
             self.create_queue_db(runtime / "binance_api_queue.sqlite3")
             self.create_event_db(mirror_runtime / "event_store.sqlite3")
+            (runtime / "account_state_latest.json").write_text(
+                json.dumps({
+                    "accounts": [
+                        {
+                            "account": "A",
+                            "version": "v11",
+                            "strategy": "A/v11",
+                            "ts": datetime.now(timezone.utc).isoformat(),
+                            "stale": False,
+                            "open_positions": 0,
+                            "positions": [],
+                        }
+                    ]
+                }),
+                encoding="utf-8",
+            )
             with closing(sqlite3.connect(runtime / "binance_api_queue.sqlite3")) as conn:
                 conn.execute(
                     "insert into api_requests(label,scope,account,path,status,result_status,error) values(?,?,?,?,?,?,?)",

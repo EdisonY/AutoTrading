@@ -639,27 +639,34 @@ def build_payload(root: Path = ROOT, hours: int = 24) -> dict[str, Any]:
     active_cooldowns = int(queue.get("active_cooldowns") or 0)
     active_requests = int(queue.get("active_requests") or 0)
     recent_bad = int(queue.get("recent_bad") or 0)
+    account_blocking = bool(account_state.get("pre_entry_blocking"))
     if active_cooldowns:
         status = "blocked_by_cooldown"
     elif active_requests:
         status = "blocked_by_queue"
+    elif account_blocking:
+        status = "blocked_by_account_state"
     elif recent_bad:
         status = "cooldown_clear_recent_bad_history"
     else:
         status = "safe_to_optimize_offline"
-    blocking_now = bool(active_cooldowns or active_requests)
+    blocking_now = bool(active_cooldowns or active_requests or account_blocking)
+    if active_cooldowns:
+        readiness_reason = "当前有 Binance 冷却；先停止恢复和扩量，只做离线检查。"
+    elif active_requests:
+        readiness_reason = "队列里还有未完成请求；先等清空，再判断下一层恢复。"
+    elif account_blocking:
+        readiness_reason = "账户资料仍会挡开仓；先修复账户状态/用户流，不恢复订单、不提频。"
+    elif recent_bad:
+        readiness_reason = "当前冷却和队列已清；历史坏请求只作风险提示，仍按分阶段恢复计划推进。"
+    else:
+        readiness_reason = "队列当前干净；只能推进离线报表、计划、回放骨架。"
     readiness = {
         "decision": "hold_frequency" if blocking_now else "ready_for_plan_only_data_work",
         "can_raise_frequency": False,
         "can_submit_kline_depth": False,
         "can_restart_for_experiment": False,
-        "reason": (
-            "当前仍有 cooldown 或队列未清，只读观察"
-            if blocking_now
-            else "当前冷却和队列已清；历史坏请求只作风险提示，仍按分阶段恢复计划推进"
-            if recent_bad
-            else "队列当前干净；只能推进离线报表、计划、回放骨架"
-        ),
+        "reason": readiness_reason,
     }
     actions = [
         "保持 A/B/C 扫描频率 120s、cache/sentinel 300s，不上调频率。",
@@ -692,7 +699,7 @@ def build_payload(root: Path = ROOT, hours: int = 24) -> dict[str, Any]:
             "top100_scanned": int(scan_coverage.get("overall_top100_scanned") or 0),
             "top100_pct": float(scan_coverage.get("overall_top100_pct") or 0.0),
             "scan_coverage_status": scan_coverage.get("coverage_status") or "measured",
-            "account_state_blocking": bool(account_state.get("pre_entry_blocking")),
+            "account_state_blocking": account_blocking,
             "planned_kline_requests": int(gaps.get("planned_kline_requests") or 0),
             "planned_depth_requests": int(gaps.get("planned_depth_requests") or 0),
         },

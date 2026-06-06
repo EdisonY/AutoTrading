@@ -103,6 +103,7 @@ import json
 import pathlib
 import sqlite3
 import subprocess
+import time
 from datetime import datetime
 
 root = pathlib.Path("/opt/crypto-auto-trader")
@@ -116,6 +117,47 @@ def read_json(path):
 def unit_state(name):
     result = subprocess.run(["systemctl", "is-active", name], capture_output=True, text=True, timeout=5)
     return (result.stdout.strip() or result.stderr.strip() or "unknown")
+
+def queue_summary():
+    db_path = root / "runtime" / "binance_api_queue.sqlite3"
+    out = {
+        "available": False,
+        "active_requests": 0,
+        "active_cooldowns": 0,
+        "recent_bad_1h": 0,
+        "latest": [],
+    }
+    if not db_path.exists():
+        return out
+    try:
+        con = sqlite3.connect(str(db_path))
+        con.row_factory = sqlite3.Row
+        cur = con.cursor()
+        now_ms = int(time.time() * 1000)
+        out["available"] = True
+        out["active_requests"] = int(cur.execute(
+            "select count(*) from api_requests where status in ('queued','deferred','leased')"
+        ).fetchone()[0])
+        if cur.execute("select 1 from sqlite_master where type='table' and name='api_cooldowns'").fetchone():
+            out["active_cooldowns"] = int(cur.execute(
+                "select count(*) from api_cooldowns where until_ms > ?", (now_ms,)
+            ).fetchone()[0])
+        out["recent_bad_1h"] = int(cur.execute(
+            "select count(*) from api_requests "
+            "where updated_at_ms >= ? "
+            "and (result_status in (418,429) or error like '%-1003%' or error like '%Too many%' or error like '%Way too many%')",
+            (now_ms - 3600 * 1000,),
+        ).fetchone()[0])
+        out["latest"] = [
+            dict(row) for row in cur.execute(
+                "select request_id, scope, account, label, status, method, path, result_status, substr(error,1,180) as error "
+                "from api_requests order by created_at_ms desc limit 8"
+            ).fetchall()
+        ]
+        con.close()
+    except Exception as exc:
+        out["error"] = str(exc)
+    return out
 
 strategies = {}
 db = root / "runtime" / "event_store.sqlite3"
@@ -148,9 +190,14 @@ services = {
         "crypto-scanner.service",
         "crypto-scanner-v16.service",
         "crypto-scanner-v14.service",
+        "crypto-market-data-cache.service",
         "crypto-market-mover-sentinel.service",
         "crypto-account-snapshot.service",
         "crypto-system-alerts.service",
+        "crypto-binance-api-queue.service",
+        "crypto-binance-user-stream.service",
+        "crypto-binance-user-stream-v16.service",
+        "crypto-binance-user-stream-v14.service",
     )
 }
 
@@ -165,6 +212,7 @@ print(json.dumps({
         "alert_count": alerts.get("alert_count"),
         "alerts": alerts.get("alerts", [])[:5],
     },
+    "queue_summary": queue_summary(),
     "attention_summary": attention.get("summary", {}),
     "attention_items": attention.get("items", [])[:8],
     "evolution_summary": evolution.get("summary", {}),

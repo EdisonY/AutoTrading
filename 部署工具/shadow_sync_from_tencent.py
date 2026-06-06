@@ -67,6 +67,7 @@ REPORT_FILES = [
     "runtime/alerts_latest.json",
     "runtime/binance_api_queue_summary_latest.json",
     "runtime/market_data_cache.json",
+    "runtime/market_microstructure_latest.json",
     "runtime/market_mover_watchlist.json",
     "runtime/paper_exchange_latest.json",
     "runtime/testnet_data_reset_latest.json",

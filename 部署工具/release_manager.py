@@ -90,6 +90,7 @@ CORE_FILES = [
     file_pair("core/external_market_data.py"),
     file_pair("core/kline_cache.py"),
     file_pair("core/market_data_cache.py"),
+    file_pair("core/market_microstructure.py"),
     file_pair("core/market_watchlist.py"),
     file_pair("core/paper_exchange.py"),
     file_pair("core/position_utils.py"),
@@ -150,6 +151,7 @@ RESEARCH_CORE = [
     file_pair("core/event_store.py"),
     file_pair("core/external_market_data.py"),
     file_pair("core/kline_cache.py"),
+    file_pair("core/market_microstructure.py"),
     file_pair("core/models.py"),
     file_pair("core/position_utils.py"),
     file_pair("core/replay.py"),
@@ -249,6 +251,20 @@ TENCENT_COMPONENTS: dict[str, dict[str, Any]] = {
         "services": ["crypto-market-mover-sentinel.service", "crypto-market-data-cache.service"],
         "post": [
             "sudo cp systemd/crypto-market-data-cache.service /etc/systemd/system/crypto-market-data-cache.service && sudo cp systemd/crypto-market-mover-sentinel.service /etc/systemd/system/crypto-market-mover-sentinel.service && sudo systemctl daemon-reload",
+        ],
+    },
+    "market-data": {
+        "files": CORE_FILES
+        + [
+            file_pair("策略文件/market_data_service.py", "market_data_service.py"),
+            file_pair("部署工具/market_microstructure_service.py", "market_microstructure_service.py"),
+            file_pair("部署工具/systemd/crypto-market-data-cache.service", "systemd/crypto-market-data-cache.service"),
+            file_pair("部署工具/systemd/crypto-market-microstructure.service", "systemd/crypto-market-microstructure.service"),
+        ],
+        "services": ["crypto-market-data-cache.service", "crypto-market-microstructure.service"],
+        "post": [
+            "{python} -c \"import market_data_service; import market_microstructure_service; print('market data imports ok')\"",
+            "sudo cp systemd/crypto-market-data-cache.service /etc/systemd/system/crypto-market-data-cache.service && sudo cp systemd/crypto-market-microstructure.service /etc/systemd/system/crypto-market-microstructure.service && sudo systemctl daemon-reload && sudo systemctl enable crypto-market-data-cache.service crypto-market-microstructure.service",
         ],
     },
     "account": {

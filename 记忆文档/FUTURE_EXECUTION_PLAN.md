@@ -10,6 +10,8 @@
 
 2026-06-06 full-run 执行规则补充：今天的全量上线目标改为 A/B/C full-universe paper execution，而不再等待 Binance/Testnet 真实 order-enabled 恢复。原因是 signed/order/read-only 诊断多次在低请求量下仍触发 `418/-1003`。`SCANNER_EXECUTION_MODE=paper` 是第一版全量数据通路：策略照常扫描 Top100/OKX/cache 数据，执行层直接写 paper filled 结果，report/backtest/evolution 可获得模拟开仓、持仓、PnL 数据；真实 Binance 订单、平仓、撤单、leverage/margin、signed baseline、Kline fallback 继续关闭。后续若 paper 数据稳定，再单独设计“真实交易所小仓恢复” gate，不把它混进今天上线目标。
 
+2026-06-07 canonical override：用户明确要求“干掉 Binance 模拟盘”，不再把 Binance Testnet 恢复当第一版落地 blocker。新的当前 P0 主线是：A/B/C 三策略全量 paper 运行、OKX/Bybit/CoinGecko 外部公共数据供给、自建 paper exchange 账本、report 展示、复盘/进化特征不断链、服务器磁盘可控。`market_data_service.py` 默认用 OKX + Bybit ticker 生成 Top universe，并用 CoinGecko 市值榜作参考；`crypto-market-data-cache.service` 不再依赖 Binance API queue，也不再跑 Binance start guard。B/v16 所需盘口/CVD/funding 由 `crypto-market-microstructure.service` 采集 compact feature：OKX 优先、Bybit fallback，写 `runtime/market_microstructure_latest.json` 与 `runtime/market_microstructure/YYYY-MM-DD.jsonl`，默认保留 14 天，不存全量原始 tick。Binance signed/order/account/listenKey/API-queue 只保留为未来“真实交易所小窗恢复 gate”代码资产；未经新 gate，不启动、不诊断、不把 cooldown 作为 paper 主线 blocker。后期优化 backlog：paper-vs-small-real 校准、撮合队列/滑点/部分成交模型、更多 report 图表交互、长历史数据仓、真实交易所恢复。
+
 2026-06-06 paper sample 补充：如果自然策略门在 full-universe paper run 中短期没有 `OPEN`，不再等待一天空跑，也不放宽真实策略阈值；用独立 `paper_sample_executor.py` 生成明确标记的 `paper_sample_open` 样本，先让 report/backtest/strategy-evolution 数据链有开仓骨架。该样本必须显示 `simulation_only=true` / `paper_sample=true`，只能作为第一版数据通路验收，不能作为真实成交、真实收益或策略胜率证据。下一阶段优化才是自然 paper open/close、paper mark-to-market PnL、策略门诊断和真实交易所小窗恢复。
 
 2026-06-04 冷却后恢复规则补充：B/v16 signed baseline 触发的 `HTTP 418/-1003` cooldown 已在 `2026-06-04 15:15:54.959 +08` 后清除，read-only queue/service/journal check clean。当前已只恢复 API queue、market-data-cache、sentinel、A/v11 user-stream、B/v16 user-stream、C/v14 user-stream；queue rows `486`-`508` 全部 `done/200`，A listenKey row `494`、B listenKey row `501`、C listenKey row `506` 均为 `200`。A/B/C scanners、account-snapshot 仍停。不要重试 B/C signed baseline；下一步是 scanner/account-snapshot gate 自检。B/C user-stream idle 没有产生真实 `ACCOUNT_UPDATE`，所以 B/C account-state 仍 stale，不能按 fresh 启动 scanner。`binance_start_guard.py` 继续作为本地 `ExecStartPre` 安全带，只读 queue cooldown DB，不调用 Binance；它不替代每步前后的 queue/service/journal clean check。
@@ -45,6 +47,11 @@
 2026-06-06 16:03 安全观察恢复补充：`13:49:57.537 CST` cooldown 后再次按层恢复到 no-order observation，所有预期服务 active。A/B/C scanner 仍由 `50-safe-observe.conf` 禁单，且 `SCANNER_KLINE_NETWORK_ENABLED=0`、`SCANNER_MARKET_DATA_NETWORK_ENABLED=0`、interval `300s`。恢复中发现 A client 的 `exchangeInfo` 不受 scanner-side fallback 关闭约束，已扩展到 A/B/C client：`SCANNER_BINANCE_PUBLIC_FALLBACK_ENABLED=0` 时不再请求/入队 `exchangeInfo`。验收窗口 `15:55 CST` 后 queue 只有 cache/sentinel ticker `200`，active cooldown/active rows/recent bad 均空，journal 无 `418/429/-1003`。下一步仍是继续观察并设计 order-enabled gate；不得因为全服务 active 就直接开单或重试 signed baseline。
 
 ### Long-term P0 - 必须先完成
+
+2026-06-07 当前执行顺序覆盖：
+1. P0-A：外部公共数据 + 自建 paper exchange 主线稳定运行。验收看 `market_data_cache.json`、`market_microstructure_latest.json`、`paper_exchange_latest.json`、公网 report 和磁盘余量。
+2. P0-B：Replay/live 同路径继续收集 paper 自然 open/close exact evidence，保证复盘/进化不断链。
+3. P0-C：Binance/真实交易所恢复 gate 降级为后期专项；只有 paper 主线稳定后才做小仓校准，不再阻塞第一版。
 
 1. **P0-A Binance API 根治**
    - 目标：把余额/仓位读取从轮询迁到 user-data-stream 或集中账户状态服务；把 guard 从协作式文件锁升级为独立队列/集中限速；避免 IP 级 418/429 反复拖住账户快照和策略扫描。

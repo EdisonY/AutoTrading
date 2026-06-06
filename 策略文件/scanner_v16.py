@@ -29,8 +29,17 @@ from core.audit_log import write_jsonl_with_daily_shard
 from core.account_state_cache import load_cached_account_state
 from core.execution_engine import CloseRequest, ExecutionEngine, OpenRequest, scanner_paper_execution_enabled
 from core.exchange_state import count_active_positions, count_side_positions, find_symbol_position, usdt_balance_summary
-from core.external_market_data import fetch_okx_cvd, fetch_okx_funding_rate, fetch_okx_klines, fetch_okx_ofi
+from core.external_market_data import (
+    fetch_bybit_cvd,
+    fetch_bybit_funding_rate,
+    fetch_bybit_ofi,
+    fetch_okx_cvd,
+    fetch_okx_funding_rate,
+    fetch_okx_klines,
+    fetch_okx_ofi,
+)
 from core.event_store import EventStoreWriter
+from core.market_microstructure import load_microstructure_latest
 from core.market_watchlist import load_sentinel_context
 from core.market_data_cache import cached_available_symbols, cached_top_symbols, market_data_network_enabled, scanner_binance_public_fallback_enabled
 from core.kline_cache import kline_network_enabled, kline_request_url, load_cached_klines, save_cached_klines
@@ -542,12 +551,21 @@ def fetch_klines(symbol, bar="15m", limit=100):
 
 def fetch_ofi(symbol):
     """计算订单流不平衡 - 使用统一fetch_json"""
+    cached = load_microstructure_latest(PROJECT_ROOT, symbol)
+    if cached:
+        return float(cached.get("ofi") or 0.0)
     try:
         ofi = fetch_okx_ofi(symbol)
         if ofi is not None:
             return float(ofi)
     except Exception as e:
         logger.debug(f"fetch_okx_ofi {symbol}: {e}")
+    try:
+        ofi = fetch_bybit_ofi(symbol)
+        if ofi is not None:
+            return float(ofi)
+    except Exception as e:
+        logger.debug(f"fetch_bybit_ofi {symbol}: {e}")
     if not scanner_binance_public_fallback_enabled():
         logger.debug(f"fetch_ofi {symbol}: Binance public fallback disabled")
         return 0.0
@@ -566,12 +584,21 @@ def fetch_ofi(symbol):
 
 def fetch_funding_rate(symbol):
     """获取资金费率 - 使用统一fetch_json"""
+    cached = load_microstructure_latest(PROJECT_ROOT, symbol, max_age_sec=3600)
+    if cached:
+        return float(cached.get("funding_rate") or 0.0)
     try:
         funding_rate = fetch_okx_funding_rate(symbol)
         if funding_rate is not None:
             return float(funding_rate)
     except Exception as e:
         logger.debug(f"fetch_okx_funding_rate {symbol}: {e}")
+    try:
+        funding_rate = fetch_bybit_funding_rate(symbol)
+        if funding_rate is not None:
+            return float(funding_rate)
+    except Exception as e:
+        logger.debug(f"fetch_bybit_funding_rate {symbol}: {e}")
     if not scanner_binance_public_fallback_enabled():
         logger.debug(f"fetch_funding_rate {symbol}: Binance public fallback disabled")
         return 0.0
@@ -698,6 +725,12 @@ def fetch_cvd(symbol: str):
     if cached and now - cached[0] < CVD_CACHE_SECONDS:
         return cached[1]
 
+    micro = load_microstructure_latest(PROJECT_ROOT, symbol)
+    if micro:
+        cvd = float(micro.get("cvd") or 0.0)
+        _cvd_cache[symbol] = (now, cvd)
+        return cvd
+
     try:
         okx_cvd = fetch_okx_cvd(symbol, CVD_LIMIT)
         if okx_cvd is not None:
@@ -705,6 +738,14 @@ def fetch_cvd(symbol: str):
             return float(okx_cvd)
     except Exception as e:
         logger.debug(f"fetch_okx_cvd {symbol} failed: {e}")
+
+    try:
+        bybit_cvd = fetch_bybit_cvd(symbol, CVD_LIMIT)
+        if bybit_cvd is not None:
+            _cvd_cache[symbol] = (now, float(bybit_cvd))
+            return float(bybit_cvd)
+    except Exception as e:
+        logger.debug(f"fetch_bybit_cvd {symbol} failed: {e}")
 
     trades = fetch_live_agg_trades(symbol, CVD_LIMIT)
     if not trades:

@@ -5,8 +5,6 @@ import json
 import os
 import sys
 import time
-import urllib.error
-import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -17,50 +15,75 @@ if sys.platform == "win32":
     except Exception:
         pass
 
+ROOT = Path(__file__).resolve().parent
+PROJECT_ROOT = ROOT.parent if ROOT.name == "策略文件" else ROOT
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
-MARKET_BASE_URL = os.environ.get("BINANCE_MARKET_BASE_URL", "https://fapi.binance.com").strip().rstrip("/")
-TICKER_URL = f"{MARKET_BASE_URL}/fapi/v1/ticker/24hr"
+os.environ.setdefault("OKX_MARKET_DATA_ENABLED", "1")
+os.environ.setdefault("BYBIT_MARKET_DATA_ENABLED", "1")
+os.environ.setdefault("COINGECKO_MARKET_DATA_ENABLED", "1")
 
-from core.binance_api_guard import record_public_response, wait_before_public_request
-from core.binance_api_queue_client import api_queue_client_enabled, queued_api_request
-
-
-def fetch_json(url: str, timeout: int = 12):
-    if api_queue_client_enabled():
-        queue_timeout = max(timeout + 5, int(float(os.environ.get("BINANCE_API_QUEUE_CLIENT_TIMEOUT_SEC", "180"))))
-        data = queued_api_request(scope="public", label="market-data-cache", method="GET", path=url, url=url, timeout_sec=queue_timeout)
-        if isinstance(data, dict) and data.get("code") is not None and str(data.get("code")) != "200":
-            raise RuntimeError(str(data.get("msg") or data))
-        return data
-    wait_before_public_request("market-data-cache", url)
-    req = urllib.request.Request(url, headers={"User-Agent": "AutoTrading-MarketDataService/1.0"})
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return json.loads(resp.read().decode("utf-8", errors="replace"))
-    except urllib.error.HTTPError as exc:
-        body = exc.read().decode("utf-8", errors="replace")
-        if exc.code in {418, 429}:
-            record_public_response("market-data-cache", url, exc.code, body)
-        raise
+from core.external_market_data import fetch_bybit_tickers, fetch_coingecko_top_markets, fetch_okx_tickers
 
 
 def build_payload(prev_volumes: dict[str, float], top_limit: int) -> tuple[dict, dict[str, float]]:
-    raw = fetch_json(TICKER_URL)
+    raw_rows = []
+    source_errors = []
+    for source, fetcher in (("okx", fetch_okx_tickers), ("bybit", fetch_bybit_tickers)):
+        try:
+            fetched = fetcher()
+            raw_rows.extend(fetched)
+        except Exception as exc:
+            source_errors.append({"source": source, "error": str(exc)[:180]})
+
+    coingecko_top = []
+    try:
+        coingecko_top = fetch_coingecko_top_markets(limit=max(100, min(250, top_limit)))
+    except Exception as exc:
+        source_errors.append({"source": "coingecko", "error": str(exc)[:180]})
+
+    merged: dict[str, dict] = {}
+    for item in raw_rows:
+        sym = str(item.get("symbol") or "").upper()
+        if not sym.endswith("USDT") or not sym.isascii():
+            continue
+        quote_volume = float(item.get("quote_volume") or 0.0)
+        change_pct = float(item.get("change_pct") or 0.0)
+        existing = merged.get(sym)
+        if existing is None or quote_volume > float(existing.get("quote_volume") or 0.0):
+            merged[sym] = {
+                "symbol": sym,
+                "quote_volume": quote_volume,
+                "change_pct": change_pct,
+                "last": float(item.get("last") or 0.0),
+                "source": item.get("source") or "external",
+                "sources": sorted({str(item.get("source") or "external")} | set(existing.get("sources", []) if existing else [])),
+            }
+        elif existing is not None:
+            existing["sources"] = sorted(set(existing.get("sources") or []) | {str(item.get("source") or "external")})
+
+    market_cap_rank: dict[str, int] = {}
+    for idx, item in enumerate(coingecko_top, start=1):
+        sym = str(item.get("symbol") or "").upper()
+        if sym.endswith("USDT") and sym.isascii():
+            market_cap_rank.setdefault(sym, idx)
+            merged.setdefault(sym, {
+                "symbol": sym,
+                "quote_volume": 0.0,
+                "change_pct": 0.0,
+                "last": float(item.get("price") or 0.0),
+                "source": "coingecko",
+                "sources": ["coingecko"],
+            })
+
     rows = []
     current_volumes = {}
-    for item in raw:
-        sym = str(item.get("symbol") or "").upper()
-        if not sym.endswith("USDT"):
-            continue
-        try:
-            quote_volume = float(item.get("quoteVolume") or 0)
-            change_pct = float(item.get("priceChangePercent") or 0)
-        except Exception:
-            quote_volume = 0.0
-            change_pct = 0.0
+    for sym, item in merged.items():
+        quote_volume = float(item.get("quote_volume") or 0.0)
         current_volumes[sym] = quote_volume
-        rows.append((sym, quote_volume, change_pct))
-    rows.sort(key=lambda x: x[1], reverse=True)
+        rows.append((sym, quote_volume, float(item.get("change_pct") or 0.0), item))
+    rows.sort(key=lambda x: (x[1], -market_cap_rank.get(x[0], 999999)), reverse=True)
     spikes = []
     for sym, volume in current_volumes.items():
         prev = prev_volumes.get(sym, 0)
@@ -70,13 +93,23 @@ def build_payload(prev_volumes: dict[str, float], top_limit: int) -> tuple[dict,
     payload = {
         "ts": datetime.now(timezone.utc).isoformat(),
         "unix_ts": time.time(),
-        "source": TICKER_URL,
-        "available_symbols": [sym for sym, _, _ in rows],
-        "top_symbols": [sym for sym, _, _ in rows[:top_limit]],
+        "source": "okx_bybit_coingecko",
+        "sources": sorted({src for _, _, _, item in rows for src in (item.get("sources") or [item.get("source") or "external"])}),
+        "source_errors": source_errors,
+        "available_symbols": [sym for sym, _, _, _ in rows],
+        "top_symbols": [sym for sym, _, _, _ in rows[:top_limit]],
         "spike_symbols": [sym for sym, _, _ in spikes[:top_limit]],
+        "coingecko_top_symbols": [str(item.get("symbol") or "").upper() for item in coingecko_top],
         "top_preview": [
-            {"symbol": sym, "quote_volume": volume, "change_pct": change}
-            for sym, volume, change in rows[:20]
+            {
+                "symbol": sym,
+                "quote_volume": volume,
+                "change_pct": change,
+                "source": item.get("source"),
+                "sources": item.get("sources") or [item.get("source")],
+                "market_cap_rank": market_cap_rank.get(sym),
+            }
+            for sym, volume, change, item in rows[:20]
         ],
         "spike_preview": [
             {"symbol": sym, "volume_mult": mult, "quote_volume": volume}

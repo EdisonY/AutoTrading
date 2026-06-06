@@ -156,7 +156,12 @@ class DecisionPortalTests(unittest.TestCase):
             ]
         }
 
-        rows = self.tool.strategy_rows({"strategies": []}, {"services": {"crypto-scanner-v16.service": "active"}}, account)
+        rows = self.tool.strategy_rows(
+            {"strategies": []},
+            {"services": {"crypto-scanner-v16.service": "active"}},
+            account,
+            include_details=True,
+        )
         html = self.tool.render_strategy_table(rows)
 
         self.assertIn("查看持仓盈亏 / 手续费 / 资金费率", html)
@@ -164,6 +169,43 @@ class DecisionPortalTests(unittest.TestCase):
         self.assertIn("+1.4216", html)
         self.assertIn("估算：按 taker 0.04%", html)
         self.assertIn("待补资金费率流水", html)
+
+    def test_paper_exchange_summary_is_first_class_report_section(self):
+        html = self.tool.render_paper_exchange({
+            "paper_exchange": {
+                "mode": "paper_exchange",
+                "total_equity": 300000,
+                "total_unrealized_pnl": 12.34,
+                "open_positions": 3,
+                "by_strategy": {
+                    "A/v11": {"positions": 1, "unrealized_pnl": 1.2, "equity": 100001, "realized_pnl": 0, "fees_paid": 0.16, "funding_paid": 0},
+                    "B/v16": {"positions": 1, "unrealized_pnl": 2.3, "equity": 100002, "realized_pnl": 0, "fees_paid": 0.16, "funding_paid": 0},
+                    "C/v14": {"positions": 1, "unrealized_pnl": 8.84, "equity": 100008, "realized_pnl": 0, "fees_paid": 0.16, "funding_paid": 0},
+                },
+                "positions": [
+                    {
+                        "strategy": "A/v11",
+                        "symbol": "BTCUSDT",
+                        "side": "long",
+                        "qty": 0.01,
+                        "entry_price": 100,
+                        "mark_price": 101,
+                        "unrealized_pnl": 1,
+                        "notional": 101,
+                        "margin": 25.25,
+                        "fees_paid": 0.04,
+                        "funding_paid": 0,
+                        "funding_source": "okx",
+                        "mark_source": "okx_15m",
+                    }
+                ],
+            }
+        })
+
+        self.assertIn("paper exchange", html)
+        self.assertIn("BTCUSDT", html)
+        self.assertIn("手续费", html)
+        self.assertIn("资金费率", html)
 
 
 if __name__ == "__main__":

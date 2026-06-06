@@ -88,6 +88,7 @@ RUNTIME_FILES = [
     "replay_live_parity_latest.json",
     "replay_readiness_latest.json",
     "waiting_period_optimization_latest.json",
+    "paper_exchange_latest.json",
     "long_term_skeleton_latest.json",
     "rollback_watch_review_latest.json",
     "rollback_execution_plan_latest.json",

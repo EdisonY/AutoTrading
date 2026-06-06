@@ -84,6 +84,7 @@ MAIN_FILES = [
     ("runtime/replay_live_parity_latest.json", "runtime/replay_live_parity_latest.json", False),
     ("runtime/replay_readiness_latest.json", "runtime/replay_readiness_latest.json", False),
     ("runtime/waiting_period_optimization_latest.json", "runtime/waiting_period_optimization_latest.json", False),
+    ("runtime/paper_exchange_latest.json", "runtime/paper_exchange_latest.json", False),
     ("runtime/long_term_skeleton_latest.json", "runtime/long_term_skeleton_latest.json", False),
     ("runtime/rollback_watch_review_latest.json", "runtime/rollback_watch_review_latest.json", False),
     ("runtime/rollback_execution_plan_latest.json", "runtime/rollback_execution_plan_latest.json", False),

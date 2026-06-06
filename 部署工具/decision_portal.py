@@ -468,7 +468,7 @@ def strategy_detail_html(strategy: str, account: dict[str, Any]) -> str:
 """
 
 
-def strategy_rows(event: dict[str, Any], alerts: dict[str, Any], account: dict[str, Any] | None = None) -> list[dict[str, str]]:
+def strategy_rows(event: dict[str, Any], alerts: dict[str, Any], account: dict[str, Any] | None = None, *, include_details: bool = False) -> list[dict[str, str]]:
     services = alerts.get("services") if isinstance(alerts.get("services"), dict) else {}
     service_map = {
         "A/v11": "crypto-scanner.service",
@@ -516,7 +516,7 @@ def strategy_rows(event: dict[str, Any], alerts: dict[str, Any], account: dict[s
             "note": note,
             "raw_note": raw_note,
             "note_kind": note_kind,
-            "detail_html": strategy_detail_html(name, account or {}),
+            "detail_html": strategy_detail_html(name, account or {}) if include_details else "",
         })
     return rows
 
@@ -639,6 +639,7 @@ def build_state() -> dict[str, Any]:
     research = read_first_json(RUNTIME_DIR / "research_store_summary_latest.json", MIRROR_RUNTIME_DIR / "research_store_summary_latest.json")
     kline = read_first_json(RUNTIME_DIR / "research_kline_backfill_latest.json", MIRROR_RUNTIME_DIR / "research_kline_backfill_latest.json")
     depth = read_first_json(RUNTIME_DIR / "research_depth_backfill_latest.json", MIRROR_RUNTIME_DIR / "research_depth_backfill_latest.json")
+    paper_exchange = read_first_json(RUNTIME_DIR / "paper_exchange_latest.json", MIRROR_RUNTIME_DIR / "paper_exchange_latest.json")
     q = queue_summary()
     ev = event_summary()
     att_summary, att_items = attention_items()
@@ -668,6 +669,7 @@ def build_state() -> dict[str, Any]:
         "research": research,
         "kline": kline,
         "depth": depth,
+        "paper_exchange": paper_exchange,
         "queue": q,
         "event": ev,
         "attention_summary": att_summary,
@@ -700,6 +702,7 @@ def waiting_top100_text(waiting: dict[str, Any]) -> tuple[str, str]:
 def render_badges(state: dict[str, Any]) -> str:
     q = state["queue"]
     account = state["account_summary"]
+    paper = state.get("paper_exchange") or {}
     alerts = state["alerts"]
     waiting = state.get("waiting") or {}
     top100_value, top100_level = waiting_top100_text(waiting)
@@ -708,8 +711,8 @@ def render_badges(state: dict[str, Any]) -> str:
         ("三策略", "运行中", "good"),
         ("API队列", f"等待{q.get('active', 0)} / 冷却{q.get('cooldowns', 0)}", "bad" if q.get("active") or q.get("cooldowns") else "good"),
         ("Top100实扫", top100_value, top100_level),
-        ("持仓", str(account.get("open_positions", 0)), "good"),
-        ("浮盈亏", f"{number(account.get('unrealized_pnl_usdt'))} USDT", "good"),
+        ("模拟持仓", str(paper.get("open_positions", account.get("open_positions", 0))), "good"),
+        ("模拟浮盈亏", f"{number(paper.get('total_unrealized_pnl', account.get('unrealized_pnl_usdt')))} USDT", "good"),
         ("告警", str(alerts.get("alert_count", 0)), "bad" if alerts.get("status") == "bad" else "warn" if alerts.get("status") == "warn" else "good"),
         ("长期骨架", f"{skeleton_summary.get('ready_bones', 0)}/{skeleton_summary.get('total_bones', 0)}", "good"),
     ]
@@ -717,6 +720,65 @@ def render_badges(state: dict[str, Any]) -> str:
         f'<article class="metric {plain_level(level)}"><span>{h(label)}</span><b>{h(value)}</b></article>'
         for label, value, level in items
     )
+
+
+def render_paper_exchange(state: dict[str, Any]) -> str:
+    paper = state.get("paper_exchange") or {}
+    if not paper:
+        return '<p class="empty">模拟交易所账本还没生成。系统会先跑 paper_exchange_runner 生成持仓、盯市盈亏、手续费和资金费率。</p>'
+    by_strategy = paper.get("by_strategy") if isinstance(paper.get("by_strategy"), dict) else {}
+    cards = []
+    for name in ("A/v11", "B/v16", "C/v14"):
+        row = by_strategy.get(name) if isinstance(by_strategy.get(name), dict) else {}
+        cards.append(
+            f"""
+<article class="paper-card">
+  <span>{h(name)}</span>
+  <b>{h(row.get('positions', 0))} 仓 / {h(number(row.get('unrealized_pnl'), 4))} USDT</b>
+  <p>权益 {h(number(row.get('equity'), 2))}，已实现 {h(number(row.get('realized_pnl'), 4))}，手续费 {h(number(row.get('fees_paid'), 4))}，资金费 {h(number(row.get('funding_paid'), 4))}</p>
+</article>
+""".strip()
+        )
+    positions = paper.get("positions") if isinstance(paper.get("positions"), list) else []
+    rows = []
+    for pos in positions[:80]:
+        if not isinstance(pos, dict):
+            continue
+        upnl = pos.get("unrealized_pnl")
+        rows.append(
+            f"""
+<tr>
+  <td>{h(pos.get('strategy'))}</td>
+  <td>{h(pos.get('symbol'))}</td>
+  <td>{h(pos.get('side'))}</td>
+  <td>{h(fmt_plain(pos.get('qty')))}</td>
+  <td>{h(fmt_plain(pos.get('entry_price')))}</td>
+  <td>{h(fmt_plain(pos.get('mark_price')))}</td>
+  <td class="{position_upnl_class(upnl)}">{h(number(upnl, 4))}</td>
+  <td>{h(fmt_plain(pos.get('notional'), 4))}</td>
+  <td>{h(fmt_plain(pos.get('margin'), 4))}</td>
+  <td>{h(number(pos.get('fees_paid'), 4))}</td>
+  <td>{h(number(pos.get('funding_paid'), 4))}<small>{h(pos.get('funding_source') or '')}</small></td>
+  <td>{h(pos.get('mark_source'))}</td>
+</tr>
+""".strip()
+        )
+    if not rows:
+        rows.append('<tr><td colspan="12">当前 paper exchange 没有持仓。</td></tr>')
+    return f"""
+<div class="paper-summary">
+  <div><span>总权益</span><b>{h(number(paper.get('total_equity'), 2))} USDT</b></div>
+  <div><span>总浮盈亏</span><b class="{position_upnl_class(paper.get('total_unrealized_pnl'))}">{h(number(paper.get('total_unrealized_pnl'), 4))} USDT</b></div>
+  <div><span>开仓数</span><b>{h(paper.get('open_positions', 0))}</b></div>
+  <div><span>模式</span><b>paper exchange</b></div>
+</div>
+<div class="paper-cards">{''.join(cards)}</div>
+<div class="table-scroll"><table class="paper-table">
+  <thead><tr><th>策略</th><th>币种</th><th>方向</th><th>数量</th><th>开仓价</th><th>盯市价</th><th>浮盈亏</th><th>名义价值</th><th>保证金</th><th>手续费</th><th>资金费率</th><th>价格源</th></tr></thead>
+  <tbody>{''.join(rows)}</tbody>
+</table></div>
+<p class="empty">这是模拟交易所账本：不开真实 Binance 单。价格来自本地 K线/OKX 公开行情；手续费按账本费率扣；资金费率按可得公开 funding rate 结算，缺数据时记 0 并标来源。</p>
+"""
 
 
 def render_strategy_table(rows: list[dict[str, str]]) -> str:
@@ -874,6 +936,13 @@ h1 {{ margin:0; font-size:34px; letter-spacing:0; }}
 .metric span,.info span {{ color:var(--muted); display:block; font-size:12px; }}
 .metric b {{ display:block; font-size:22px; margin-top:8px; }}
 .metric.good {{ border-top:4px solid var(--good); }} .metric.warn {{ border-top:4px solid var(--warn); }} .metric.bad {{ border-top:4px solid var(--bad); }}
+.paper-summary {{ display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px; margin-bottom:12px; }}
+.paper-summary div,.paper-card {{ border:1px solid var(--line); border-radius:8px; background:#f8fafc; padding:12px; }}
+.paper-summary span,.paper-card span {{ color:var(--muted); display:block; font-size:12px; }}
+.paper-summary b,.paper-card b {{ display:block; font-size:20px; margin-top:4px; }}
+.paper-cards {{ display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; margin-bottom:12px; }}
+.paper-card p {{ margin:6px 0 0; color:var(--muted); }}
+.paper-table {{ min-width:1240px; background:#fff; }}
 .grid {{ display:grid; grid-template-columns:minmax(0, 1.55fr) minmax(340px, .45fr); gap:16px; align-items:start; }}
 .panel {{ padding:16px; margin-bottom:14px; box-shadow:0 10px 28px rgba(15,23,42,.06); }}
 .panel h2 {{ margin:0 0 10px; font-size:18px; }}
@@ -935,6 +1004,10 @@ td small {{ display:block; color:var(--muted); margin-top:4px; }}
   <section class="panel">
     <h2>今日重点</h2>
     <div class="cards">{render_cards(state)}</div>
+  </section>
+  <section class="panel">
+    <h2>三策略模拟交易所运行总览</h2>
+    {render_paper_exchange(state)}
   </section>
   <section class="grid">
     <div>

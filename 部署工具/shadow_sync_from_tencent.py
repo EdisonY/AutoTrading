@@ -68,6 +68,7 @@ REPORT_FILES = [
     "runtime/binance_api_queue_summary_latest.json",
     "runtime/market_data_cache.json",
     "runtime/market_mover_watchlist.json",
+    "runtime/paper_exchange_latest.json",
 ]
 
 SQLITE_FILES = [

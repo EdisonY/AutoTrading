@@ -22,6 +22,7 @@ timeout $SYNC_TIMEOUT $PYTHON shadow_sync_from_tencent.py \
 $PYTHON decision_attention.py || echo "[WARN] attention ledger failed"
 $PYTHON long_term_skeleton_review.py --runtime-dir $REMOTE_DIR/runtime --reports-dir $REMOTE_DIR/reports || echo "[WARN] long-term skeleton review failed"
 $PYTHON waiting_period_optimization.py --root $REMOTE_DIR --runtime-dir $REMOTE_DIR/runtime --reports-dir $REMOTE_DIR/reports || echo "[WARN] waiting-period optimization failed"
+$PYTHON paper_exchange_runner.py --root $REMOTE_DIR --target-per-strategy 5 --margin-usdt 100 --leverage 4 || echo "[WARN] paper exchange refresh failed"
 $PYTHON portal_dashboard.py --out-dir $REMOTE_DIR/reports || echo "[WARN] portal generation failed"
 $PYTHON decision_portal.py --out-dir $REMOTE_DIR/reports || echo "[WARN] decision portal generation failed"
 

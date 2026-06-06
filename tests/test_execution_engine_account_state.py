@@ -1,3 +1,4 @@
+import json
 import os
 import tempfile
 import unittest
@@ -196,8 +197,10 @@ class ExecutionEngineAccountStateTest(unittest.TestCase):
     def test_paper_open_works_when_real_orders_disabled(self):
         old_order = os.environ.get("SCANNER_ORDER_ENABLED")
         old_mode = os.environ.get("SCANNER_EXECUTION_MODE")
+        old_ledger = os.environ.get("PAPER_EXCHANGE_LEDGER_ENABLED")
         os.environ["SCANNER_ORDER_ENABLED"] = "0"
         os.environ["SCANNER_EXECUTION_MODE"] = "paper"
+        os.environ["PAPER_EXCHANGE_LEDGER_ENABLED"] = "0"
         try:
             client = RuleCheckingClient()
             engine = ExecutionEngine(client, "B/v16")
@@ -220,6 +223,10 @@ class ExecutionEngineAccountStateTest(unittest.TestCase):
                 os.environ.pop("SCANNER_EXECUTION_MODE", None)
             else:
                 os.environ["SCANNER_EXECUTION_MODE"] = old_mode
+            if old_ledger is None:
+                os.environ.pop("PAPER_EXCHANGE_LEDGER_ENABLED", None)
+            else:
+                os.environ["PAPER_EXCHANGE_LEDGER_ENABLED"] = old_ledger
 
         self.assertTrue(result.success)
         self.assertEqual(result.status, "PAPER_FILLED")
@@ -228,6 +235,49 @@ class ExecutionEngineAccountStateTest(unittest.TestCase):
         self.assertEqual(client.open_calls, [])
         self.assertEqual(client.calc_size_calls, 0)
         self.assertEqual(client.validate_order_quantity_calls, 0)
+
+    def test_paper_open_writes_paper_exchange_ledger(self):
+        old_order = os.environ.get("SCANNER_ORDER_ENABLED")
+        old_mode = os.environ.get("SCANNER_EXECUTION_MODE")
+        old_ledger = os.environ.get("PAPER_EXCHANGE_LEDGER_ENABLED")
+        os.environ["SCANNER_ORDER_ENABLED"] = "0"
+        os.environ["SCANNER_EXECUTION_MODE"] = "paper"
+        os.environ["PAPER_EXCHANGE_LEDGER_ENABLED"] = "1"
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                client = RuleCheckingClient()
+                engine = ExecutionEngine(client, "A/v11", account_state_root=root)
+
+                result = engine.open_position(OpenRequest(
+                    symbol="BTCUSDT",
+                    side="long",
+                    price=100.0,
+                    risk_usdt=100.0,
+                    leverage=4,
+                    take_profit=110.0,
+                    stop_loss=90.0,
+                ))
+
+                latest = json.loads((root / "runtime" / "paper_exchange_latest.json").read_text(encoding="utf-8"))
+        finally:
+            if old_order is None:
+                os.environ.pop("SCANNER_ORDER_ENABLED", None)
+            else:
+                os.environ["SCANNER_ORDER_ENABLED"] = old_order
+            if old_mode is None:
+                os.environ.pop("SCANNER_EXECUTION_MODE", None)
+            else:
+                os.environ["SCANNER_EXECUTION_MODE"] = old_mode
+            if old_ledger is None:
+                os.environ.pop("PAPER_EXCHANGE_LEDGER_ENABLED", None)
+            else:
+                os.environ["PAPER_EXCHANGE_LEDGER_ENABLED"] = old_ledger
+
+        self.assertTrue(result.success)
+        self.assertEqual(latest["mode"], "paper_exchange")
+        self.assertEqual(latest["open_positions"], 1)
+        self.assertEqual(latest["by_strategy"]["A/v11"]["fees_paid"], 0.16)
 
     def test_paper_close_skips_cancel_position_and_client_close(self):
         old_order = os.environ.get("SCANNER_ORDER_ENABLED")

@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from core.account_state import load_central_account_state
+from core.paper_exchange import PaperExchange
 from core.position_utils import infer_position_side
 
 
@@ -95,6 +96,11 @@ def scanner_order_enabled() -> bool:
 def scanner_paper_execution_enabled() -> bool:
     value = os.environ.get("SCANNER_EXECUTION_MODE", "").strip().lower()
     return value in {"paper", "sim", "simulate", "simulation", "mock"}
+
+
+def paper_exchange_ledger_enabled() -> bool:
+    value = os.environ.get("PAPER_EXCHANGE_LEDGER_ENABLED", "1").strip().lower()
+    return value not in {"0", "false", "no", "off"}
 
 
 def scanner_order_disabled_result(action: str, symbol: str, side: str, quantity: float = 0.0) -> ExecutionResult:
@@ -596,12 +602,30 @@ class ExecutionEngine:
             "stop_loss": req.stop_loss,
             "context": req.context,
         }
+        if paper_exchange_ledger_enabled():
+            try:
+                PaperExchange(self.account_state_root).open_market(
+                    strategy=self.name or str(req.context.get("strategy") or "paper"),
+                    symbol=req.symbol,
+                    side=req.side,
+                    qty=qty,
+                    price=float(req.price),
+                    leverage=float(req.leverage),
+                    order_id=order_id,
+                    reason=str(req.context.get("reason") or req.context.get("entry_reason") or "scanner_paper_open"),
+                    context=req.context,
+                )
+            except Exception as exc:
+                raw["paper_exchange_error"] = str(exc)[:240]
         return ExecutionResult(True, "open", req.symbol, req.side, qty, order_id=order_id, status="PAPER_FILLED", raw=raw)
 
     def _paper_close_position(self, req: CloseRequest) -> ExecutionResult:
         qty = float(req.quantity or 0.0)
         if qty <= 0 and isinstance(req.context, dict):
             qty = float(req.context.get("quantity") or req.context.get("size") or 0.0)
+        exit_price = 0.0
+        if isinstance(req.context, dict):
+            exit_price = float(req.context.get("exit_price") or req.context.get("price") or req.context.get("mark_price") or 0.0)
         order_id = f"PAPER-CLOSE-{self.name or 'scanner'}-{int(time.time() * 1000)}"
         raw = {
             "paper": True,
@@ -612,8 +636,22 @@ class ExecutionEngine:
             "side": req.side,
             "executedQty": qty,
             "cumQty": qty,
+            "avgPrice": exit_price,
             "context": req.context,
         }
+        if paper_exchange_ledger_enabled() and exit_price > 0:
+            try:
+                PaperExchange(self.account_state_root).close_market(
+                    strategy=self.name or str(req.context.get("strategy") or "paper"),
+                    symbol=req.symbol,
+                    side=req.side,
+                    qty=qty,
+                    price=exit_price,
+                    order_id=order_id,
+                    reason=str(req.context.get("reason") or "scanner_paper_close"),
+                )
+            except Exception as exc:
+                raw["paper_exchange_error"] = str(exc)[:240]
         return ExecutionResult(True, "close", req.symbol, req.side, qty, order_id=order_id, status="PAPER_CLOSED", raw=raw)
 
     def _close_target(

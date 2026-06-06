@@ -337,6 +337,7 @@
 - 剩余关注：后续继续通过 system alerts/data maintenance 监控 SQLite 增长。2026-05-29 02:16 CST 已复核 Tencent DB 约 212MB、Aliyun mirror 约 215MB，均 quick_check ok 且 freelist_count=0，当前不需要立即 VACUUM 或破坏性清理。
 
 ### 用户偏好（持续更新）
+- 2026-06-06 11:34 CST: A/B/C scanner 侧 Binance public fallback 默认关闭已落地并部署。源码 commit `fdf046b` 已推送；Tencent releases 为 `20260606-112601-strategy-a-fdf046b`、`20260606-112657-strategy-b-fdf046b`、`20260606-112744-strategy-c-fdf046b`。B/v16 OFI/depth、funding、CVD/trades 优先 OKX，OKX 无数据且 fallback 关闭时返回中性/空值，不再打 Binance depth/funding/aggTrades；A/v11、C/v14 当前价优先本地 Kline cache latest close，缺缓存则 fail closed/skip，不再默认打 Binance ticker-price。部署后正确 schema 队列检查：`active_cooldowns=[]`、`active_requests=[]`、近 1 小时 `recent_bad=[]`；journals 自 `11:24 CST` 无新 `418/429/-1003/Traceback/ImportError/SyntaxError`。当前仍是 `50-safe-observe.conf` 禁单观察，`SCANNER_ORDER_ENABLED=0`，不是全面交易恢复；B/C 残留 close blocker 仍另案处理。
 - 中文回复，绝对路径，简洁直接
 - 绿涨红跌配色（--up:#22c55e, --down:#ef4444）
 - Windows/PowerShell 环境，curl 需用 curl.exe

@@ -32,7 +32,7 @@ from core.exchange_state import count_active_positions, count_side_positions, fi
 from core.external_market_data import fetch_okx_cvd, fetch_okx_funding_rate, fetch_okx_klines, fetch_okx_ofi
 from core.event_store import EventStoreWriter
 from core.market_watchlist import load_sentinel_context
-from core.market_data_cache import cached_available_symbols, cached_top_symbols, market_data_network_enabled
+from core.market_data_cache import cached_available_symbols, cached_top_symbols, market_data_network_enabled, scanner_binance_public_fallback_enabled
 from core.kline_cache import kline_network_enabled, kline_request_url, load_cached_klines, save_cached_klines
 from core.binance_api_guard import record_public_response, wait_before_public_request
 from core.binance_api_queue_client import api_queue_client_enabled, queued_api_request
@@ -548,6 +548,9 @@ def fetch_ofi(symbol):
             return float(ofi)
     except Exception as e:
         logger.debug(f"fetch_okx_ofi {symbol}: {e}")
+    if not scanner_binance_public_fallback_enabled():
+        logger.debug(f"fetch_ofi {symbol}: Binance public fallback disabled")
+        return 0.0
     url = market_url(f"/fapi/v1/depth?symbol={symbol}&limit=20")
     try:
         raw = fetch_json(url)
@@ -569,6 +572,9 @@ def fetch_funding_rate(symbol):
             return float(funding_rate)
     except Exception as e:
         logger.debug(f"fetch_okx_funding_rate {symbol}: {e}")
+    if not scanner_binance_public_fallback_enabled():
+        logger.debug(f"fetch_funding_rate {symbol}: Binance public fallback disabled")
+        return 0.0
     url = market_url(f"/fapi/v1/fundingRate?symbol={symbol}&limit=1")
     try:
         data = fetch_json(url)
@@ -661,6 +667,9 @@ def merge_sentinel_symbols(symbols, limit=30):
 def fetch_live_agg_trades(symbol: str, limit: int = CVD_LIMIT):
     """获取实盘 aggTrades。腾讯云新加坡节点直连 fapi.binance.com，阿里云则自动降级为空结果。"""
     import urllib.request, urllib.error
+    if not scanner_binance_public_fallback_enabled():
+        logger.debug(f"fetch_live_agg_trades {symbol}: Binance public fallback disabled")
+        return []
     url = f"{LIVE_BASE_URL}/fapi/v1/aggTrades?symbol={symbol}&limit={limit}"
     try:
         if api_queue_client_enabled():

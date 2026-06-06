@@ -110,8 +110,8 @@ from core.exchange_state import count_active_positions, count_side_positions, fi
 from core.event_store import EventStoreWriter
 from core.external_market_data import fetch_okx_klines
 from core.market_watchlist import load_sentinel_context
-from core.market_data_cache import cached_available_symbols, cached_spike_symbols, cached_top_symbols, market_data_network_enabled
-from core.kline_cache import kline_network_enabled, kline_request_url, load_cached_klines, save_cached_klines
+from core.market_data_cache import cached_available_symbols, cached_spike_symbols, cached_top_symbols, market_data_network_enabled, scanner_binance_public_fallback_enabled
+from core.kline_cache import kline_network_enabled, kline_request_url, load_cached_klines, load_latest_cached_close, save_cached_klines
 from core.binance_api_guard import record_public_response, wait_before_public_request
 from core.binance_api_queue_client import api_queue_client_enabled, queued_api_request
 from core.sentinel_scanner import fields_from_context, filter_context_by_available, merge_symbols_with_context
@@ -558,6 +558,11 @@ def fetch_klines(symbol: str, bar: str = "5m", limit: int = 100) -> list[list]: 
 
 def fetch_current_price(symbol: str) -> float:
     """拉取最新价"""
+    cached_close = load_latest_cached_close(PROJECT_ROOT, symbol)
+    if cached_close is not None:
+        return float(cached_close)
+    if not scanner_binance_public_fallback_enabled():
+        raise RuntimeError(f"cached_price_unavailable:{symbol}")
     url = market_url("/fapi/v1/ticker/price?symbol=%s" % symbol)
     raw = fetch_json(url)
     return float(raw.get("price", 0))

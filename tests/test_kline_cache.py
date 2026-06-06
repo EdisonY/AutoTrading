@@ -9,10 +9,11 @@ from core.kline_cache import (
     kline_request_url,
     kline_network_enabled,
     load_cached_klines,
+    load_latest_cached_close,
     save_cached_klines,
 )
 from core.market_data_cache import cached_top_symbols, market_cache_max_age_seconds
-from core.market_data_cache import market_data_network_enabled
+from core.market_data_cache import market_data_network_enabled, scanner_binance_public_fallback_enabled
 
 
 class KlineCacheTest(unittest.TestCase):
@@ -23,6 +24,7 @@ class KlineCacheTest(unittest.TestCase):
         self._old_age = os.environ.get("SCANNER_KLINE_CACHE_MAX_AGE_SEC")
         self._old_market_age = os.environ.get("SCANNER_MARKET_CACHE_MAX_AGE_SEC")
         self._old_market_network = os.environ.get("SCANNER_MARKET_DATA_NETWORK_ENABLED")
+        self._old_binance_public_fallback = os.environ.get("SCANNER_BINANCE_PUBLIC_FALLBACK_ENABLED")
 
     def tearDown(self):
         for key, value in {
@@ -32,6 +34,7 @@ class KlineCacheTest(unittest.TestCase):
             "SCANNER_KLINE_CACHE_MAX_AGE_SEC": self._old_age,
             "SCANNER_MARKET_CACHE_MAX_AGE_SEC": self._old_market_age,
             "SCANNER_MARKET_DATA_NETWORK_ENABLED": self._old_market_network,
+            "SCANNER_BINANCE_PUBLIC_FALLBACK_ENABLED": self._old_binance_public_fallback,
         }.items():
             if value is None:
                 os.environ.pop(key, None)
@@ -110,6 +113,39 @@ class KlineCacheTest(unittest.TestCase):
 
         os.environ["SCANNER_MARKET_DATA_NETWORK_ENABLED"] = "false"
         self.assertFalse(market_data_network_enabled())
+
+    def test_scanner_binance_public_fallback_defaults_off(self):
+        os.environ.pop("SCANNER_BINANCE_PUBLIC_FALLBACK_ENABLED", None)
+        self.assertFalse(scanner_binance_public_fallback_enabled())
+
+        os.environ["SCANNER_BINANCE_PUBLIC_FALLBACK_ENABLED"] = "1"
+        self.assertTrue(scanner_binance_public_fallback_enabled())
+
+        os.environ["SCANNER_BINANCE_PUBLIC_FALLBACK_ENABLED"] = "false"
+        self.assertFalse(scanner_binance_public_fallback_enabled())
+
+    def test_latest_cached_close_uses_newest_fresh_kline_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            save_cached_klines(root, "BTCUSDT", "15m", 100, [["1", "2", "3", "4", "50000", "6", "7", "8"]])
+            old_file = root / "runtime" / "kline_cache" / "BTCUSDT_15m_100.json"
+            old_mtime = time.time() - 10
+            os.utime(old_file, (old_mtime, old_mtime))
+
+            save_cached_klines(root, "BTCUSDT", "1h", 100, [["1", "2", "3", "4", "51000", "6", "7", "8"]])
+
+            self.assertEqual(51000.0, load_latest_cached_close(root, "BTCUSDT"))
+
+    def test_latest_cached_close_respects_age(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            save_cached_klines(root, "BTCUSDT", "15m", 100, [["1", "2", "3", "4", "50000", "6", "7", "8"]])
+            cache_file = root / "runtime" / "kline_cache" / "BTCUSDT_15m_100.json"
+            old_mtime = time.time() - 3600
+            os.utime(cache_file, (old_mtime, old_mtime))
+
+            self.assertIsNone(load_latest_cached_close(root, "BTCUSDT", max_age_sec=60))
+            self.assertEqual(50000.0, load_latest_cached_close(root, "BTCUSDT", max_age_sec=7200))
 
 
 if __name__ == "__main__":

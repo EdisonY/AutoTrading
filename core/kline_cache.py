@@ -47,6 +47,35 @@ def load_cached_klines(root: Path, symbol: str, bar: str, limit: int, *, max_age
         return None
 
 
+def load_latest_cached_close(root: Path, symbol: str, *, max_age_sec: int | None = None) -> float | None:
+    cache_dir = root / "runtime" / "kline_cache"
+    max_age = kline_cache_max_age_sec() if max_age_sec is None else int(max_age_sec)
+    newest_mtime = -1.0
+    newest_close: float | None = None
+    try:
+        candidates = list(cache_dir.glob(f"{str(symbol).upper()}_*_*.json"))
+    except Exception:
+        return None
+    for path in candidates:
+        try:
+            mtime = path.stat().st_mtime
+            if max_age > 0 and time.time() - mtime > max_age:
+                continue
+            payload = json.loads(path.read_text(encoding="utf-8", errors="replace"))
+            rows = payload.get("rows")
+            if not isinstance(rows, list) or not rows:
+                continue
+            close = float(rows[-1][4])
+            if close <= 0:
+                continue
+            if mtime > newest_mtime:
+                newest_mtime = mtime
+                newest_close = close
+        except Exception:
+            continue
+    return newest_close
+
+
 def save_cached_klines(root: Path, symbol: str, bar: str, limit: int, rows: list[list[Any]]) -> None:
     path = root / "runtime" / "kline_cache" / _safe_name(symbol, bar, limit)
     try:

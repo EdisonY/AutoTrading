@@ -1048,6 +1048,63 @@ class StrategyGateCasesTest(unittest.TestCase):
         self.assertEqual(vpb_cases[0]["meta"]["strategy"], "A/v11")
         self.assertEqual([row["passed"] for row in evaluate_strategy_gate_cases(vpb_cases)], [True])
 
+    def test_b_v16_binance_public_fallback_disabled_for_order_flow_helpers(self):
+        old_flag = os.environ.get("SCANNER_BINANCE_PUBLIC_FALLBACK_ENABLED")
+        os.environ["SCANNER_BINANCE_PUBLIC_FALLBACK_ENABLED"] = "0"
+        original_fetch_json = scanner_v16_module.fetch_json
+        original_okx_ofi = scanner_v16_module.fetch_okx_ofi
+        original_okx_funding = scanner_v16_module.fetch_okx_funding_rate
+        original_okx_cvd = scanner_v16_module.fetch_okx_cvd
+        scanner_v16_module.fetch_json = lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("Binance public fallback called"))
+        scanner_v16_module.fetch_okx_ofi = lambda symbol: None
+        scanner_v16_module.fetch_okx_funding_rate = lambda symbol: None
+        scanner_v16_module.fetch_okx_cvd = lambda symbol, limit: None
+        try:
+            self.assertEqual(0.0, scanner_v16_module.fetch_ofi("BTCUSDT"))
+            self.assertEqual(0.0, scanner_v16_module.fetch_funding_rate("BTCUSDT"))
+            self.assertEqual([], scanner_v16_module.fetch_live_agg_trades("BTCUSDT", 5))
+            self.assertEqual(0.0, scanner_v16_module.fetch_cvd("BTCUSDT"))
+        finally:
+            if old_flag is None:
+                os.environ.pop("SCANNER_BINANCE_PUBLIC_FALLBACK_ENABLED", None)
+            else:
+                os.environ["SCANNER_BINANCE_PUBLIC_FALLBACK_ENABLED"] = old_flag
+            scanner_v16_module.fetch_json = original_fetch_json
+            scanner_v16_module.fetch_okx_ofi = original_okx_ofi
+            scanner_v16_module.fetch_okx_funding_rate = original_okx_funding
+            scanner_v16_module.fetch_okx_cvd = original_okx_cvd
+
+    def test_a_c_current_price_use_cache_or_fail_closed_without_binance_public(self):
+        old_flag = os.environ.get("SCANNER_BINANCE_PUBLIC_FALLBACK_ENABLED")
+        os.environ["SCANNER_BINANCE_PUBLIC_FALLBACK_ENABLED"] = "0"
+        original_a_close = scanner_module.load_latest_cached_close
+        original_c_close = scanner_v14_module.load_latest_cached_close
+        original_a_fetch_json = scanner_module.fetch_json
+        original_c_fetch_json = scanner_v14_module.fetch_json
+        scanner_module.fetch_json = lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("A Binance price fallback called"))
+        scanner_v14_module.fetch_json = lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("C Binance price fallback called"))
+        try:
+            scanner_module.load_latest_cached_close = lambda root, symbol: 12.5
+            scanner_v14_module.load_latest_cached_close = lambda root, symbol: 13.5
+            self.assertEqual(12.5, scanner_module.fetch_current_price("BTCUSDT"))
+            self.assertEqual(13.5, scanner_v14_module.fetch_current_price("BTCUSDT"))
+
+            scanner_module.load_latest_cached_close = lambda root, symbol: None
+            scanner_v14_module.load_latest_cached_close = lambda root, symbol: None
+            with self.assertRaisesRegex(RuntimeError, "cached_price_unavailable"):
+                scanner_module.fetch_current_price("BTCUSDT")
+            with self.assertRaisesRegex(RuntimeError, "cached_price_unavailable"):
+                scanner_v14_module.fetch_current_price("BTCUSDT")
+        finally:
+            if old_flag is None:
+                os.environ.pop("SCANNER_BINANCE_PUBLIC_FALLBACK_ENABLED", None)
+            else:
+                os.environ["SCANNER_BINANCE_PUBLIC_FALLBACK_ENABLED"] = old_flag
+            scanner_module.load_latest_cached_close = original_a_close
+            scanner_v14_module.load_latest_cached_close = original_c_close
+            scanner_module.fetch_json = original_a_fetch_json
+            scanner_v14_module.fetch_json = original_c_fetch_json
+
     def test_strategy_gate_case_is_json_safe_and_replayable(self):
         decision = evaluate_symbol_blacklist_gate(
             symbol="BTCUSDT",

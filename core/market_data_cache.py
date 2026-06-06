@@ -24,6 +24,11 @@ def market_data_network_enabled() -> bool:
     return str(raw).strip().lower() not in {"0", "false", "no", "off"}
 
 
+def scanner_binance_public_fallback_enabled() -> bool:
+    raw = os.environ.get("SCANNER_BINANCE_PUBLIC_FALLBACK_ENABLED", "0")
+    return str(raw).strip().lower() in {"1", "true", "yes", "on"}
+
+
 def load_market_cache(path: Path | None = None, *, max_age_seconds: int = 45) -> dict[str, Any]:
     cache_path = path or DEFAULT_CACHE
     try:

@@ -68,10 +68,11 @@ MAIN_FILES = [
     ("reports/market_review_latest.md", "reports/market_review_latest.md", False),
     ("reports/market_snapshot_latest.json", "reports/market_snapshot_latest.json", False),
     ("复盘报告/account_snapshot_latest.html", "复盘报告/account_snapshot_latest.html", False),
-    ("runtime/account_snapshot_latest.json", "runtime/account_snapshot_latest.json", True),
+    ("runtime/account_snapshot_latest.json", "runtime/account_snapshot_latest.json", False),
     ("runtime/alerts_latest.json", "runtime/alerts_latest.json", True),
     ("runtime/binance_api_queue_summary_latest.json", "runtime/binance_api_queue_summary_latest.json", False),
     ("runtime/market_data_cache.json", "runtime/market_data_cache.json", False),
+    ("runtime/market_microstructure_latest.json", "runtime/market_microstructure_latest.json", False),
     ("runtime/market_mover_watchlist.json", "runtime/market_mover_watchlist.json", False),
     ("runtime/strategy_evolution_latest.json", "runtime/strategy_evolution_latest.json", True),
     ("runtime/research_store_summary_latest.json", "runtime/research_store_summary_latest.json", False),
@@ -183,6 +184,9 @@ if db.exists():
     con.close()
 
 account = read_json(root / "runtime" / "account_snapshot_latest.json")
+market = read_json(root / "runtime" / "market_data_cache.json")
+micro = read_json(root / "runtime" / "market_microstructure_latest.json")
+paper = read_json(root / "runtime" / "paper_exchange_latest.json")
 alerts = read_json(root / "runtime" / "alerts_latest.json")
 attention = read_json(root / "research_memory" / "attention" / "open_items.json")
 evolution = read_json(root / "runtime" / "strategy_evolution_latest.json")
@@ -193,7 +197,9 @@ services = {
         "crypto-scanner-v16.service",
         "crypto-scanner-v14.service",
         "crypto-market-data-cache.service",
+        "crypto-market-microstructure.service",
         "crypto-market-mover-sentinel.service",
+        "crypto-paper-exchange-refresh.timer",
         "crypto-account-snapshot.service",
         "crypto-system-alerts.service",
         "crypto-binance-api-queue.service",
@@ -208,6 +214,26 @@ print(json.dumps({
     "services": services,
     "strategies": strategies,
     "account_summary": account.get("summary", {}),
+    "market_summary": {
+        "source": market.get("source"),
+        "sources": market.get("sources"),
+        "available_symbols": len(market.get("available_symbols") or []),
+        "top_symbols": len(market.get("top_symbols") or []),
+        "age_sec": (time.time() - float(market.get("unix_ts") or 0)) if market.get("unix_ts") else None,
+    },
+    "microstructure_summary": {
+        "source": micro.get("source"),
+        "coverage_symbols": micro.get("coverage_symbols"),
+        "fresh_symbols_240s": micro.get("fresh_symbols_240s"),
+        "retention_days": micro.get("retention_days"),
+        "age_sec": (time.time() - float(micro.get("unix_ts") or 0)) if micro.get("unix_ts") else None,
+    },
+    "paper_exchange_summary": {
+        "open_positions": paper.get("open_positions"),
+        "total_unrealized_pnl": paper.get("total_unrealized_pnl"),
+        "mark_source": paper.get("mark_source"),
+        "fidelity": paper.get("fidelity"),
+    },
     "alert_summary": {
         "ts": alerts.get("ts"),
         "status": alerts.get("status"),
@@ -498,6 +524,9 @@ def main(argv: list[str] | None = None) -> int:
                 "services": live.get("services"),
                 "account_upnl": accounts.get("unrealized_pnl_usdt"),
                 "positions": accounts.get("open_positions"),
+                "market": live.get("market_summary"),
+                "microstructure": live.get("microstructure_summary"),
+                "paper_exchange": live.get("paper_exchange_summary"),
                 "attention": live.get("attention_summary"),
                 "output": str(ROOT / "runtime" / "live_context_summary_latest.json"),
             },

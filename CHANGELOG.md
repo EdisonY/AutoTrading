@@ -2,6 +2,14 @@
 
 This is the durable reason-and-outcome ledger for every material design, code, configuration, deployment, rollback, optimization, or live operational change.
 
+## 2026-06-06 20:47 CST - Keep Aliyun report on Tencent paper exchange ledger
+- Trigger / reason: Tencent paper exchange runner produced A/B/C 15 paper positions, but Aliyun has a smaller mirror and its local runner can see no market/event candidates, producing 0 positions. If the lightweight Aliyun refresh reruns the runner locally, the online report can overwrite the useful Tencent ledger with an empty shadow ledger.
+- Completed: Removed the local `paper_exchange_runner.py` execution from `aliyun_decision_portal_refresh.sh`. Aliyun now uses the synced `runtime/paper_exchange_latest.json` from Tencent for the online decision report, while Tencent remains the paper exchange source-of-truth node.
+- Not completed / remaining: Need deploy the script to Aliyun and regenerate online report after copying/syncing the Tencent paper ledger.
+- Verification: Remote symptom confirmed: Tencent `runtime/paper_exchange_latest.json` showed `15` open positions (`5/5/5`), while Aliyun local runner returned `0`.
+- Live impact / deployment: Report refresh chain only. No Binance request, signed call, scanner restart, order, close, cancel, leverage/margin, or strategy parameter change.
+- Files / release / commit: `部署工具/aliyun_decision_portal_refresh.sh`, `CHANGELOG.md`; commit/deploy receipt to follow.
+
 ## 2026-06-06 20:44 CST - Fix paper exchange shadow bundle dependencies
 - Trigger / reason: Tencent paper exchange runner deployed and produced A/B/C paper positions, but Aliyun shadow run failed because the shadow release bundle included `paper_exchange_runner.py` without its `core.event_store` dependency.
 - Completed: Added `core/event_store.py`, `core/external_market_data.py`, and `core/kline_cache.py` to `RESEARCH_CORE` so Tencent research and Aliyun shadow bundles contain the full paper exchange runner dependency set.

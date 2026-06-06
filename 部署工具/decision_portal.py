@@ -34,6 +34,7 @@ LOCAL_DB = RUNTIME_DIR / "event_store.sqlite3"
 MIRROR_DB = ROOT / "server_logs_tencent" / "runtime" / "event_store.sqlite3"
 EVENT_DB = MIRROR_DB if MIRROR_DB.exists() else LOCAL_DB
 CST = timezone(timedelta(hours=8))
+DEFAULT_TAKER_FEE_RATE = 0.0004
 
 
 def h(value: Any) -> str:
@@ -98,6 +99,13 @@ def number(value: Any, digits: int = 2) -> str:
         return f"{float(value):+.{digits}f}"
     except Exception:
         return "0.00"
+
+
+def fmt_plain(value: Any, digits: int = 6, default: str = "-") -> str:
+    try:
+        return f"{float(value):.{digits}f}".rstrip("0").rstrip(".")
+    except Exception:
+        return default
 
 
 def plain_level(level: str) -> str:
@@ -310,7 +318,157 @@ def event_summary(db_path: Path = EVENT_DB) -> dict[str, Any]:
         return out
 
 
-def strategy_rows(event: dict[str, Any], alerts: dict[str, Any]) -> list[dict[str, str]]:
+def account_for_strategy(account: dict[str, Any], strategy: str) -> dict[str, Any]:
+    accounts = account.get("accounts") if isinstance(account.get("accounts"), list) else []
+    for row in accounts:
+        if isinstance(row, dict) and row.get("strategy") == strategy:
+            return row
+    return {}
+
+
+def fee_estimate(notional: Any) -> tuple[str, str]:
+    try:
+        value = abs(float(notional))
+    except Exception:
+        value = 0.0
+    if value <= 0:
+        return "-", "没有名义价值，暂不能估手续费。"
+    one_way = value * DEFAULT_TAKER_FEE_RATE
+    return f"单边约 {fmt_plain(one_way, 4)} / 往返约 {fmt_plain(one_way * 2, 4)} USDT", "估算：按 taker 0.04%，不是交易所逐笔扣费流水。"
+
+
+def latest_paper_open_rows(strategy: str, db_path: Path = EVENT_DB, limit: int = 6) -> list[dict[str, Any]]:
+    if not db_path.exists():
+        return []
+    try:
+        conn = sqlite3.connect(str(db_path))
+        conn.row_factory = sqlite3.Row
+        if not table_exists(conn, "events"):
+            conn.close()
+            return []
+        rows = conn.execute(
+            """
+            select ts,symbol,side,source,payload_json
+            from events
+            where strategy=?
+              and event_type='OPEN'
+              and (source like '%paper_sample%' or payload_json like '%"paper_sample":true%')
+            order by id desc
+            limit ?
+            """,
+            (strategy, limit),
+        ).fetchall()
+        conn.close()
+        out = []
+        for row in rows:
+            payload: dict[str, Any] = {}
+            try:
+                parsed = json.loads(row["payload_json"] or "{}")
+                payload = parsed if isinstance(parsed, dict) else {}
+            except Exception:
+                payload = {}
+            out.append({
+                "ts": row["ts"],
+                "symbol": row["symbol"],
+                "side": row["side"],
+                "source": row["source"],
+                "payload": payload,
+            })
+        return out
+    except Exception:
+        return []
+
+
+def position_upnl_class(value: Any) -> str:
+    try:
+        return "up" if float(value) >= 0 else "down"
+    except Exception:
+        return "muted"
+
+
+def strategy_detail_html(strategy: str, account: dict[str, Any]) -> str:
+    account_row = account_for_strategy(account, strategy)
+    positions = account_row.get("positions") if isinstance(account_row.get("positions"), list) else []
+    paper_rows = latest_paper_open_rows(strategy)
+    rows: list[str] = []
+    for pos in positions:
+        if not isinstance(pos, dict):
+            continue
+        notional = pos.get("notional")
+        fee_text, fee_note = fee_estimate(notional)
+        mark = pos.get("mark")
+        quality = "交易所快照"
+        if mark in {0, 0.0, "0", "0.0", None, ""}:
+            quality = "账户快照缺 mark，浮盈亏按中心账户状态展示，需等下一次行情/账户回执补新。"
+        rows.append(
+            f"""
+<tr>
+  <td>真实持仓</td>
+  <td>{h(pos.get('symbol'))}</td>
+  <td>{h(pos.get('side'))}</td>
+  <td>{h(fmt_plain(pos.get('qty')))}</td>
+  <td>{h(fmt_plain(pos.get('entry')))}</td>
+  <td>{h(fmt_plain(mark))}</td>
+  <td class="{position_upnl_class(pos.get('upnl'))}">{h(number(pos.get('upnl'), 4))}</td>
+  <td>{h(fmt_plain(notional, 4))}</td>
+  <td>{h(fmt_plain(pos.get('margin'), 4))}</td>
+  <td>{h(fee_text)}<small>{h(fee_note)}</small></td>
+  <td>待补资金费率流水<small>当前 report 还没有逐笔 funding income，不能硬写精确数。</small></td>
+  <td>{h(quality)}</td>
+</tr>
+""".strip()
+        )
+    for paper in paper_rows:
+        payload = paper.get("payload") if isinstance(paper.get("payload"), dict) else {}
+        notional = payload.get("expected_notional_usdt") or payload.get("notional") or payload.get("target_notional_usdt")
+        fee_text, fee_note = fee_estimate(notional)
+        rows.append(
+            f"""
+<tr>
+  <td>模拟采样</td>
+  <td>{h(paper.get('symbol'))}</td>
+  <td>{h(paper.get('side'))}</td>
+  <td>{h(fmt_plain(payload.get('exchange_qty') or payload.get('qty')))}</td>
+  <td>{h(fmt_plain(payload.get('price')))}</td>
+  <td>待盯市</td>
+  <td class="muted">不计入实盘</td>
+  <td>{h(fmt_plain(notional, 4))}</td>
+  <td>{h(fmt_plain(payload.get('target_margin_usdt'), 4))}</td>
+  <td>{h(fee_text)}<small>{h(fee_note)}</small></td>
+  <td>模拟未结算<small>只验证数据链路，不是真实成交。</small></td>
+  <td>paper_sample，不当作实盘盈亏。</td>
+</tr>
+""".strip()
+        )
+    if not rows:
+        rows.append(
+            """
+<tr>
+  <td colspan="12">当前没有可展示持仓或模拟采样。若策略有信号但没开仓，先看“主要原因”和候选被挡住。</td>
+</tr>
+""".strip()
+        )
+    summary = (
+        f"账户 {h(account_row.get('account') or '-')}: "
+        f"持仓 {h(account_row.get('open_positions') or 0)}，"
+        f"浮盈亏 {h(number(account_row.get('unrealized_pnl_usdt'), 4))} USDT，"
+        f"可用 {h(number(account_row.get('available_usdt'), 2))} USDT"
+        if account_row
+        else "未找到该策略账户快照"
+    )
+    return f"""
+<details class="strategy-detail">
+  <summary>查看持仓盈亏 / 手续费 / 资金费率</summary>
+  <p class="detail-note">{summary}。浮盈亏优先用账户快照；手续费无成交流水时只估算；资金费率无流水时明确标缺口。</p>
+  <div class="table-scroll"><table class="position-table">
+    <thead><tr><th>类型</th><th>币种</th><th>方向</th><th>数量</th><th>开仓价</th><th>标记价</th><th>浮盈亏</th><th>名义价值</th><th>保证金</th><th>手续费</th><th>资金费率</th><th>可信度</th></tr></thead>
+    <tbody>{''.join(rows)}</tbody>
+  </table></div>
+</details>
+"""
+
+
+def strategy_rows(event: dict[str, Any], alerts: dict[str, Any], account: dict[str, Any] | None = None) -> list[dict[str, str]]:
     services = alerts.get("services") if isinstance(alerts.get("services"), dict) else {}
     service_map = {
         "A/v11": "crypto-scanner.service",
@@ -358,6 +516,7 @@ def strategy_rows(event: dict[str, Any], alerts: dict[str, Any]) -> list[dict[st
             "note": note,
             "raw_note": raw_note,
             "note_kind": note_kind,
+            "detail_html": strategy_detail_html(name, account or {}),
         })
     return rows
 
@@ -573,7 +732,7 @@ def render_strategy_table(rows: list[dict[str, str]]) -> str:
   <td>{h(row['open_failed'])}</td>
   <td>{h(row['close_failed'])}</td>
   <td>{h(row['open_skipped'])}</td>
-  <td class="reason">{h(row.get('note') or plain_strategy_reason(row.get('raw_note') or '', row.get('note_kind') or 'skip'))}{('<small>原始原因：' + h(row['raw_note']) + '</small>') if row.get('raw_note') else ''}</td>
+  <td class="reason">{h(row.get('note') or plain_strategy_reason(row.get('raw_note') or '', row.get('note_kind') or 'skip'))}{('<small>原始原因：' + h(row['raw_note']) + '</small>') if row.get('raw_note') else ''}{row.get('detail_html', '')}</td>
 </tr>
 """.strip()
         for row in rows
@@ -679,7 +838,7 @@ def render_release_gate(state: dict[str, Any]) -> str:
 
 def render_html() -> str:
     state = build_state()
-    strategies = strategy_rows(state["event"], state["alerts"])
+    strategies = strategy_rows(state["event"], state["alerts"], state["account"])
     generated = state["generated_at"].strftime("%Y-%m-%d %H:%M:%S")
     alerts = state["alerts"].get("alerts") if isinstance(state["alerts"].get("alerts"), list) else []
     alert_list = "".join(
@@ -698,6 +857,7 @@ def render_html() -> str:
 :root {{
   --bg:#eef2f7; --panel:#ffffff; --ink:#182033; --muted:#667085;
   --line:#d9e0ea; --good:#16a34a; --warn:#d97706; --bad:#dc2626;
+  --up:#22c55e; --down:#ef4444;
   --cyan:#0891b2; --blue:#2563eb; --night:#101820; --night2:#17212c;
 }}
 * {{ box-sizing:border-box; }}
@@ -729,6 +889,14 @@ td small {{ display:block; color:var(--muted); margin-top:4px; }}
 .strategy-table {{ min-width:1120px; }}
 .strategy-table th:last-child,.strategy-table td.reason {{ width:34%; min-width:360px; }}
 .strategy-table td.reason {{ color:#263247; }}
+.strategy-detail {{ margin-top:10px; border:1px solid #cbd5e1; border-radius:8px; background:#f8fafc; }}
+.strategy-detail summary {{ cursor:pointer; padding:8px 10px; font-weight:800; color:#1d4ed8; }}
+.detail-note {{ margin:0; padding:0 10px 8px; color:var(--muted); }}
+.position-table {{ min-width:1320px; font-size:13px; background:#fff; }}
+.position-table th,.position-table td {{ padding:8px 7px; }}
+.up {{ color:var(--up); font-weight:800; }}
+.down {{ color:var(--down); font-weight:800; }}
+.muted {{ color:var(--muted); }}
 .dot {{ display:inline-block; width:9px; height:9px; border-radius:50%; margin-right:8px; background:var(--muted); }}
 .dot.good {{ background:var(--good); }} .dot.warn {{ background:var(--warn); }} .dot.bad {{ background:var(--bad); }}
 .alerts {{ list-style:none; padding:0; margin:0; display:grid; gap:8px; }}

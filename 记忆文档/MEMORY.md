@@ -445,6 +445,7 @@
 - 2026-06-05：用户继续指出 report 仍显得挤、`主要原因` 和 `今日重点` 还有技术词。决策 report 后续必须先给白话解释，再把原始技术原因作为辅助小字保留；`15m无确认信号` 这类 raw reason 要解释成“有候选，但15分钟确认没有跟上，所以策略按规则没开仓”。首页布局要按宽屏驾驶舱设计，今日重点前置成全宽模块，策略原因列给足阅读空间。
 - 2026-06-05：继续处理“账户状态不够新不能挡开仓”。结论分两层：开仓前的账户风控数据可用恢复期长 TTL 避免被冷却等待拖旧；下单后的成仓确认必须严格。`orderId` 只能说明订单提交到交易所，不等于已经成交成仓。以后本地记 OPEN 必须有成交数量或订单提交后的账户持仓证明；若只有 `orderId` 但 `executedQty/cumQty/fills` 为 0 且没有持仓证明，记为 `open_submitted_unconfirmed`，report 用白话解释为“订单已提交但还没确认成仓”，不得造本地假仓。
 - 2026-06-06：继续收口“账户状态不够新”解释和等待期 report。当前 live 事实：A/B/C 账户快照/中心账户状态是 fresh，按 7200 秒恢复 TTL 不应挡开仓；真正 blocker 是 Binance `HTTP 418/-1003` 全局冷却到 `2026-06-06 03:12:55 CST`，以及 B/C 残留仓平仓失败（如 B/v16 ARBUSDT `-2022`）。`waiting_period_optimization.py` 已修为读取 `api_cooldowns`，并在本地没拉到 queue DB 但 alerts 有 `418/429/-1003/cooldown` 时按 `blocked_by_cooldown` 处理；有 recent_bad 也不能显示 safe。账户状态新鲜度板块会在 `account_state_latest.json` 与 `account_snapshot_latest.json` 中选择最新账户行来源，避免 Aliyun 旧镜像把 5 天前快照误报成 blocker。若 `account_state_blocking=false`，后续不要再用“账户状态不够新”解释不开仓/未恢复，应优先查 cooldown、服务停机保护、close failure 或策略门控。
+- 2026-06-06：决策 report 的三策略表格要能展开看持仓明细。浮盈亏可用账户快照/交易所快照作为当前实盘口径；手续费如果没有逐笔 commission/fill ledger，只能按费率估算并标明“估算”；资金费率如果没有 funding income 流水，必须标“待补资金费率流水”，不能写假精确 after-cost PnL。
 
 ---
 ## 2026-05-29 全局运行自检与账户方向口径修复

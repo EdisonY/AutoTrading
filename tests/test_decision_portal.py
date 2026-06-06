@@ -131,6 +131,40 @@ class DecisionPortalTests(unittest.TestCase):
             "订单已提交到交易所，但还没有确认成交成仓；系统不会先建本地假仓，会等回执或下一轮核对。",
         )
 
+    def test_strategy_detail_shows_position_pnl_fee_and_funding_caveat(self):
+        account = {
+            "accounts": [
+                {
+                    "account": "B",
+                    "strategy": "B/v16",
+                    "available_usdt": 4900,
+                    "unrealized_pnl_usdt": 1.42161,
+                    "open_positions": 1,
+                    "positions": [
+                        {
+                            "symbol": "ARBUSDT",
+                            "side": "SHORT",
+                            "qty": 4738.7,
+                            "entry": 0.0835,
+                            "mark": 0.0832,
+                            "upnl": 1.42161,
+                            "notional": 394.25984,
+                            "margin": 98.56496,
+                        }
+                    ],
+                }
+            ]
+        }
+
+        rows = self.tool.strategy_rows({"strategies": []}, {"services": {"crypto-scanner-v16.service": "active"}}, account)
+        html = self.tool.render_strategy_table(rows)
+
+        self.assertIn("查看持仓盈亏 / 手续费 / 资金费率", html)
+        self.assertIn("ARBUSDT", html)
+        self.assertIn("+1.4216", html)
+        self.assertIn("估算：按 taker 0.04%", html)
+        self.assertIn("待补资金费率流水", html)
+
 
 if __name__ == "__main__":
     unittest.main()

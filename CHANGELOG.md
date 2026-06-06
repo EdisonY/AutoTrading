@@ -18,6 +18,14 @@ This is the durable reason-and-outcome ledger for every material design, code, c
 - Live impact / deployment: Runtime archive/reset plus paper exchange/report generation only. No Binance real order, close, cancel, leverage/margin change, signed baseline, scanner restart, or Binance Kline/public probe was performed by this reset.
 - Files / release / commit: `部署工具/shadow_sync_from_tencent.py`, `部署工具/pull_live_context.py`, `部署工具/sync_aliyun_reports_to_tencent.py`, `CHANGELOG.md`, `PROJECT_STATE.md`, `记忆文档/MEMORY.md`, `记忆文档/FUTURE_EXECUTION_PLAN.md`; deployment receipt follows after sync/report verification.
 
+## 2026-06-06 21:32 CST - Accept empty reset tables in shadow sync
+- Trigger / reason: After the from-zero reset, Tencent correctly had `sentinel_scans=0` and `account_snapshots=0`, but Aliyun `shadow_sync_from_tencent.py` still treated any empty mirrored table as stale/failure. That left the public report using old mirrored data and showing `等待清理`.
+- Completed: Updated `shadow_sync_from_tencent.py` so an empty mirrored table is accepted when `runtime/testnet_data_reset_latest.json` exists, has `apply=true`, and its `db_reset.counts_after.<table>` is `0`. This keeps normal freshness validation strict while allowing a deliberate clean reset to sync.
+- Not completed / remaining: Deploy the sync fix to Aliyun, re-run Tencent -> Aliyun mirror sync, rebuild the public report, and verify the online page shows the fresh-start receipt instead of stale old event counts.
+- Verification: Local py_compile/unit tests/guard follow in this same work session.
+- Live impact / deployment: Sync validation/report freshness only. No Binance request, queue submit, scanner/account/cache/user-stream start, order, close, cancel, leverage/margin, signed baseline, or strategy behavior change.
+- Files / release / commit: `部署工具/shadow_sync_from_tencent.py`, `CHANGELOG.md`; deployment receipt follows.
+
 ## 2026-06-06 20:47 CST - Keep Aliyun report on Tencent paper exchange ledger
 - Trigger / reason: Tencent paper exchange runner produced A/B/C 15 paper positions, but Aliyun has a smaller mirror and its local runner can see no market/event candidates, producing 0 positions. If the lightweight Aliyun refresh reruns the runner locally, the online report can overwrite the useful Tencent ledger with an empty shadow ledger.
 - Completed: Removed the local `paper_exchange_runner.py` execution from `aliyun_decision_portal_refresh.sh`. Aliyun now uses the synced `runtime/paper_exchange_latest.json` from Tencent for the online decision report, while Tencent remains the paper exchange source-of-truth node.

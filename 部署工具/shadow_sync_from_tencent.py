@@ -260,6 +260,22 @@ def parse_ts(value: str | None) -> datetime | None:
     return None
 
 
+def reset_allows_empty_table(table: str) -> bool:
+    receipt = LOCAL_DIR / "runtime" / "testnet_data_reset_latest.json"
+    if not receipt.exists():
+        return False
+    try:
+        import json
+
+        data = json.loads(receipt.read_text(encoding="utf-8", errors="replace"))
+    except Exception:
+        return False
+    if not data.get("apply"):
+        return False
+    after = data.get("db_reset", {}).get("counts_after", {})
+    return isinstance(after, dict) and int(after.get(table, -1) or 0) == 0
+
+
 def validate_local_sqlite(db_path: Path, max_age_hours: float) -> None:
     if not db_path.exists():
         raise RuntimeError(f"SQLite mirror missing: {db_path}")
@@ -285,6 +301,9 @@ def validate_local_sqlite(db_path: Path, max_age_hours: float) -> None:
         age_text = f"{age_hours:.2f}h" if age_hours is not None else "unknown"
         print(f"[SQLITE] {table}: rows={count} latest={latest or '-'} age={age_text}")
         if count <= 0:
+            if reset_allows_empty_table(table):
+                print(f"[SQLITE] {table}: empty accepted by reset receipt")
+                continue
             raise RuntimeError(f"SQLite mirror table empty: {table}")
         if age_hours is None or age_hours > max_age_hours:
             raise RuntimeError(

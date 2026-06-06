@@ -253,6 +253,7 @@ def event_summary(db_path: Path = EVENT_DB) -> dict[str, Any]:
                     """
                     select
                       sum(case when event_type='OPEN' or category='opened' then 1 else 0 end) as opens,
+                      sum(case when event_type='OPEN' and (source like '%paper_sample%' or payload_json like '%"paper_sample":true%') then 1 else 0 end) as paper_sample_opens,
                       sum(case when event_type in ('CLOSE','FORCED_CLOSE') or category in ('closed','forced_close') then 1 else 0 end) as closes,
                       sum(case when event_type='OPEN_FAILED' or category='open_failed' then 1 else 0 end) as open_failed,
                       sum(case when event_type='OPEN_SKIPPED' or category='open_skipped' then 1 else 0 end) as open_skipped,
@@ -288,6 +289,7 @@ def event_summary(db_path: Path = EVENT_DB) -> dict[str, Any]:
                     "name": name,
                     "latest": parse_dt(latest["ts"]) if latest else None,
                     "opens": int(counts["opens"] or 0) if counts else 0,
+                    "paper_sample_opens": int(counts["paper_sample_opens"] or 0) if counts else 0,
                     "closes": int(counts["closes"] or 0) if counts else 0,
                     "open_failed": int(counts["open_failed"] or 0) if counts else 0,
                     "open_skipped": int(counts["open_skipped"] or 0) if counts else 0,
@@ -323,11 +325,15 @@ def strategy_rows(event: dict[str, Any], alerts: dict[str, Any]) -> list[dict[st
         open_failed = int(item.get("open_failed") or 0)
         close_failed = int(item.get("close_failed") or 0)
         open_skipped = int(item.get("open_skipped") or 0)
+        paper_sample_opens = int(item.get("paper_sample_opens") or 0)
         level = "bad" if service != "active" else "good"
         note = "正常运行"
         raw_note = ""
         note_kind = "normal"
-        if open_failed:
+        if paper_sample_opens:
+            note = "模拟盘已产生采样开仓。注意：这是 paper sample，用来打通 report/回测数据链，不是真实交易所成交，也不是放宽真实策略。"
+            note_kind = "paper_sample"
+        elif open_failed:
             raw_note = str(item.get("failed_reason") or "")
             note = plain_strategy_reason(raw_note, "failed")
             note_kind = "failed"
@@ -344,6 +350,7 @@ def strategy_rows(event: dict[str, Any], alerts: dict[str, Any]) -> list[dict[st
             "service": "运行中" if service == "active" else f"异常({service})",
             "age": age_text(item.get("latest")),
             "opens": str(item.get("opens", 0)),
+            "paper_sample_opens": str(paper_sample_opens),
             "closes": str(item.get("closes", 0)),
             "open_failed": str(open_failed),
             "close_failed": str(close_failed),
@@ -561,6 +568,7 @@ def render_strategy_table(rows: list[dict[str, str]]) -> str:
   <td>{h(row['service'])}</td>
   <td>{h(row['age'])}</td>
   <td>{h(row['opens'])}</td>
+  <td>{h(row.get('paper_sample_opens', '0'))}</td>
   <td>{h(row['closes'])}</td>
   <td>{h(row['open_failed'])}</td>
   <td>{h(row['close_failed'])}</td>
@@ -572,7 +580,7 @@ def render_strategy_table(rows: list[dict[str, str]]) -> str:
     )
     return f"""
 <div class="table-scroll"><table class="strategy-table">
-  <thead><tr><th>策略</th><th>服务</th><th>最新数据</th><th>24h开仓</th><th>24h平仓</th><th>开仓执行失败</th><th>平仓/强平失败</th><th>候选被挡住</th><th>主要原因</th></tr></thead>
+  <thead><tr><th>策略</th><th>服务</th><th>最新数据</th><th>24h开仓</th><th>其中模拟采样</th><th>24h平仓</th><th>开仓执行失败</th><th>平仓/强平失败</th><th>候选被挡住</th><th>主要原因</th></tr></thead>
   <tbody>{body}</tbody>
 </table></div>
 """

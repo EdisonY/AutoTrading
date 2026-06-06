@@ -733,6 +733,8 @@ def render_paper_exchange(state: dict[str, Any]) -> str:
     if not paper:
         return '<p class="empty">模拟交易所账本还没生成。系统会先跑 paper_exchange_runner 生成持仓、盯市盈亏、手续费和资金费率。</p>'
     by_strategy = paper.get("by_strategy") if isinstance(paper.get("by_strategy"), dict) else {}
+    paper_ts = parse_dt(paper.get("ts"))
+    fidelity = paper.get("fidelity") if isinstance(paper.get("fidelity"), dict) else {}
     cards = []
     for name in ("A/v11", "B/v16", "C/v14"):
         row = by_strategy.get(name) if isinstance(by_strategy.get(name), dict) else {}
@@ -776,14 +778,14 @@ def render_paper_exchange(state: dict[str, Any]) -> str:
   <div><span>总权益</span><b>{h(number(paper.get('total_equity'), 2))} USDT</b></div>
   <div><span>总浮盈亏</span><b class="{position_upnl_class(paper.get('total_unrealized_pnl'))}">{h(number(paper.get('total_unrealized_pnl'), 4))} USDT</b></div>
   <div><span>开仓数</span><b>{h(paper.get('open_positions', 0))}</b></div>
-  <div><span>模式</span><b>paper exchange</b></div>
+  <div><span>盯市刷新</span><b>{h(age_text(paper_ts))}</b></div>
 </div>
 <div class="paper-cards">{''.join(cards)}</div>
 <div class="table-scroll"><table class="paper-table">
   <thead><tr><th>策略</th><th>币种</th><th>方向</th><th>数量</th><th>开仓价</th><th>盯市价</th><th>浮盈亏</th><th>名义价值</th><th>保证金</th><th>手续费</th><th>资金费率</th><th>价格源</th></tr></thead>
   <tbody>{''.join(rows)}</tbody>
 </table></div>
-<p class="empty">这是模拟交易所账本：不开真实 Binance 单。价格来自本地 K线/OKX 公开行情；手续费按账本费率扣；资金费率按可得公开 funding rate 结算，缺数据时记 0 并标来源。</p>
+<p class="empty">这是模拟交易所账本（paper exchange）：不开真实 Binance 单。价格：{h(fidelity.get('price') or 'OKX/本地K线')}；时间：{h(fidelity.get('time') or '按 runner 刷新')}；滑点：{h(fidelity.get('slippage') or '非真实撮合')}；手续费：{h(fidelity.get('fees') or '按账本费率')}；资金费率：{h(fidelity.get('funding') or '按可得公开 funding rate')}。</p>
 """
 
 

@@ -1,0 +1,15 @@
+[Unit]
+Description=Crypto Paper Exchange Ledger Refresh
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/crypto-auto-trader
+ExecStart=/opt/crypto-auto-trader/.venv/bin/python -B /opt/crypto-auto-trader/paper_exchange_runner.py --root /opt/crypto-auto-trader
+Environment=PYTHONIOENCODING=utf-8
+Environment=OKX_MARKET_DATA_ENABLED=1
+Environment=OKX_MARKET_DATA_MAX_PER_MIN=60
+Environment=PAPER_EXCHANGE_TARGET_PER_STRATEGY=5
+Environment=PAPER_EXCHANGE_MARGIN_USDT=100
+Environment=PAPER_EXCHANGE_LEVERAGE=4
+TimeoutStartSec=120

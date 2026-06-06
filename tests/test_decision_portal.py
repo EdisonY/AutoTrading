@@ -172,9 +172,17 @@ class DecisionPortalTests(unittest.TestCase):
 
     def test_paper_exchange_summary_is_first_class_report_section(self):
         html = self.tool.render_paper_exchange({
-            "paper_exchange": {
-                "mode": "paper_exchange",
-                "total_equity": 300000,
+                "paper_exchange": {
+                    "mode": "paper_exchange",
+                    "ts": "2026-06-06T13:00:00+00:00",
+                    "fidelity": {
+                        "price": "OKX 15m/latest cached close; Binance mark/index may differ",
+                        "time": "updated when paper_exchange_runner runs, not exchange tick-by-tick",
+                        "slippage": "not exchange-order-book exact; use conservative model before strategy promotion",
+                        "fees": "ledger fee_rate=0.000400",
+                        "funding": "OKX public funding when available; missing/unavailable records 0 with source",
+                    },
+                    "total_equity": 300000,
                 "total_unrealized_pnl": 12.34,
                 "open_positions": 3,
                 "by_strategy": {
@@ -203,6 +211,9 @@ class DecisionPortalTests(unittest.TestCase):
         })
 
         self.assertIn("paper exchange", html)
+        self.assertIn("盯市刷新", html)
+        self.assertIn("OKX 15m/latest cached close", html)
+        self.assertIn("not exchange-order-book exact", html)
         self.assertIn("BTCUSDT", html)
         self.assertIn("手续费", html)
         self.assertIn("资金费率", html)

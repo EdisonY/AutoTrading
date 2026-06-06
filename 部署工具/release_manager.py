@@ -177,6 +177,8 @@ TENCENT_COMPONENTS: dict[str, dict[str, Any]] = {
             file_pair("部署工具/decision_portal.py", "decision_portal.py"),
             file_pair("部署工具/portal_refresh_service.py", "portal_refresh_service.py"),
             file_pair("部署工具/system_alerts.py", "system_alerts.py"),
+            file_pair("部署工具/systemd/crypto-paper-exchange-refresh.service", "systemd/crypto-paper-exchange-refresh.service"),
+            file_pair("部署工具/systemd/crypto-paper-exchange-refresh.timer", "systemd/crypto-paper-exchange-refresh.timer"),
         ],
         # Portal generation moved to Aliyun. Tencent keeps only the alert service
         # here so a portal deploy cannot restart an intentionally inactive unit.
@@ -186,6 +188,7 @@ TENCENT_COMPONENTS: dict[str, dict[str, Any]] = {
             "{python} system_alerts.py --once || true",
             "{python} decision_attention.py || true",
             "{python} portal_dashboard.py --out-dir {root}/reports",
+            "sudo cp systemd/crypto-paper-exchange-refresh.service /etc/systemd/system/crypto-paper-exchange-refresh.service && sudo cp systemd/crypto-paper-exchange-refresh.timer /etc/systemd/system/crypto-paper-exchange-refresh.timer && sudo systemctl daemon-reload && sudo systemctl enable --now crypto-paper-exchange-refresh.timer",
         ],
     },
     "strategy-a": {

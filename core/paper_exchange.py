@@ -230,6 +230,7 @@ class PaperExchange:
             if price and price > 0:
                 pos["mark_price"] = float(price)
                 pos["mark_source"] = source
+                pos["mark_updated_at"] = utc_now()
             mark = safe_float(pos.get("mark_price"), safe_float(pos.get("entry_price")))
             entry = safe_float(pos.get("entry_price"))
             qty = safe_float(pos.get("qty"))
@@ -288,6 +289,14 @@ class PaperExchange:
         return {
             "ts": utc_now(),
             "mode": "paper_exchange",
+            "fidelity": {
+                "level": "close_to_live_but_not_identical",
+                "price": "OKX 15m/latest cached close; Binance mark/index may differ",
+                "time": "updated when paper_exchange_runner runs, not exchange tick-by-tick",
+                "slippage": "not exchange-order-book exact; use conservative model before strategy promotion",
+                "fees": f"ledger fee_rate={safe_float(state.get('fee_rate'), self.fee_rate):.6f}",
+                "funding": "OKX public funding when available; missing/unavailable records 0 with source",
+            },
             "fee_rate": safe_float(state.get("fee_rate"), self.fee_rate),
             "total_equity": round(total_equity, 6),
             "total_unrealized_pnl": round(total_upnl, 6),

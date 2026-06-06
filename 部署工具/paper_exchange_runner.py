@@ -73,10 +73,18 @@ def market_rows(root: Path) -> list[dict[str, Any]]:
     return out
 
 
-def resolve_price(root: Path, symbol: str) -> tuple[float | None, str]:
-    cached = load_latest_cached_close(root, symbol, max_age_sec=86400)
+def resolve_price(root: Path, symbol: str, *, live_first: bool = False) -> tuple[float | None, str]:
+    if live_first and okx_symbol_supported(symbol):
+        try:
+            rows = fetch_okx_klines(symbol, "15m", 2)
+            if rows:
+                save_cached_klines(root, symbol, "15m", 2, rows)
+                return float(rows[-1][4]), "okx_15m_live"
+        except Exception:
+            pass
+    cached = load_latest_cached_close(root, symbol, max_age_sec=300 if live_first else 86400)
     if cached and cached > 0:
-        return float(cached), "local_kline_cache"
+        return float(cached), "local_kline_cache_fresh" if live_first else "local_kline_cache"
     if not okx_symbol_supported(symbol):
         return None, "unsupported_symbol"
     try:
@@ -154,6 +162,21 @@ def recent_candidates(root: Path, strategy: str, limit: int) -> list[dict[str, A
     return out
 
 
+def paper_tradeable_candidate(item: dict[str, Any]) -> bool:
+    symbol = str(item.get("symbol") or "").upper()
+    if not symbol or not symbol.isascii() or not okx_symbol_supported(symbol):
+        return False
+    reason = str(item.get("reason") or "").lower()
+    blocked_fragments = (
+        "合约不存在",
+        "unsupported",
+        "not listed",
+        "not_supported",
+        "symbol_not_found",
+    )
+    return not any(fragment in reason for fragment in blocked_fragments)
+
+
 def bootstrap_candidates(root: Path, strategy: str, limit: int) -> list[dict[str, Any]]:
     rows = market_rows(root)
     if not rows:
@@ -198,7 +221,7 @@ def open_bootstrap_positions(root: Path, exchange: PaperExchange, target_per_str
         seen = set(held)
         for item in candidates:
             symbol = str(item.get("symbol") or "").upper()
-            if not symbol or symbol in seen:
+            if not symbol or symbol in seen or not paper_tradeable_candidate(item):
                 continue
             price, price_source = resolve_price(root, symbol)
             if not price or price <= 0:
@@ -321,10 +344,10 @@ def close_hit_positions(root: Path, exchange: PaperExchange, take_profit_pct: fl
 
 def run(root: Path, target_per_strategy: int, margin_usdt: float, leverage: int, take_profit_pct: float, stop_loss_pct: float) -> dict[str, Any]:
     exchange = PaperExchange(root)
-    summary = exchange.mark_to_market(lambda symbol: resolve_price(root, symbol), resolve_funding)
+    summary = exchange.mark_to_market(lambda symbol: resolve_price(root, symbol, live_first=True), resolve_funding)
     closed = close_hit_positions(root, exchange, take_profit_pct, stop_loss_pct)
     opened = open_bootstrap_positions(root, exchange, target_per_strategy, margin_usdt, leverage)
-    summary = exchange.mark_to_market(lambda symbol: resolve_price(root, symbol), resolve_funding)
+    summary = exchange.mark_to_market(lambda symbol: resolve_price(root, symbol, live_first=True), resolve_funding)
     summary.update({
         "opened_this_run": opened,
         "closed_this_run": closed,

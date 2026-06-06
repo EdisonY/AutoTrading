@@ -450,6 +450,7 @@
 - 2026-06-06：用户要求历史脏数据全部清理、从头开始，并继续打磨 report。规则：清理要先停写入服务，再归档旧 runtime/event/log/paper ledger，不能删除 durable memory、审批、代码和 attention ack 历史。report 主屏必须显示“从零运行状态”和“复盘/进化成熟度”。复盘/进化不是只等足够持仓信号；必须等完整交易闭环：开仓、持仓期间行情、平仓、手续费、资金费率、被挡候选和策略上下文。只有持仓浮盈亏时，可以验 report/执行骨架，但不能证明策略胜率、PF 或参数升级。
 - 2026-06-06：本轮从零重置已执行。Tencent 归档 `/opt/crypto-auto-trader/archive/testnet_data_reset/20260606-210624`，`events/sentinel_scans/account_snapshots` 从 `1555/24551/51` 清到 `0/0/0`，保留 attention/baseline。随后新 paper exchange 写入 `15` 条新 OPEN，A/B/C 各 `5`。注意 Aliyun 公网页面必须同步 `runtime/testnet_data_reset_latest.json`，否则会用旧镜像显示“等待清理/旧事件数”。
 - 2026-06-06：用户指定 report 参考 Nord Analytics banking operations dashboard 风格。决策入口页应保持深色金融运营台视觉：左侧导航、深色 KPI、密集数据表、蓝/青操作色、绿/黄/红状态色、中文白话状态。此要求只影响 report/UI，不应触发 Binance、scanner、下单或策略参数变化。
+- 2026-06-06：用户问 report 看不到实时盈亏，以及模拟账本能否保证和真实实盘基本无差别。结论必须诚实：不能保证无差别；paper exchange 可以接近，但真实撮合有撮合队列、延迟、部分成交、滑点、Binance mark/index 基差、真实 commission/funding 结算差异。当前工程规则改为 Tencent 单一 paper 账本约每 60 秒用 OKX/新鲜本地缓存盯市，Aliyun 只同步展示；report 必须显示盯市刷新年龄和保真度说明。后续若要把 paper PnL 当晋级证据，必须补纸面 vs 小额真实成交校准。
 
 ---
 ## 2026-05-29 全局运行自检与账户方向口径修复

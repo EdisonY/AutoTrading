@@ -31,6 +31,7 @@ from core.binance_api_guard import (
     wait_before_request,
 )
 from core.binance_api_queue_client import api_queue_client_enabled, queued_api_request
+from core.market_data_cache import scanner_binance_public_fallback_enabled
 
 logger = logging.getLogger("binance_client")
 
@@ -175,6 +176,9 @@ def get_markets() -> dict:
     global _markets_cache
     if _markets_cache:
         return _markets_cache
+    if not scanner_binance_public_fallback_enabled():
+        logger.warning("Binance exchangeInfo fallback disabled; skip A/v11 market metadata fetch")
+        return {}
 
     url = f"{BASE_URL}/fapi/v1/exchangeInfo"
     try:

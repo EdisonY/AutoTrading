@@ -38,6 +38,8 @@
 
 2026-06-06 10:35 安全观察恢复补充：`09:49:57 CST` cooldown 后只读检查 clean，已按层恢复到 no-order observation：API queue active；A/B/C listenKey rows `1621`-`1623` 均 `200`；market-data-cache row `1624` 与 sentinel row `1625` 均 public ticker `200`；account-snapshot 以 `ACCOUNT_SNAPSHOT_SOURCE=central` active；A/B/C scanner active 但由远端 `50-safe-observe.conf` 强制 `SCANNER_ORDER_ENABLED=0`、Kline/market Binance fallback off、TTL `14400/14400/15`、scanner interval `300s`。这一步的验收是“服务和扫描骨架活着且无新 418/429/-1003”，不是 order-enabled 交易验收。下一步顺序：先观察/降低 public backlog（A exchangeInfo、B depth/aggTrades/funding、C ticker-price），再处理账户证据和 B/C residual close blocker；未完成前不得移除 `50-safe-observe.conf` 或把 scanner 恢复到 order-enabled。
 
+2026-06-06 16:03 安全观察恢复补充：`13:49:57.537 CST` cooldown 后再次按层恢复到 no-order observation，所有预期服务 active。A/B/C scanner 仍由 `50-safe-observe.conf` 禁单，且 `SCANNER_KLINE_NETWORK_ENABLED=0`、`SCANNER_MARKET_DATA_NETWORK_ENABLED=0`、interval `300s`。恢复中发现 A client 的 `exchangeInfo` 不受 scanner-side fallback 关闭约束，已扩展到 A/B/C client：`SCANNER_BINANCE_PUBLIC_FALLBACK_ENABLED=0` 时不再请求/入队 `exchangeInfo`。验收窗口 `15:55 CST` 后 queue 只有 cache/sentinel ticker `200`，active cooldown/active rows/recent bad 均空，journal 无 `418/429/-1003`。下一步仍是继续观察并设计 order-enabled gate；不得因为全服务 active 就直接开单或重试 signed baseline。
+
 ### Long-term P0 - 必须先完成
 
 1. **P0-A Binance API 根治**

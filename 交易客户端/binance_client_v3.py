@@ -34,6 +34,7 @@ from core.binance_api_guard import (
     wait_before_request,
 )
 from core.binance_api_queue_client import api_queue_client_enabled, queued_api_request
+from core.market_data_cache import scanner_binance_public_fallback_enabled
 
 logger = logging.getLogger("binance_client_v3")
 
@@ -134,6 +135,11 @@ def _get_exchange_info_cached() -> dict:
     global _exchange_info_cache, _exchange_info_cache_time
     now = time.time()
     if _exchange_info_cache is not None and (now - _exchange_info_cache_time) < 60:
+        return _exchange_info_cache
+    if not scanner_binance_public_fallback_enabled():
+        logger.warning("Binance exchangeInfo fallback disabled; skip C/v14 market metadata fetch")
+        _exchange_info_cache = {}
+        _exchange_info_cache_time = now
         return _exchange_info_cache
     info = _public_request("/fapi/v1/exchangeInfo")
     _exchange_info_cache = info

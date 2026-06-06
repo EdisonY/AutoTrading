@@ -35,6 +35,7 @@ MIRROR_DB = ROOT / "server_logs_tencent" / "runtime" / "event_store.sqlite3"
 EVENT_DB = MIRROR_DB if MIRROR_DB.exists() else LOCAL_DB
 CST = timezone(timedelta(hours=8))
 DEFAULT_TAKER_FEE_RATE = 0.0004
+REPORT_REFRESH_SECONDS = 60
 
 
 def h(value: Any) -> str:
@@ -1169,7 +1170,7 @@ def render_html() -> str:
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="refresh" content="300">
+<meta http-equiv="refresh" content="{REPORT_REFRESH_SECONDS}">
 <title>AutoTrading 决策入口</title>
 <style>
 :root {{
@@ -1286,10 +1287,10 @@ tr:hover td {{ background:#101827; }}
   <header>
     <div>
       <h1>AutoTrading 决策入口</h1>
-      <div class="sub">更新 {h(generated)}。线上首页 5 分钟自动刷新；这里只读现有数据。</div>
+      <div class="sub">更新 {h(generated)}。线上首页 60 秒自动刷新；这里只读现有数据。</div>
       <div class="top-actions">
         <button class="icon-btn refresh-btn" onclick="refreshReport(this)" title="同步服务器镜像并重新生成报表">刷新报表</button>
-        <span class="refresh-countdown">下次自动刷新 <b id="refreshCountdown">05:00</b></span>
+        <span class="refresh-countdown">下次自动刷新 <b id="refreshCountdown">01:00</b></span>
         <span id="refreshStatus" class="refresh-status">安全刷新：只更新报表和镜像，不下单。</span>
       </div>
     </div>
@@ -1409,7 +1410,7 @@ function togglePositionDetail(id) {{
 function startRefreshCountdown() {{
   const el = document.getElementById('refreshCountdown');
   if (!el) return;
-  let remain = 300;
+  let remain = {REPORT_REFRESH_SECONDS};
   const tick = () => {{
     const minutes = Math.floor(remain / 60);
     const seconds = remain % 60;

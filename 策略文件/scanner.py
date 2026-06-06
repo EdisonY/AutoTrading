@@ -3565,6 +3565,11 @@ def main():
     parser.add_argument("--interval", type=int, default=env_int("SCANNER_A_INTERVAL_SEC", 120), help="扫描间隔（秒），默认120=2分钟")
     args = parser.parse_args()
 
+    start_delay = max(0, env_int("SCANNER_A_START_DELAY_SEC", 0))
+    if start_delay > 0 and not args.once:
+        logger.info(f"启动错峰等待 {start_delay}s 后开始首轮扫描...")
+        time.sleep(start_delay)
+
     scanner = Scanner()
 
     logger.info("=" * 60)

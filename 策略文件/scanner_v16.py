@@ -1999,6 +1999,10 @@ class ScannerV16:
         )
         if interval is None:
             interval = env_int("SCANNER_B_INTERVAL_SEC", 120)
+        start_delay = max(0, env_int("SCANNER_B_START_DELAY_SEC", 0))
+        if start_delay > 0:
+            logger.info(f"启动错峰等待 {start_delay}s 后开始首轮扫描...")
+            time.sleep(start_delay)
         while True:
             try:
                 self.run_cycle()

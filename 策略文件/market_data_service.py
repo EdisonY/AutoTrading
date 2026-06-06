@@ -27,7 +27,20 @@ os.environ.setdefault("COINGECKO_MARKET_DATA_ENABLED", "1")
 from core.external_market_data import fetch_bybit_tickers, fetch_coingecko_top_markets, fetch_okx_tickers
 
 
-def build_payload(prev_volumes: dict[str, float], top_limit: int) -> tuple[dict, dict[str, float]]:
+def env_int(name: str, default: int) -> int:
+    try:
+        return int(float(os.environ.get(name, str(default))))
+    except Exception:
+        return int(default)
+
+
+def build_payload(
+    prev_volumes: dict[str, float],
+    top_limit: int,
+    coingecko_top: list[dict] | None = None,
+    *,
+    coingecko_age_sec: float | None = None,
+) -> tuple[dict, dict[str, float]]:
     raw_rows = []
     source_errors = []
     for source, fetcher in (("okx", fetch_okx_tickers), ("bybit", fetch_bybit_tickers)):
@@ -37,11 +50,7 @@ def build_payload(prev_volumes: dict[str, float], top_limit: int) -> tuple[dict,
         except Exception as exc:
             source_errors.append({"source": source, "error": str(exc)[:180]})
 
-    coingecko_top = []
-    try:
-        coingecko_top = fetch_coingecko_top_markets(limit=max(100, min(250, top_limit)))
-    except Exception as exc:
-        source_errors.append({"source": "coingecko", "error": str(exc)[:180]})
+    coingecko_top = coingecko_top or []
 
     merged: dict[str, dict] = {}
     for item in raw_rows:
@@ -96,6 +105,7 @@ def build_payload(prev_volumes: dict[str, float], top_limit: int) -> tuple[dict,
         "source": "okx_bybit_coingecko",
         "sources": sorted({src for _, _, _, item in rows for src in (item.get("sources") or [item.get("source") or "external"])}),
         "source_errors": source_errors,
+        "coingecko_age_sec": coingecko_age_sec,
         "available_symbols": [sym for sym, _, _, _ in rows],
         "top_symbols": [sym for sym, _, _, _ in rows[:top_limit]],
         "spike_symbols": [sym for sym, _, _ in spikes[:top_limit]],
@@ -135,9 +145,25 @@ def main() -> int:
     args = parser.parse_args()
     out = args.root / "runtime" / "market_data_cache.json"
     prev_volumes: dict[str, float] = {}
+    coingecko_top: list[dict] = []
+    coingecko_last_fetch = 0.0
+    coingecko_refresh_sec = max(300, env_int("COINGECKO_REFRESH_INTERVAL_SEC", 1800))
     while True:
         try:
-            payload, prev_volumes = build_payload(prev_volumes, args.top_limit)
+            now = time.time()
+            if not coingecko_top or now - coingecko_last_fetch >= coingecko_refresh_sec:
+                try:
+                    coingecko_top = fetch_coingecko_top_markets(limit=max(100, min(250, args.top_limit)))
+                    coingecko_last_fetch = now
+                except Exception as exc:
+                    print(json.dumps({"status": "warn", "source": "coingecko", "error": str(exc)[:180]}), flush=True)
+            age = (time.time() - coingecko_last_fetch) if coingecko_last_fetch else None
+            payload, prev_volumes = build_payload(
+                prev_volumes,
+                args.top_limit,
+                coingecko_top,
+                coingecko_age_sec=age,
+            )
             atomic_write(out, payload)
             print(json.dumps({"status": "ok", "symbols": len(payload["available_symbols"]), "top": len(payload["top_symbols"]), "spikes": len(payload["spike_symbols"])}), flush=True)
         except Exception as exc:

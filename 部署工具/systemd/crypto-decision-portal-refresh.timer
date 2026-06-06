@@ -3,8 +3,8 @@ Description=Crypto Decision Portal Lightweight Refresh Timer
 
 [Timer]
 OnBootSec=90s
-OnUnitActiveSec=5m
-AccuracySec=30s
+OnUnitActiveSec=60s
+AccuracySec=10s
 Persistent=true
 
 [Install]

@@ -10,6 +10,14 @@ This is the durable reason-and-outcome ledger for every material design, code, c
 - Live impact / deployment: Report-only source change pending deploy in this session. No Binance request, no API queue submit, no scanner restart, no order/close/cancel, and no strategy threshold/sizing/leverage/stop change.
 - Files / release / commit: `部署工具/decision_portal.py`, `tests/test_decision_portal.py`, `CHANGELOG.md`, `PROJECT_STATE.md`, `记忆文档/MEMORY.md`; Git commit/deploy to follow.
 
+## 2026-06-06 19:11 CST - Deploy expandable position PnL report
+- Trigger / reason: Deploy the expandable strategy position/PnL details to both the Tencent report mirror and Aliyun online decision entry.
+- Completed: Pushed source commit `3a9dd0a`. Deployed Tencent portal release `20260606-190837-portal-3a9dd0a`, which uploaded `decision_portal.py` and regenerated the Tencent report. Deployed Aliyun shadow release `20260606-190919-shadow-3a9dd0a` with `--no-restart`, then regenerated `/opt/crypto-shadow-lab/reports/index.html`.
+- Not completed / remaining: Exact commission and funding remain a future ledger/data-ingest gap. Current deployed report intentionally labels fee values as estimates and funding as missing when funding-income rows are unavailable.
+- Verification: Tencent and Aliyun `reports/index.html` both contain `查看持仓盈亏 / 手续费 / 资金费率`, current live symbols such as `ARBUSDT` and `MITOUSDT`, `估算：按 taker 0.04%`, and `待补资金费率流水`. Aliyun `crypto-attention-api.service` and `crypto-decision-portal-refresh.timer` are active.
+- Live impact / deployment: Report/portal deployment and report regeneration only. No Binance request, no API queue submit, no scanner restart, no order/close/cancel, and no strategy threshold/sizing/leverage/stop change.
+- Files / release / commit: Deployment receipt for source commit `3a9dd0a`; this ledger entry to be committed and pushed.
+
 ## 2026-06-06 17:42 CST - Execute paper sample opens and refresh decision report
 - Trigger / reason: The paper full-run scanners were active and queue-safe, but natural strategy gates still had no `OPEN`. User asked for same-day full online operation and accepted simulated opens if Binance remains wind-control unsafe.
 - Completed: Deployed/narrow-synced `paper_sample_executor.py` and the updated `decision_portal.py` to Tencent, and deployed/synced the updated report tooling to Aliyun. Ran one Tencent `paper_sample_executor.py --per-strategy 1`, which wrote three explicitly labeled paper sample `OPEN` rows: A/v11 `TSMUSDT short`, B/v16 `BZUSDT short`, and C/v14 `ZECUSDT long`. Each row carries `paper=true`, `simulation_only=true`, `paper_sample=true`, `reason=paper_sample_open`, and `source=<strategy>/paper_sample`. Regenerated Tencent decision report and ran Aliyun lightweight refresh; both reports show `其中模拟采样` and `模拟盘已产生采样开仓`.

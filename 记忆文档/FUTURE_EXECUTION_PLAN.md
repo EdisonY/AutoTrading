@@ -34,6 +34,8 @@
 
 2026-06-06 recovery TTL 部署补充：Tencent A/B/C strategy、Tencent research、Aliyun shadow 已完成 no-restart 部署并核验。A/B/C scanner drop-in 已安装 `14400/14400/15`；Tencent Binance-facing services 仍 inactive，只有 system-alerts active；Tencent/Aliyun waiting report 均显示 `account_state_blocking=false`、`pre_entry_ttl_sec=14400`、`active_cooldowns=0`、`active_requests=0`。下一步恢复只能按 staged restoration 另行启动，不能把这次 no-restart deploy 误读为已恢复运行。
 
+2026-06-06 全面恢复阻断补充：`09:14 CST` 后尝试恢复时，账户资料已超过 `14400s`，不能直接开 scanner。按顺序只启动 API queue，并尝试 A/v11 单账户 baseline；首个 signed `/fapi/v2/balance` 返回 `HTTP 418/-1003`，queue global cooldown 到约 `2026-06-06 09:49:57.944 CST`。API queue 已停止，后续恢复必须等冷却后重新只读检查，且不得在冷却内启动 user-stream/listenKey、account baseline、scanner/cache/sentinel。
+
 ### Long-term P0 - 必须先完成
 
 1. **P0-A Binance API 根治**

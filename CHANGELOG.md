@@ -2,6 +2,14 @@
 
 This is the durable reason-and-outcome ledger for every material design, code, configuration, deployment, rollback, optimization, or live operational change.
 
+## 2026-06-06 09:22 CST - Stop full restoration after fresh signed cooldown
+- Trigger / reason: User requested "全面恢复". Pre-restore checks showed Tencent queue had no active requests/cooldowns and no new `418/429/-1003` since `03:44 CST`, but account-state rows were about `7h` old and `waiting_period_optimization.py` correctly showed `account_state_blocking=true` even with the `14400s` recovery TTL.
+- Completed: Started only `crypto-binance-api-queue.service` first, verified it was active with `active_requests=0` and `active_cooldowns=0`, then attempted the documented single-account baseline path for A/v11 through the queue. The first signed A/v11 `/fapi/v2/balance` request returned Binance/Testnet `HTTP 418/-1003`. Immediately stopped `crypto-binance-api-queue.service` so no further queued work can execute.
+- Not completed / remaining: Full service restoration did not proceed. B/C baselines, user-streams, cache, sentinel, account-snapshot, and A/B/C scanners were not started. The system cannot safely restore until the new global queue cooldown clears and a fresh read-only queue/service/journal check passes.
+- Verification: After stop, `crypto-binance-api-queue.service` was inactive, `active_requests=0`, and queue recorded `active_cooldowns=1`. Latest row `1620` is `A/v11 signed /fapi/v2/balance failed` with `HTTP 418/-1003`. Binance message ban timestamp was `2026-06-06 09:39:57.944 CST`; queue global cooldown extends to about `2026-06-06 09:49:57.944 CST`.
+- Live impact / deployment: Operational start/stop only. One signed balance request was attempted through the central queue and triggered the new cooldown. No scanner/cache/sentinel/account-snapshot/user-stream start, no order, no close, no cancel, no Binance public scan, and no B/C residual close action occurred.
+- Files / release / commit: `CHANGELOG.md`, `PROJECT_STATE.md`, `记忆文档/MEMORY.md`, `记忆文档/FUTURE_EXECUTION_PLAN.md`; ledger commit to follow.
+
 ## 2026-06-06 03:44 CST - Deploy recovery TTL and waiting report fixes without restart
 - Trigger / reason: Deploy commits `60e2084` and `1220f48` so Tencent scanners and Tencent/Aliyun waiting reports all use the same `14400s` recovery account-state TTL and the scanner drop-in is installed durably.
 - Completed: No-restart deployed Tencent strategy A/B/C, Tencent research, and Aliyun shadow bundles. Releases: Tencent `20260606-033444-strategy-a-1220f48`, `20260606-033525-strategy-b-1220f48`, `20260606-033629-strategy-c-1220f48`, `20260606-033712-research-1220f48`; Aliyun `20260606-033804-shadow-1220f48`. A/B/C scanner systemd drop-ins now contain `BINANCE_ACCOUNT_STATE_CACHE_MAX_AGE_SEC=14400`, `CENTRAL_ACCOUNT_STATE_TARGET_MAX_AGE_SEC=14400`, and strict `CENTRAL_ACCOUNT_STATE_CONFIRM_MAX_AGE_SEC=15`.

@@ -105,7 +105,7 @@ from strategy_breakout import analyze_symbol_vpb, VPB_SCORE_THRESHOLD_15M, VPB_V
 from binance_client import get_client, BinanceClient as ExchangeClient, _delete
 from core.audit_log import write_jsonl_with_daily_shard
 from core.account_state_cache import load_cached_account_state
-from core.execution_engine import CloseRequest, ExecutionEngine, OpenRequest
+from core.execution_engine import CloseRequest, ExecutionEngine, OpenRequest, scanner_paper_execution_enabled
 from core.exchange_state import count_active_positions, count_side_positions, find_symbol_position, usdt_balance_summary
 from core.event_store import EventStoreWriter
 from core.external_market_data import fetch_okx_klines
@@ -1102,6 +1102,8 @@ class Scanner:
         return sum(len(pos) for pos in self.positions.values())
 
     def _total_exchange_positions(self) -> int:
+        if scanner_paper_execution_enabled():
+            return self._total_local_positions()
         try:
             cached_state = load_cached_account_state(PROJECT_ROOT, "A/v11")
             if cached_state:
@@ -1111,6 +1113,8 @@ class Scanner:
         return self._total_local_positions()
 
     def _exchange_side_count(self, side: str) -> int:
+        if scanner_paper_execution_enabled():
+            return sum(1 for tf_pos in self.positions.values() for (_, sd) in tf_pos if sd == side)
         try:
             cached_state = load_cached_account_state(PROJECT_ROOT, "A/v11")
             if cached_state:
@@ -1121,6 +1125,8 @@ class Scanner:
 
     def _exchange_symbol_position(self, symbol: str) -> dict:
         """Return an existing exchange position for symbol, if any."""
+        if scanner_paper_execution_enabled():
+            return {}
         try:
             cached_state = load_cached_account_state(PROJECT_ROOT, "A/v11")
             if cached_state:
@@ -1130,6 +1136,9 @@ class Scanner:
         return {}
 
     def _account_balance_summary(self) -> tuple[float, float]:
+        if scanner_paper_execution_enabled():
+            balance = float(os.environ.get("SCANNER_PAPER_BALANCE_USDT", "100000"))
+            return balance, balance
         cached_state = load_cached_account_state(PROJECT_ROOT, "A/v11")
         if not cached_state:
             logger.debug("  中心账户状态不可用，余额摘要返回 0，避免 signed REST")
@@ -1138,6 +1147,50 @@ class Scanner:
 
     def _can_open_new_position(self, risk_usdt: float, now_str: str, tf: str, sym: str, side: str, score: float, return_cases: bool = False):
         cases = []
+        if scanner_paper_execution_enabled():
+            state_gate = evaluate_account_state_available_gate(account_state_available=True)
+            state_case = strategy_gate_case(
+                name="a_v11_paper_account_state_available",
+                gate="account_state_available",
+                inputs={"account_state_available": True, "paper_execution": True},
+                decision=state_gate,
+                meta={"strategy": "A/v11", "timeframe": tf},
+            )
+            cases.append(state_case)
+            balance_usdt = float(os.environ.get("SCANNER_PAPER_BALANCE_USDT", "100000"))
+            decision = self.risk_engine.check_entry(
+                total_positions=self._total_local_positions(),
+                side_positions=sum(1 for tf_pos in self.positions.values() for (_, sd) in tf_pos if sd == side),
+                balance={"balance": balance_usdt, "availableBalance": balance_usdt},
+                risk_usdt=risk_usdt,
+            )
+            if decision.allowed:
+                return (True, cases) if return_cases else True
+            risk_gate = evaluate_entry_risk_gate(
+                total_positions=decision.total_positions,
+                side_positions=decision.side_positions,
+                total_balance=decision.total_balance,
+                available_balance=decision.available_balance,
+                risk_usdt=risk_usdt,
+                max_total_positions=self.risk_engine.limits.max_total_positions,
+                max_positions_per_side=self.risk_engine.limits.max_positions_per_side,
+                min_available_balance_pct=self.risk_engine.limits.min_available_balance_pct,
+                min_available_balance_usdt=self.risk_engine.limits.min_available_balance_usdt,
+            )
+            risk_case = strategy_gate_case(
+                name="a_v11_paper_entry_risk",
+                gate="entry_risk",
+                inputs={
+                    "total_positions": decision.total_positions,
+                    "side_positions": decision.side_positions,
+                    "total_balance": decision.total_balance,
+                    "available_balance": decision.available_balance,
+                    "risk_usdt": risk_usdt,
+                },
+                decision=risk_gate,
+                meta={"strategy": "A/v11", "timeframe": tf, "paper_execution": True},
+            )
+            return (False, [*cases, risk_case]) if return_cases else False
         try:
             cached_state = load_cached_account_state(PROJECT_ROOT, "A/v11")
             state_gate = evaluate_account_state_available_gate(account_state_available=bool(cached_state))
@@ -1713,6 +1766,9 @@ class Scanner:
 
     def _sync_exchange_state(self):
         """启动时同步交易所账户状态：设置持仓模式，同步已有持仓到内存"""
+        if scanner_paper_execution_enabled():
+            logger.info("paper execution: 跳过真实交易所账户同步")
+            return
         logger.info("同步交易所账户状态...")
         cached_state = load_cached_account_state(PROJECT_ROOT, "A/v11")
         if not cached_state:
@@ -1795,6 +1851,8 @@ class Scanner:
 
     def _sync_exchange_positions(self, now_str: str, now_dt: datetime = None):
         """同步交易所实际持仓状态。如果止盈止损已自动触发，本地也同步平仓。"""
+        if scanner_paper_execution_enabled():
+            return
         # 收集交易所上实际存在的持仓
         cached_state = load_cached_account_state(PROJECT_ROOT, "A/v11")
         if not cached_state:
@@ -2698,7 +2756,7 @@ class Scanner:
             expected_notional_usdt = exchange_qty * price
             expected_margin_usdt = expected_notional_usdt / self.leverage
             min_notional_floor = 0.0
-            if hasattr(self.client, "get_symbol_rules"):
+            if not scanner_paper_execution_enabled() and hasattr(self.client, "get_symbol_rules"):
                 rules = self.client.get_symbol_rules(inst_id)
                 min_notional_floor = float(getattr(rules, "min_notional", 0.0) or 0.0) if rules else 0.0
             sizing_gate = evaluate_a_v11_margin_sizing_gate(

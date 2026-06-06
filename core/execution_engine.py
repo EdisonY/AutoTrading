@@ -92,6 +92,11 @@ def scanner_order_enabled() -> bool:
     return value not in {"0", "false", "no", "off"}
 
 
+def scanner_paper_execution_enabled() -> bool:
+    value = os.environ.get("SCANNER_EXECUTION_MODE", "").strip().lower()
+    return value in {"paper", "sim", "simulate", "simulation", "mock"}
+
+
 def scanner_order_disabled_result(action: str, symbol: str, side: str, quantity: float = 0.0) -> ExecutionResult:
     detail = {
         "ok": False,
@@ -152,6 +157,14 @@ class ExecutionEngine:
         self.confirm_rest_fallback_enabled = value not in {"0", "false", "no", "off"}
 
     def calc_quantity(self, symbol: str, price: float, risk_usdt: float, leverage: int, max_quantity: float | None = None) -> float:
+        if scanner_paper_execution_enabled():
+            try:
+                qty = (float(risk_usdt) * float(leverage)) / float(price)
+            except (TypeError, ValueError, ZeroDivisionError):
+                return 0.0
+            if max_quantity is not None and qty > float(max_quantity):
+                qty = float(max_quantity)
+            return qty if qty > 0 else 0.0
         qty = float(self.client.calc_size(symbol, price, risk_usdt, leverage))
         if max_quantity is not None and qty > max_quantity:
             qty = float(max_quantity)
@@ -163,6 +176,8 @@ class ExecutionEngine:
         return qty
 
     def open_position(self, req: OpenRequest) -> ExecutionResult:
+        if scanner_paper_execution_enabled():
+            return self._paper_open_position(req)
         qty = req.quantity
         if qty is None:
             qty = self.calc_quantity(req.symbol, req.price, req.risk_usdt, req.leverage, req.max_quantity)
@@ -359,6 +374,8 @@ class ExecutionEngine:
         )
 
     def close_position(self, req: CloseRequest) -> ExecutionResult:
+        if scanner_paper_execution_enabled():
+            return self._paper_close_position(req)
         if not scanner_order_enabled():
             return scanner_order_disabled_result("close", req.symbol, req.side, float(req.quantity or 0.0))
         if req.cancel_open_orders and close_cancel_open_orders_enabled():
@@ -553,6 +570,51 @@ class ExecutionEngine:
             message=self._raw_message(raw),
             raw=raw,
         )
+
+    def _paper_open_position(self, req: OpenRequest) -> ExecutionResult:
+        qty = float(req.quantity or 0.0)
+        if qty <= 0:
+            qty = (float(req.risk_usdt) * float(req.leverage)) / float(req.price or 1.0)
+        if req.max_quantity is not None and qty > float(req.max_quantity):
+            qty = float(req.max_quantity)
+        if qty <= 0:
+            return ExecutionResult(False, "open", req.symbol, req.side, qty, code="paper_qty<=0", message="paper quantity too small")
+        order_id = f"PAPER-{self.name or 'scanner'}-{int(time.time() * 1000)}"
+        raw = {
+            "paper": True,
+            "mode": "paper",
+            "orderId": order_id,
+            "status": "FILLED",
+            "symbol": req.symbol,
+            "side": req.side,
+            "executedQty": qty,
+            "cumQty": qty,
+            "avgPrice": req.price,
+            "leverage": req.leverage,
+            "risk_usdt": req.risk_usdt,
+            "take_profit": req.take_profit,
+            "stop_loss": req.stop_loss,
+            "context": req.context,
+        }
+        return ExecutionResult(True, "open", req.symbol, req.side, qty, order_id=order_id, status="PAPER_FILLED", raw=raw)
+
+    def _paper_close_position(self, req: CloseRequest) -> ExecutionResult:
+        qty = float(req.quantity or 0.0)
+        if qty <= 0 and isinstance(req.context, dict):
+            qty = float(req.context.get("quantity") or req.context.get("size") or 0.0)
+        order_id = f"PAPER-CLOSE-{self.name or 'scanner'}-{int(time.time() * 1000)}"
+        raw = {
+            "paper": True,
+            "mode": "paper",
+            "orderId": order_id,
+            "status": "FILLED",
+            "symbol": req.symbol,
+            "side": req.side,
+            "executedQty": qty,
+            "cumQty": qty,
+            "context": req.context,
+        }
+        return ExecutionResult(True, "close", req.symbol, req.side, qty, order_id=order_id, status="PAPER_CLOSED", raw=raw)
 
     def _close_target(
         self,

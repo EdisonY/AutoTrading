@@ -112,12 +112,26 @@ SCANNER_ACCOUNT_STATE_RECOVERY_DROPIN = file_pair(
     "crypto-scanner-account-state-recovery.conf",
 )
 
+SCANNER_PAPER_FULL_RUN_DROPIN = file_pair(
+    "部署工具/systemd/crypto-scanner-paper-full-run.conf",
+    "crypto-scanner-paper-full-run.conf",
+)
+
 
 def scanner_account_state_recovery_post(service: str) -> str:
     return (
         f"sudo mkdir -p /etc/systemd/system/{service}.d && "
         f"sudo cp crypto-scanner-account-state-recovery.conf "
         f"/etc/systemd/system/{service}.d/30-account-state-recovery.conf && "
+        "sudo systemctl daemon-reload"
+    )
+
+
+def scanner_paper_full_run_post(service: str) -> str:
+    return (
+        f"sudo mkdir -p /etc/systemd/system/{service}.d && "
+        f"sudo cp crypto-scanner-paper-full-run.conf "
+        f"/etc/systemd/system/{service}.d/60-paper-full-run.conf && "
         "sudo systemctl daemon-reload"
     )
 
@@ -171,35 +185,47 @@ TENCENT_COMPONENTS: dict[str, dict[str, Any]] = {
         "files": CORE_FILES
         + [
             SCANNER_ACCOUNT_STATE_RECOVERY_DROPIN,
+            SCANNER_PAPER_FULL_RUN_DROPIN,
             file_pair("策略文件/scanner.py", "scanner.py"),
             file_pair("策略文件/strategy_breakout.py", "strategy_breakout.py"),
             file_pair("交易客户端/binance_client.py", "binance_client.py"),
             file_pair("config/v11.toml", "config/v11.toml"),
         ],
         "services": ["crypto-scanner.service"],
-        "post": [scanner_account_state_recovery_post("crypto-scanner.service")],
+        "post": [
+            scanner_account_state_recovery_post("crypto-scanner.service"),
+            scanner_paper_full_run_post("crypto-scanner.service"),
+        ],
     },
     "strategy-b": {
         "files": CORE_FILES
         + [
             SCANNER_ACCOUNT_STATE_RECOVERY_DROPIN,
+            SCANNER_PAPER_FULL_RUN_DROPIN,
             file_pair("策略文件/scanner_v16.py", "scanner_v16.py"),
             file_pair("交易客户端/binance_client_v2.py", "binance_client_v2.py"),
             file_pair("config/v16.toml", "config/v16.toml"),
         ],
         "services": ["crypto-scanner-v16.service"],
-        "post": [scanner_account_state_recovery_post("crypto-scanner-v16.service")],
+        "post": [
+            scanner_account_state_recovery_post("crypto-scanner-v16.service"),
+            scanner_paper_full_run_post("crypto-scanner-v16.service"),
+        ],
     },
     "strategy-c": {
         "files": CORE_FILES
         + [
             SCANNER_ACCOUNT_STATE_RECOVERY_DROPIN,
+            SCANNER_PAPER_FULL_RUN_DROPIN,
             file_pair("策略文件/scanner_v14.py", "scanner_v14.py"),
             file_pair("交易客户端/binance_client_v3.py", "binance_client_v3.py"),
             file_pair("config/v14.toml", "config/v14.toml"),
         ],
         "services": ["crypto-scanner-v14.service"],
-        "post": [scanner_account_state_recovery_post("crypto-scanner-v14.service")],
+        "post": [
+            scanner_account_state_recovery_post("crypto-scanner-v14.service"),
+            scanner_paper_full_run_post("crypto-scanner-v14.service"),
+        ],
     },
     "sentinel": {
         "files": CORE_FILES

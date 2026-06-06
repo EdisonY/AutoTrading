@@ -82,6 +82,21 @@ class ReduceOnlyNoCancelClient:
         return {"code": "-2022", "msg": "ReduceOnly Order is rejected."}
 
 
+class RuleCheckingClient(FakeClient):
+    def __init__(self):
+        super().__init__()
+        self.calc_size_calls = 0
+        self.validate_order_quantity_calls = 0
+
+    def calc_size(self, *args):
+        self.calc_size_calls += 1
+        return 0.0
+
+    def validate_order_quantity(self, *args):
+        self.validate_order_quantity_calls += 1
+        return {"ok": False, "quantity": 0.0, "reason": "should-not-call"}
+
+
 class ExecutionEngineAccountStateTest(unittest.TestCase):
     def test_confirmation_uses_fresh_central_state(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -156,6 +171,92 @@ class ExecutionEngineAccountStateTest(unittest.TestCase):
         self.assertFalse(result.success)
         self.assertTrue(result.preflight_rejected)
         self.assertEqual(result.code, "scanner_order_disabled")
+        self.assertEqual(client.delete_calls, [])
+        self.assertEqual(client.close_calls, [])
+        self.assertEqual(client.get_positions_calls, 0)
+
+    def test_paper_calc_quantity_does_not_call_client_rules(self):
+        old_mode = os.environ.get("SCANNER_EXECUTION_MODE")
+        os.environ["SCANNER_EXECUTION_MODE"] = "paper"
+        try:
+            client = RuleCheckingClient()
+            engine = ExecutionEngine(client, "A/v11")
+
+            qty = engine.calc_quantity("BTCUSDT", 20000.0, 100.0, 4, max_quantity=0.015)
+        finally:
+            if old_mode is None:
+                os.environ.pop("SCANNER_EXECUTION_MODE", None)
+            else:
+                os.environ["SCANNER_EXECUTION_MODE"] = old_mode
+
+        self.assertEqual(qty, 0.015)
+        self.assertEqual(client.calc_size_calls, 0)
+        self.assertEqual(client.validate_order_quantity_calls, 0)
+
+    def test_paper_open_works_when_real_orders_disabled(self):
+        old_order = os.environ.get("SCANNER_ORDER_ENABLED")
+        old_mode = os.environ.get("SCANNER_EXECUTION_MODE")
+        os.environ["SCANNER_ORDER_ENABLED"] = "0"
+        os.environ["SCANNER_EXECUTION_MODE"] = "paper"
+        try:
+            client = RuleCheckingClient()
+            engine = ExecutionEngine(client, "B/v16")
+
+            result = engine.open_position(OpenRequest(
+                symbol="ETHUSDT",
+                side="short",
+                price=2500.0,
+                risk_usdt=100.0,
+                leverage=4,
+                take_profit=2400.0,
+                stop_loss=2550.0,
+            ))
+        finally:
+            if old_order is None:
+                os.environ.pop("SCANNER_ORDER_ENABLED", None)
+            else:
+                os.environ["SCANNER_ORDER_ENABLED"] = old_order
+            if old_mode is None:
+                os.environ.pop("SCANNER_EXECUTION_MODE", None)
+            else:
+                os.environ["SCANNER_EXECUTION_MODE"] = old_mode
+
+        self.assertTrue(result.success)
+        self.assertEqual(result.status, "PAPER_FILLED")
+        self.assertTrue(result.order_id.startswith("PAPER-B/v16-"))
+        self.assertEqual(result.quantity, 0.16)
+        self.assertEqual(client.open_calls, [])
+        self.assertEqual(client.calc_size_calls, 0)
+        self.assertEqual(client.validate_order_quantity_calls, 0)
+
+    def test_paper_close_skips_cancel_position_and_client_close(self):
+        old_order = os.environ.get("SCANNER_ORDER_ENABLED")
+        old_mode = os.environ.get("SCANNER_EXECUTION_MODE")
+        os.environ["SCANNER_ORDER_ENABLED"] = "0"
+        os.environ["SCANNER_EXECUTION_MODE"] = "paper"
+        try:
+            client = FakeClient()
+            engine = ExecutionEngine(client, "C/v14")
+
+            result = engine.close_position(CloseRequest(
+                symbol="SOLUSDT",
+                side="long",
+                quantity=3.0,
+                cancel_open_orders=True,
+            ))
+        finally:
+            if old_order is None:
+                os.environ.pop("SCANNER_ORDER_ENABLED", None)
+            else:
+                os.environ["SCANNER_ORDER_ENABLED"] = old_order
+            if old_mode is None:
+                os.environ.pop("SCANNER_EXECUTION_MODE", None)
+            else:
+                os.environ["SCANNER_EXECUTION_MODE"] = old_mode
+
+        self.assertTrue(result.success)
+        self.assertEqual(result.status, "PAPER_CLOSED")
+        self.assertTrue(result.order_id.startswith("PAPER-CLOSE-C/v14-"))
         self.assertEqual(client.delete_calls, [])
         self.assertEqual(client.close_calls, [])
         self.assertEqual(client.get_positions_calls, 0)

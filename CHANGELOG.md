@@ -2,6 +2,14 @@
 
 This is the durable reason-and-outcome ledger for every material design, code, configuration, deployment, rollback, optimization, or live operational change.
 
+## 2026-06-06 20:44 CST - Fix paper exchange shadow bundle dependencies
+- Trigger / reason: Tencent paper exchange runner deployed and produced A/B/C paper positions, but Aliyun shadow run failed because the shadow release bundle included `paper_exchange_runner.py` without its `core.event_store` dependency.
+- Completed: Added `core/event_store.py`, `core/external_market_data.py`, and `core/kline_cache.py` to `RESEARCH_CORE` so Tencent research and Aliyun shadow bundles contain the full paper exchange runner dependency set.
+- Not completed / remaining: Aliyun redeploy and remote paper report verification follow in this same work session.
+- Verification: Local py_compile/guard follow before commit. The failed Aliyun symptom was `ModuleNotFoundError: No module named 'core.event_store'`.
+- Live impact / deployment: Bundle metadata only. No Binance order, close, cancel, signed baseline, Kline fallback, scanner restart, or strategy parameter change.
+- Files / release / commit: `部署工具/release_manager.py`, `CHANGELOG.md`; commit/deploy receipt to follow.
+
 ## 2026-06-06 20:35 CST - Add paper exchange full-run ledger and report
 - Trigger / reason: User rejected the previous report and required today-visible A/B/C full-run behavior with opens/closes, prices, PnL, fees, and funding-rate accounting, while avoiding another Binance/Testnet wind-control event. Real Binance order-enabled recovery is still unsafe, so the first-version target is a paper exchange ledger fed by local cache/OKX public data, not live Binance orders.
 - Completed: Added `core/paper_exchange.py` as the persistent paper source of truth and `paper_exchange_runner.py` as the maintenance runner. Paper opens/closes now write a ledger from `ExecutionEngine` when `SCANNER_EXECUTION_MODE=paper`, and the runner can mark to market, close paper TP/SL hits, and bootstrap per-strategy paper positions from recent strategy candidates or Top100 market cache. The decision report now has a first-class `三策略模拟交易所运行总览` section with per-strategy positions, equity, unrealized PnL, fees, funding, notional, margin, price source, and recent paper fills. Aliyun refresh, Tencent/Aliyun sync, live-context pull, shadow sync, and release bundles now include `runtime/paper_exchange_latest.json` and the new runner.

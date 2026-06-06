@@ -1943,6 +1943,8 @@ class Scanner:
 
     def _enforce_hard_stop_on_exchange(self, now_str: str, now_dt: datetime = None):
         """交易所级硬顶兜底：直接扫描真实持仓，避免本地恢复遗漏导致超亏仓失管。"""
+        if scanner_paper_execution_enabled():
+            return
         cached_state = load_cached_account_state(PROJECT_ROOT, "A/v11")
         if not cached_state:
             logger.debug("  中心账户状态不可用，跳过本轮交易所硬顶扫描")

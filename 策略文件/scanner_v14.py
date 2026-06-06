@@ -1580,6 +1580,8 @@ class Scanner:
 
     def _enforce_hard_stop_on_exchange(self, now_str: str, now_dt: datetime = None):
         """交易所级硬顶兜底：本地未恢复的仓位也必须被风控覆盖。"""
+        if scanner_paper_execution_enabled():
+            return
         cached_state = load_cached_account_state(PROJECT_ROOT, "C/v14")
         if not cached_state:
             logger.debug("  中心账户状态不可用，跳过本轮交易所硬顶扫描")

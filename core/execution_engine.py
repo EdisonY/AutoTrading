@@ -162,6 +162,24 @@ class ExecutionEngine:
         value = os.environ.get("CENTRAL_ACCOUNT_STATE_CONFIRM_REST_FALLBACK_ENABLED", "1").strip().lower()
         self.confirm_rest_fallback_enabled = value not in {"0", "false", "no", "off"}
 
+    @staticmethod
+    def _latest_paper_fill(summary: dict[str, Any] | None, *, order_id: str, action: str) -> dict[str, Any]:
+        if not isinstance(summary, dict):
+            return {}
+        fills = summary.get("recent_fills")
+        if not isinstance(fills, list):
+            return {}
+        expected_action = str(action or "").upper()
+        for fill in reversed(fills):
+            if not isinstance(fill, dict):
+                continue
+            if expected_action and str(fill.get("action") or "").upper() != expected_action:
+                continue
+            if order_id and str(fill.get("order_id") or "") != str(order_id):
+                continue
+            return fill
+        return {}
+
     def calc_quantity(self, symbol: str, price: float, risk_usdt: float, leverage: int, max_quantity: float | None = None) -> float:
         if scanner_paper_execution_enabled():
             try:
@@ -604,7 +622,7 @@ class ExecutionEngine:
         }
         if paper_exchange_ledger_enabled():
             try:
-                PaperExchange(self.account_state_root).open_market(
+                summary = PaperExchange(self.account_state_root).open_market(
                     strategy=self.name or str(req.context.get("strategy") or "paper"),
                     symbol=req.symbol,
                     side=req.side,
@@ -615,6 +633,42 @@ class ExecutionEngine:
                     reason=str(req.context.get("reason") or req.context.get("entry_reason") or "scanner_paper_open"),
                     context=req.context,
                 )
+                fill = self._latest_paper_fill(summary, order_id=order_id, action="OPEN")
+                if fill:
+                    executed_qty = float(fill.get("executed_qty") or fill.get("qty") or qty)
+                    executed_price = float(fill.get("executed_price") or fill.get("price") or req.price)
+                    qty = executed_qty if executed_qty > 0 else qty
+                    raw["executedQty"] = qty
+                    raw["cumQty"] = qty
+                    raw["avgPrice"] = executed_price
+                    raw["status"] = str(fill.get("fill_status") or raw["status"])
+                    raw["paper_fill"] = {
+                        key: value
+                        for key, value in fill.items()
+                        if key.startswith("paper_fill")
+                        or key in {
+                            "requested_qty",
+                            "requested_price",
+                            "executed_qty",
+                            "executed_price",
+                            "unfilled_qty",
+                            "fill_ratio",
+                            "partial_fill",
+                            "fill_status",
+                            "execution_side",
+                            "liquidity_side",
+                            "slippage_usdt",
+                            "slippage_bps",
+                            "depth_slippage_usdt",
+                            "order_book_levels_used",
+                            "order_book_available_quantity",
+                            "order_book_fill_ratio",
+                            "order_book_queue_ahead_quantity",
+                            "depth_snapshot_source",
+                            "depth_snapshot_age_seconds",
+                            "fallback_reason",
+                        }
+                    }
             except Exception as exc:
                 raw["paper_exchange_error"] = str(exc)[:240]
         return ExecutionResult(True, "open", req.symbol, req.side, qty, order_id=order_id, status="PAPER_FILLED", raw=raw)
@@ -641,7 +695,7 @@ class ExecutionEngine:
         }
         if paper_exchange_ledger_enabled() and exit_price > 0:
             try:
-                PaperExchange(self.account_state_root).close_market(
+                summary = PaperExchange(self.account_state_root).close_market(
                     strategy=self.name or str(req.context.get("strategy") or "paper"),
                     symbol=req.symbol,
                     side=req.side,
@@ -650,6 +704,42 @@ class ExecutionEngine:
                     order_id=order_id,
                     reason=str(req.context.get("reason") or "scanner_paper_close"),
                 )
+                fill = self._latest_paper_fill(summary, order_id=order_id, action="CLOSE")
+                if fill:
+                    executed_qty = float(fill.get("executed_qty") or fill.get("qty") or qty)
+                    executed_price = float(fill.get("executed_price") or fill.get("price") or exit_price)
+                    qty = executed_qty if executed_qty > 0 else qty
+                    raw["executedQty"] = qty
+                    raw["cumQty"] = qty
+                    raw["avgPrice"] = executed_price
+                    raw["status"] = str(fill.get("fill_status") or raw["status"])
+                    raw["paper_fill"] = {
+                        key: value
+                        for key, value in fill.items()
+                        if key.startswith("paper_fill")
+                        or key in {
+                            "requested_qty",
+                            "requested_price",
+                            "executed_qty",
+                            "executed_price",
+                            "unfilled_qty",
+                            "fill_ratio",
+                            "partial_fill",
+                            "fill_status",
+                            "execution_side",
+                            "liquidity_side",
+                            "slippage_usdt",
+                            "slippage_bps",
+                            "depth_slippage_usdt",
+                            "order_book_levels_used",
+                            "order_book_available_quantity",
+                            "order_book_fill_ratio",
+                            "order_book_queue_ahead_quantity",
+                            "depth_snapshot_source",
+                            "depth_snapshot_age_seconds",
+                            "fallback_reason",
+                        }
+                    }
             except Exception as exc:
                 raw["paper_exchange_error"] = str(exc)[:240]
         return ExecutionResult(True, "close", req.symbol, req.side, qty, order_id=order_id, status="PAPER_CLOSED", raw=raw)

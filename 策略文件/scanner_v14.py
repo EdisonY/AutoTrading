@@ -1709,15 +1709,9 @@ class Scanner:
                     if reason is None:
                         continue
 
-                    # 触发平仓
-                    if pos.side == "long":
-                        pnl = (current_price - pos.entry_price) / pos.entry_price * 100 * pos.leverage
-                        pnl_usd = (current_price - pos.entry_price) * pos.size
-                    else:
-                        pnl = (pos.entry_price - current_price) / pos.entry_price * 100 * pos.leverage
-                        pnl_usd = (pos.entry_price - current_price) * pos.size
-
                     # 交易所平仓
+                    requested_exit_price = current_price
+                    paper_fill = {}
                     close_exec = self.execution.close_position(CloseRequest(
                         symbol=pos.symbol,
                         side=pos.side,
@@ -1758,9 +1752,23 @@ class Scanner:
                         })
                         continue
 
+                    close_raw = close_exec.raw if isinstance(close_exec.raw, dict) else {}
+                    try:
+                        current_price = float(close_raw.get("avgPrice") or current_price)
+                    except Exception:
+                        current_price = requested_exit_price
+                    paper_fill = close_raw.get("paper_fill") if isinstance(close_raw.get("paper_fill"), dict) else {}
+                    if pos.side == "long":
+                        pnl = (current_price - pos.entry_price) / pos.entry_price * 100 * pos.leverage
+                        pnl_usd = (current_price - pos.entry_price) * pos.size
+                    else:
+                        pnl = (pos.entry_price - current_price) / pos.entry_price * 100 * pos.leverage
+                        pnl_usd = (pos.entry_price - current_price) * pos.size
+
                     trade = {
                         "symbol": pos.symbol, "side": pos.side,
                         "entry_price": pos.entry_price, "exit_price": round(current_price, 4),
+                        "requested_exit_price": round(requested_exit_price, 4),
                         "entry_time": pos.entry_time, "exit_time": now_str,
                         "exit_reason": reason, "pnl_pct": round(pnl, 2),
                         "pnl_usd": round(pnl_usd, 4),
@@ -1770,6 +1778,7 @@ class Scanner:
                         "timeframe": tf,
                         "order_id": pos.order_id, "exchange_qty": pos.exchange_qty,
                         "exchange_close_success": exchange_ok,
+                        "paper_fill": paper_fill,
                     }
                     self.closed_trades.append(trade)
                     log_trade(trade)
@@ -1777,11 +1786,13 @@ class Scanner:
                     event = {
                         "time": now_str, "event": "CLOSE", "symbol": pos.symbol,
                         "side": pos.side, "exit_price": round(current_price, 4),
+                        "requested_exit_price": round(requested_exit_price, 4),
                         "reason": reason, "pnl_pct": round(pnl, 2),
                         "pnl_usd": round(pnl_usd, 4),
                         "entry_price": pos.entry_price, "entry_time": pos.entry_time,
                         "timeframe": tf,
                         "exchange_close_success": exchange_ok,
+                        "paper_fill": paper_fill,
                     }
                     log_event(event)
 
@@ -2539,12 +2550,18 @@ class Scanner:
 
         order_id = exec_result.order_id
         exchange_qty = exec_result.quantity or qty
+        raw_result = exec_result.raw if isinstance(exec_result.raw, dict) else {}
+        try:
+            execution_price = float(raw_result.get("avgPrice") or price)
+        except Exception:
+            execution_price = price
+        paper_fill = raw_result.get("paper_fill") if isinstance(raw_result.get("paper_fill"), dict) else {}
 
         # 记录持仓（v14优化：分档ATR止损）
         sl_m = calc_sl_mult_v14(sig.get("atr_pct", 0.02))
         pos = SimPosition(
             symbol=inst_id, side=side,
-            entry_price=price, size=exchange_qty,
+            entry_price=execution_price, size=exchange_qty,
             leverage=self.leverage,
             stop_loss=sl, take_profit=tp,
             atr_at_entry=atr,
@@ -2571,12 +2588,12 @@ class Scanner:
         self.cooldowns[tf][inst_id] = cooldown_end
 
         logger.info(
-            f"  ✅ 开仓[{tf}] {inst_id} {side} @ {price} | "
+            f"  ✅ 开仓[{tf}] {inst_id} {side} @ {execution_price} | "
             f"score={abs_score:.0f} qty={exchange_qty} SL={sl} | {'|'.join(reasons)}"
         )
         log_event({
             "time": now_str, "event": "OPEN", "symbol": inst_id,
-            "side": side, "price": price, "qty": exchange_qty,
+            "side": side, "price": execution_price, "requested_price": price, "qty": exchange_qty,
             "leverage": self.leverage,
             "sl": sl, "tp": tp, "score": abs_score,
             "reasons": reasons, "risk_usdt": risk_usdt,
@@ -2592,6 +2609,7 @@ class Scanner:
             "mfi": sig.get("mfi"),
             "st_flipped": sig.get("st_flipped"),
             "order_id": order_id,
+            "paper_fill": paper_fill,
             "strategy_gate_cases": [
                 *open_chain_cases,
                 *runtime_chain_cases,

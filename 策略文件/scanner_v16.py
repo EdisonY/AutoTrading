@@ -1743,11 +1743,16 @@ class ScannerV16:
                 self.cooldowns[tf][sym] = max(self.cooldowns[tf].get(sym, 0), 20)
                 return False
             exec_qty = exec_result.quantity or size_qty
+            try:
+                execution_price = float(r.get("avgPrice") or price) if isinstance(r, dict) else price
+            except Exception:
+                execution_price = price
+            paper_fill = r.get("paper_fill") if isinstance(r, dict) and isinstance(r.get("paper_fill"), dict) else {}
             pos = SimPosition(
-                symbol=sym, side=side, entry_price=price, size=exec_qty, leverage=LEVERAGE,
+                symbol=sym, side=side, entry_price=execution_price, size=exec_qty, leverage=LEVERAGE,
                 atr=atr, entry_time=datetime.now(CST), score=score, tf=tf,
                 stop_loss=sl, take_profit=tp, trailing_sl=sl,
-                highest=price, lowest=price,
+                highest=execution_price, lowest=execution_price,
                 order_id=str(r.get("orderId","")) if isinstance(r, dict) else "",
                 exchange_qty=exec_qty,
                 entry_reason=entry_reason,
@@ -1760,7 +1765,7 @@ class ScannerV16:
             logger.info(f"  ✅ 开仓成功: {sym} qty={exec_qty}")
             log_event({
                 "time": str(datetime.now(CST)), "event": "OPEN", "symbol": sym,
-                "side": side, "price": price, "qty": exec_qty, "leverage": LEVERAGE,
+                "side": side, "price": execution_price, "requested_price": price, "qty": exec_qty, "leverage": LEVERAGE,
                 "sl": sl, "tp": tp, "score": score, "timeframe": tf,
                 "sl_mult": sig.get("sl_mult"),
                 "entry_reason": entry_reason,
@@ -1772,6 +1777,7 @@ class ScannerV16:
                 "rsi": sig.get("rsi"),
                 "funding_rate": sig.get("funding_rate"),
                 "order_id": str(r.get("orderId","")) if isinstance(r, dict) else "",
+                "paper_fill": paper_fill,
                 "trade_size_usdt": TRADE_SIZE,
                 "small_live_stage_guard": STAGE_GUARD_SMALL_LIVE_ENABLED,
                 "approved_candidate_id": (
@@ -1857,6 +1863,8 @@ class ScannerV16:
                 self._close_position(tf, sym, pos, close, reason)
 
     def _close_position(self, tf, sym, pos, exit_price, reason):
+        requested_exit_price = exit_price
+        paper_fill = {}
         try:
             close_exec = self.execution.close_position(CloseRequest(
                 symbol=sym,
@@ -1894,6 +1902,12 @@ class ScannerV16:
                     ),
                 })
                 return
+            close_raw = close_exec.raw if isinstance(close_exec.raw, dict) else {}
+            try:
+                exit_price = float(close_raw.get("avgPrice") or exit_price)
+            except Exception:
+                exit_price = requested_exit_price
+            paper_fill = close_raw.get("paper_fill") if isinstance(close_raw.get("paper_fill"), dict) else {}
             logger.info(f"  平仓[{tf}]: {sym} {pos.side} {reason} @{exit_price:.4f}")
         except Exception as e:
             logger.error(f"  平仓失败: {e}")
@@ -1916,7 +1930,7 @@ class ScannerV16:
         self.capital += pos.cost + net_pnl
         trade = {
             "symbol": sym, "side": pos.side, "entry_price": pos.entry_price,
-            "exit_price": exit_price, "entry_time": str(pos.entry_time),
+            "exit_price": exit_price, "requested_exit_price": requested_exit_price, "entry_time": str(pos.entry_time),
             "exit_time": str(datetime.now(CST)), "exit_reason": reason,
             "pnl_pct": round(gross_pnl / pos.cost * 100, 2),
             "pnl_usd": round(net_pnl, 4), "leverage": pos.leverage,
@@ -1924,14 +1938,16 @@ class ScannerV16:
             "stop_loss": pos.stop_loss, "take_profit": pos.take_profit,
             "trailing_sl": pos.trailing_sl, "highest": pos.highest, "lowest": pos.lowest,
             "timeframe": tf, "cvd": 0, "ofi": 0, "rsi": 0, "funding_rate": 0,
+            "paper_fill": paper_fill,
         }
         log_trade(trade)
         log_event({
             "time": str(datetime.now(CST)), "event": "CLOSE", "symbol": sym,
-            "side": pos.side, "exit_price": exit_price, "reason": reason,
+            "side": pos.side, "exit_price": exit_price, "requested_exit_price": requested_exit_price, "reason": reason,
             "pnl_pct": trade["pnl_pct"], "pnl_usd": trade["pnl_usd"],
             "entry_price": pos.entry_price, "entry_time": str(pos.entry_time),
             "timeframe": tf,
+            "paper_fill": paper_fill,
         })
         risk_exit = ("止损" in reason) or ("硬底" in reason)
         if risk_exit:

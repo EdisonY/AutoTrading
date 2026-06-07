@@ -1720,6 +1720,20 @@ class Scanner:
             logger.warning(f"  释放弱仓失败: {pos.symbol} {pos.side} {close_exec.reason}")
             return (False, replacement_cases) if return_details else False
 
+        close_raw = close_exec.raw if isinstance(close_exec.raw, dict) else {}
+        requested_exit_price = exit_price
+        try:
+            exit_price = float(close_raw.get("avgPrice") or exit_price)
+        except Exception:
+            exit_price = requested_exit_price
+        paper_fill = close_raw.get("paper_fill") if isinstance(close_raw.get("paper_fill"), dict) else {}
+        if pos.side == "long":
+            pnl_pct = (exit_price - pos.entry_price) / pos.entry_price * 100 * pos.leverage
+            pnl_usd = (exit_price - pos.entry_price) * pos.size
+        else:
+            pnl_pct = (pos.entry_price - exit_price) / pos.entry_price * 100 * pos.leverage
+            pnl_usd = (pos.entry_price - exit_price) * pos.size
+
         release_gate = evaluate_a_v11_replacement_release_result_gate(
             release_success=True,
             reason="replacement_release_succeeded",
@@ -1741,6 +1755,7 @@ class Scanner:
         trade = {
             "symbol": pos.symbol, "side": pos.side,
             "entry_price": pos.entry_price, "exit_price": exit_price,
+            "requested_exit_price": requested_exit_price,
             "entry_time": pos.entry_time, "exit_time": now_str,
             "exit_reason": reason, "pnl_pct": round(pnl_pct, 2),
             "pnl_usd": round(pnl_usd, 4), "leverage": pos.leverage,
@@ -1750,6 +1765,7 @@ class Scanner:
             "exchange_qty": pos.exchange_qty, "exchange_close_success": True,
             "released_for": sig.get("symbol"), "released_for_score": new_score,
             "replacement_policy": REPLACEMENT_POLICY_VERSION,
+            "paper_fill": paper_fill,
         }
         self.closed_trades.append(trade)
         log_trade(trade)
@@ -1758,6 +1774,7 @@ class Scanner:
             "side": pos.side, "exit_price": trade["exit_price"],
             "reason": reason, "pnl_pct": round(pnl_pct, 2),
             "pnl_usd": round(pnl_usd, 4), "entry_price": pos.entry_price,
+            "requested_exit_price": requested_exit_price,
             "entry_time": pos.entry_time, "timeframe": old_tf,
             "new_symbol": sig.get("symbol"), "new_score": new_score,
             "old_score": pos.entry_score, "age_min": age_min,
@@ -1768,6 +1785,7 @@ class Scanner:
             "min_age_required": min_age,
             "soft_protect_pnl_pct": EVICT_SOFT_PROTECT_PNL_PCT,
             "hard_protect_pnl_pct": EVICT_HARD_PROTECT_PNL_PCT,
+            "paper_fill": paper_fill,
             "strategy_gate_cases": replacement_cases,
         })
         self.positions[old_tf].pop(key, None)
@@ -2811,7 +2829,7 @@ class Scanner:
                         gate="a_v11_margin_sizing",
                         inputs={
                             "quantity": exchange_qty,
-                            "price": price,
+                            "price": execution_price,
                             "risk_usdt": risk_usdt,
                             "leverage": self.leverage,
                             "order_margin_tolerance_pct": ORDER_MARGIN_TOLERANCE_PCT,
@@ -2998,6 +3016,11 @@ class Scanner:
                     context=paper_context,
                 ))
             result = exec_result.raw if isinstance(exec_result.raw, dict) else {}
+            try:
+                execution_price = float(result.get("avgPrice") or price)
+            except Exception:
+                execution_price = price
+            paper_fill = result.get("paper_fill") if isinstance(result.get("paper_fill"), dict) else {}
 
             # Binance 成功返回包含 orderId
             if exec_result.success:
@@ -3005,11 +3028,11 @@ class Scanner:
                 order_id = exec_result.order_id
                 planned_exchange_qty = exchange_qty
                 exchange_qty = float(exec_result.quantity or exchange_qty)
-                actual_margin_usdt = exchange_qty * price / self.leverage
+                actual_margin_usdt = exchange_qty * execution_price / self.leverage
                 if not min_notional_adjustment and not min_margin_usdt <= actual_margin_usdt <= max_margin_usdt:
                     confirmed_sizing_gate = evaluate_a_v11_margin_sizing_gate(
                         quantity=exchange_qty,
-                        price=price,
+                        price=execution_price,
                         risk_usdt=risk_usdt,
                         leverage=self.leverage,
                         order_margin_tolerance_pct=ORDER_MARGIN_TOLERANCE_PCT,
@@ -3266,7 +3289,7 @@ class Scanner:
         pos = SimPosition(
             symbol=sig["symbol"],
             side=side,
-            entry_price=sig["price"],
+            entry_price=execution_price,
             size=float(exchange_qty),
             leverage=self.leverage,
             stop_loss=sl,
@@ -3288,7 +3311,7 @@ class Scanner:
 
         event = {
             "time": now_str, "event": "OPEN", "symbol": sig["symbol"],
-            "side": side, "price": sig["price"], "sl": sl, "tp": tp,
+            "side": side, "price": execution_price, "requested_price": sig["price"], "sl": sl, "tp": tp,
             "score": net_score, "reasons": reasons,
             "atr": sig["atr"], "leverage": self.leverage,
             "divergence": sig["divergence_primary"]["description"],
@@ -3299,10 +3322,11 @@ class Scanner:
             "order_id": order_id,
             "exchange_qty": exchange_qty,
             "planned_exchange_qty": locals().get("planned_exchange_qty", exchange_qty),
+            "paper_fill": paper_fill,
             "sizing_policy": "fixed_margin_v1",
             "target_margin_usdt": risk_usdt,
-            "expected_margin_usdt": round(exchange_qty * price / self.leverage, 4),
-            "expected_notional_usdt": round(exchange_qty * price, 4),
+            "expected_margin_usdt": round(exchange_qty * execution_price / self.leverage, 4),
+            "expected_notional_usdt": round(exchange_qty * execution_price, 4),
             "min_notional_adjusted": min_notional_adjustment,
             "exchange_success": exchange_success,
             "decision_stage": "open",
@@ -3322,7 +3346,7 @@ class Scanner:
         log_event(event)
         res_str = " ⚡共振" if resonance else ""
         exchange_str = f" [{exchange_qty}]" if exchange_success else " [本地模拟]"
-        logger.info(f"  ✅ 开仓[{tf}]: {sig['symbol']} {side} @ {sig['price']}{exchange_str} | SL={sl} TP={tp} | {pos.entry_reason}{res_str}")
+        logger.info(f"  ✅ 开仓[{tf}]: {sig['symbol']} {side} @ {execution_price}{exchange_str} | SL={sl} TP={tp} | {pos.entry_reason}{res_str}")
 
     def _check_exits(self, now_str: str, now_dt: datetime = None):
         """检查所有周期持仓的止盈止损，触发平仓时在交易所平仓"""
@@ -3366,6 +3390,8 @@ class Scanner:
                 # ── 真实平仓 ──
                 exchange_close_success = False
                 close_failure_case = None
+                requested_exit_price = exit_price
+                paper_fill = {}
                 if pos.exchange_qty > 0:
                     try:
                         pos_side = "long" if pos.side == "long" else "short"
@@ -3390,6 +3416,12 @@ class Scanner:
                         ))
                         if close_exec.success:
                             exchange_close_success = True
+                            close_raw = close_exec.raw if isinstance(close_exec.raw, dict) else {}
+                            try:
+                                exit_price = float(close_raw.get("avgPrice") or exit_price)
+                            except Exception:
+                                pass
+                            paper_fill = close_raw.get("paper_fill") if isinstance(close_raw.get("paper_fill"), dict) else {}
                             logger.info(f"  平仓成功: {sym} {pos_side} {pos.exchange_qty}")
                         else:
                             logger.error(f"  平仓失败: {close_exec.reason}")
@@ -3418,6 +3450,7 @@ class Scanner:
                 trade = {
                     "symbol": sym, "side": pos.side,
                     "entry_price": pos.entry_price, "exit_price": round(exit_price, 4),
+                    "requested_exit_price": round(requested_exit_price, 4),
                     "entry_time": pos.entry_time, "exit_time": now_str,
                     "exit_reason": reason, "pnl_pct": round(pnl, 2),
                     "pnl_usd": round(pnl_usd, 4),
@@ -3432,6 +3465,7 @@ class Scanner:
                     "order_id": pos.order_id,
                     "exchange_qty": pos.exchange_qty,
                     "exchange_close_success": exchange_close_success,
+                    "paper_fill": paper_fill,
                 }
                 self.closed_trades.append(trade)
                 log_trade(trade)
@@ -3439,8 +3473,10 @@ class Scanner:
                 event = {
                     "time": now_str, "event": "CLOSE", "symbol": sym,
                     "side": pos.side, "exit_price": round(exit_price, 4),
+                    "requested_exit_price": round(requested_exit_price, 4),
                     "reason": reason, "pnl_pct": round(pnl, 2),
                     "pnl_usd": round(pnl_usd, 4),
+                    "paper_fill": paper_fill,
                     "entry_price": pos.entry_price,
                     "entry_time": pos.entry_time,
                     "timeframe": tf,

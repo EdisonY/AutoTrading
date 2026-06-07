@@ -472,6 +472,7 @@
 - 2026-06-07：修正 paper 主线下的 report/alert 一致性规则。只要 `paper_exchange_latest.json` 表明当前是自建模拟账本，真实 `crypto-account-snapshot.service` 停用、真实账户快照缺失/偏旧、`account_snapshots` 为空都不应作为首页或 attention 的 P1/P0 操作项。首页 KPI/功能卡要优先展示“自建模拟账本”的持仓、浮盈亏、刷新年龄和 A/B/C 分解；真实账户快照只属于未来真实交易所恢复 gate 的二级面板。
 - 2026-06-07：开始推进“手动干预闭环 + 半自动回滚”。`收窄 B/v16` / `准备回滚` 这类 report-side 决策现在会被 `rollback_execution_plan.py` 消费，并把匹配的 rollback-watch 候选升级为 operator-requested dry-run plan。它只生成可审计执行计划和 dry-run/review 状态，不自动选择 release id、不改 config、不部署、不重启 scanner、不下单；下一步才是执行计划预览 UI 和 release-id 人工复核路径。
 - 2026-06-08：Kline/depth 已不是 replay readiness 主要 blocker，剩余问题是 paper 事件上下文。后续 paper exchange 事件必须保存源候选周期、ATR、SL/TP、源 payload 和 CLOSE 的 entry_time；rollout review 应把旧的 `timeframe=paper_exchange` 样本标成 paper context gap，而不是误报 Kline/depth 或普通 missing-open。历史无上下文事件不能硬推成 ready，自动回滚/自动调参仍等 fresh contextual paired samples。
+- 2026-06-08：`paper_fill_model_v2` 本地落地为自建模拟账本默认 fill 模型。它优先用新鲜本地 depth snapshot 做 side-aware 盘口撮合，记录 requested/executed qty/price、partial fill、fill ratio、slippage、depth source/age 和 fallback reason；无新鲜盘口时用 side-aware synthetic spread/slippage。A/B/C scanner 本地持仓和 OPEN/CLOSE 事件要用 executed paper fill 价量，同时保留 requested price/exit price。记住：这只是更接近真实实盘，不是无差别；自动回滚/自动调参仍等 replay readiness fresh contextual paired samples 和后续 paper-vs-small-real 校准。
 
 ---
 ## 2026-05-29 全局运行自检与账户方向口径修复

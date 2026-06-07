@@ -277,7 +277,10 @@ class ExecutionEngineAccountStateTest(unittest.TestCase):
         self.assertTrue(result.success)
         self.assertEqual(latest["mode"], "paper_exchange")
         self.assertEqual(latest["open_positions"], 1)
-        self.assertEqual(latest["by_strategy"]["A/v11"]["fees_paid"], 0.16)
+        self.assertGreater(latest["by_strategy"]["A/v11"]["fees_paid"], 0.16)
+        fill = latest["recent_fills"][-1]
+        self.assertEqual(fill["paper_fill_model_version"], "v2")
+        self.assertEqual(fill["paper_fill_source"], "synthetic_fallback")
 
     def test_paper_close_skips_cancel_position_and_client_close(self):
         old_order = os.environ.get("SCANNER_ORDER_ENABLED")
@@ -310,6 +313,67 @@ class ExecutionEngineAccountStateTest(unittest.TestCase):
         self.assertEqual(client.delete_calls, [])
         self.assertEqual(client.close_calls, [])
         self.assertEqual(client.get_positions_calls, 0)
+
+    def test_paper_close_without_matching_ledger_fill_keeps_requested_fill(self):
+        old_order = os.environ.get("SCANNER_ORDER_ENABLED")
+        old_mode = os.environ.get("SCANNER_EXECUTION_MODE")
+        old_ledger = os.environ.get("PAPER_EXCHANGE_LEDGER_ENABLED")
+        old_fill_model = os.environ.get("PAPER_FILL_MODEL_VERSION")
+        os.environ["SCANNER_ORDER_ENABLED"] = "0"
+        os.environ["SCANNER_EXECUTION_MODE"] = "paper"
+        os.environ["PAPER_EXCHANGE_LEDGER_ENABLED"] = "1"
+        os.environ["PAPER_FILL_MODEL_VERSION"] = "v1"
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                client = FakeClient()
+                engine = ExecutionEngine(client, "A/v11", account_state_root=root)
+                open_result = engine.open_position(OpenRequest(
+                    symbol="BTCUSDT",
+                    side="long",
+                    price=100.0,
+                    risk_usdt=100.0,
+                    leverage=4,
+                    take_profit=110.0,
+                    stop_loss=90.0,
+                ))
+                self.assertTrue(open_result.success)
+                close_result = engine.close_position(CloseRequest(
+                    symbol="BTCUSDT",
+                    side="long",
+                    quantity=open_result.quantity,
+                    context={"strategy": "A/v11", "exit_price": 101.0},
+                ))
+                self.assertTrue(close_result.success)
+
+                result = engine.close_position(CloseRequest(
+                    symbol="ETHUSDT",
+                    side="long",
+                    quantity=3.0,
+                    context={"strategy": "A/v11", "exit_price": 200.0},
+                ))
+        finally:
+            if old_order is None:
+                os.environ.pop("SCANNER_ORDER_ENABLED", None)
+            else:
+                os.environ["SCANNER_ORDER_ENABLED"] = old_order
+            if old_mode is None:
+                os.environ.pop("SCANNER_EXECUTION_MODE", None)
+            else:
+                os.environ["SCANNER_EXECUTION_MODE"] = old_mode
+            if old_ledger is None:
+                os.environ.pop("PAPER_EXCHANGE_LEDGER_ENABLED", None)
+            else:
+                os.environ["PAPER_EXCHANGE_LEDGER_ENABLED"] = old_ledger
+            if old_fill_model is None:
+                os.environ.pop("PAPER_FILL_MODEL_VERSION", None)
+            else:
+                os.environ["PAPER_FILL_MODEL_VERSION"] = old_fill_model
+
+        self.assertTrue(result.success)
+        self.assertEqual(result.quantity, 3.0)
+        self.assertEqual(result.raw["avgPrice"], 200.0)
+        self.assertNotIn("paper_fill", result.raw)
 
     def test_close_does_not_cancel_open_orders_by_default(self):
         with tempfile.TemporaryDirectory() as tmp:

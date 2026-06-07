@@ -272,7 +272,7 @@ def open_bootstrap_positions(root: Path, exchange: PaperExchange, target_per_str
             qty = (margin_usdt * leverage) / price
             side = str(item["side"])
             order_id = f"PAPERX-{strategy.replace('/', '-')}-{item['symbol']}-{int(datetime.now(CST).timestamp())}"
-            exchange.open_market(
+            summary = exchange.open_market(
                 strategy=strategy,
                 symbol=item["symbol"],
                 side=side,
@@ -295,6 +295,11 @@ def open_bootstrap_positions(root: Path, exchange: PaperExchange, target_per_str
                     "paper_exchange_bootstrap": True,
                 },
             )
+            after_fill = (summary.get("recent_fills") or [{}])[-1] if isinstance(summary, dict) else {}
+            if not isinstance(after_fill, dict):
+                after_fill = {}
+            event_price = safe_float(after_fill.get("executed_price"), price)
+            event_qty = safe_float(after_fill.get("executed_qty"), qty)
             event_timeframe = str(item.get("timeframe") or "paper_exchange")
             writer.write_event(
                 {
@@ -303,9 +308,11 @@ def open_bootstrap_positions(root: Path, exchange: PaperExchange, target_per_str
                     "strategy": strategy,
                     "symbol": item["symbol"],
                     "side": side,
-                    "price": price,
-                    "qty": qty,
-                    "exchange_qty": qty,
+                    "price": event_price,
+                    "requested_price": price,
+                    "qty": event_qty,
+                    "requested_qty": qty,
+                    "exchange_qty": event_qty,
                     "leverage": leverage,
                     "score": item.get("score", 0),
                     "reason": "paper_exchange_bootstrap",
@@ -322,9 +329,10 @@ def open_bootstrap_positions(root: Path, exchange: PaperExchange, target_per_str
                     "paper": True,
                     "mode": "paper_exchange",
                     "simulation_only": True,
-                    "expected_notional_usdt": round(qty * price, 6),
+                    "expected_notional_usdt": round(event_qty * event_price, 6),
                     "target_margin_usdt": margin_usdt,
                     "price_source": item.get("price_source"),
+                    "paper_fill": after_fill,
                     "source_candidate": item.get("source"),
                     "source_event_type": item.get("source_event_type"),
                     "source_ts": item.get("source_ts"),
@@ -361,8 +369,12 @@ def close_hit_positions(root: Path, exchange: PaperExchange, take_profit_pct: fl
         context = pos.get("context") if isinstance(pos.get("context"), dict) else {}
         event_timeframe = str(context.get("timeframe") or "paper_exchange")
         order_id = f"PAPERX-CLOSE-{strategy.replace('/', '-')}-{symbol}-{int(datetime.now(CST).timestamp())}"
-        exchange.close_market(strategy=strategy, symbol=symbol, side=side, qty=qty, price=mark, order_id=order_id, reason=reason)
-        after_fill = (exchange.load().get("fills") or [])[-1]
+        summary = exchange.close_market(strategy=strategy, symbol=symbol, side=side, qty=qty, price=mark, order_id=order_id, reason=reason)
+        after_fill = (summary.get("recent_fills") or [{}])[-1] if isinstance(summary, dict) else {}
+        if not isinstance(after_fill, dict):
+            after_fill = {}
+        event_exit_price = safe_float(after_fill.get("executed_price"), mark)
+        event_qty = safe_float(after_fill.get("executed_qty"), qty)
         writer.write_event(
             {
                 "time": datetime.now(CST).isoformat(),
@@ -370,10 +382,12 @@ def close_hit_positions(root: Path, exchange: PaperExchange, take_profit_pct: fl
                 "strategy": strategy,
                 "symbol": symbol,
                 "side": side,
-                "exit_price": mark,
+                "exit_price": event_exit_price,
+                "requested_exit_price": mark,
                 "entry_price": entry,
                 "entry_time": pos.get("opened_at"),
-                "qty": qty,
+                "qty": event_qty,
+                "requested_qty": qty,
                 "reason": reason,
                 "pnl_usd": after_fill.get("realized_pnl"),
                 "fee": after_fill.get("fee"),
@@ -389,6 +403,7 @@ def close_hit_positions(root: Path, exchange: PaperExchange, take_profit_pct: fl
                 "paper": True,
                 "mode": "paper_exchange",
                 "simulation_only": True,
+                "paper_fill": after_fill,
                 "source_candidate": context.get("source"),
                 "source_event_type": context.get("source_event_type"),
                 "source_ts": context.get("source_ts"),

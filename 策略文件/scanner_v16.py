@@ -1631,6 +1631,34 @@ class ScannerV16:
         )
         runtime_chain_cases.append(quantity_case)
         logger.info(f"  开仓[{tf}]: {sym} {side} @{price:.4f} 分数={score} 原因={'+'.join(sig[f'reasons_{side}'][:2])}")
+        entry_reason = "+".join(sig.get(f"reasons_{side}", [])[:6])
+        paper_context = {
+            "strategy": "B/v16",
+            "source_event_type": "SIGNAL",
+            "source_ts": str(datetime.now(CST)),
+            "timeframe": tf,
+            "atr": float(atr or 0),
+            "stop_loss": float(sl or 0),
+            "take_profit": float(tp or 0),
+            "score": float(score or 0),
+            "reason": entry_reason or "scanner_paper_open",
+            "entry_reason": entry_reason,
+            "source_payload": {
+                "symbol": sym,
+                "side": side,
+                "timeframe": tf,
+                "score": float(score or 0),
+                "atr": float(atr or 0),
+                "sl": float(sl or 0),
+                "tp": float(tp or 0),
+                "sl_mult": float(sig.get("sl_mult") or 0),
+                "cvd": float(sig.get("cvd") or 0),
+                "ofi": float(sig.get("ofi") or 0),
+                "rsi": float(sig.get("rsi") or 0),
+                "funding_rate": float(sig.get("funding_rate") or 0),
+                "reasons": [str(x) for x in sig.get(f"reasons_{side}", [])[:6]],
+            },
+        }
 
         try:
             exec_result = self.execution.open_position(OpenRequest(
@@ -1643,6 +1671,7 @@ class ScannerV16:
                 stop_loss=sl,
                 quantity=size_qty,
                 confirm_position=True,
+                context=paper_context,
             ))
             r = exec_result.raw if isinstance(exec_result.raw, dict) else {}
 
@@ -1721,7 +1750,7 @@ class ScannerV16:
                 highest=price, lowest=price,
                 order_id=str(r.get("orderId","")) if isinstance(r, dict) else "",
                 exchange_qty=exec_qty,
-                entry_reason="+".join(sig.get(f"reasons_{side}", [])[:6]),
+                entry_reason=entry_reason,
                 confirm_reason=confirm_reason,
                 cvd=float(sig.get("cvd") or 0),
                 ofi=float(sig.get("ofi") or 0),
@@ -1734,7 +1763,7 @@ class ScannerV16:
                 "side": side, "price": price, "qty": exec_qty, "leverage": LEVERAGE,
                 "sl": sl, "tp": tp, "score": score, "timeframe": tf,
                 "sl_mult": sig.get("sl_mult"),
-                "entry_reason": "+".join(sig.get(f"reasons_{side}", [])[:6]),
+                "entry_reason": entry_reason,
                 "confirm_reason": confirm_reason,
                 "reasons": sig.get(f"reasons_{side}", []),
                 "decision_stage": "open",
@@ -1834,6 +1863,19 @@ class ScannerV16:
                 side=pos.side,
                 quantity=pos.exchange_qty,
                 cancel_open_orders=True,
+                context={
+                    "strategy": "B/v16",
+                    "reason": reason,
+                    "exit_price": exit_price,
+                    "entry_price": pos.entry_price,
+                    "entry_time": str(pos.entry_time),
+                    "timeframe": tf,
+                    "atr": pos.atr,
+                    "stop_loss": pos.stop_loss,
+                    "take_profit": pos.take_profit,
+                    "score": pos.score,
+                    "entry_reason": pos.entry_reason,
+                },
             ))
             if not close_exec.success:
                 logger.error(f"  平仓失败: {close_exec.reason}")

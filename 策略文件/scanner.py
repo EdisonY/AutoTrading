@@ -1666,11 +1666,25 @@ class Scanner:
         if not found:
             return (False, candidate_cases) if return_details else False
         old_tf, key, pos, pnl_pct, pnl_usd, age_min, gap_required, min_age = found
+        exit_price = fetch_current_price(pos.symbol)
         close_exec = self.execution.close_position(CloseRequest(
             symbol=pos.symbol,
             side=pos.side,
             quantity=pos.exchange_qty,
             cancel_open_orders=True,
+            context={
+                "strategy": "A/v11",
+                "reason": reason,
+                "exit_price": exit_price,
+                "entry_price": pos.entry_price,
+                "entry_time": pos.entry_time,
+                "timeframe": old_tf,
+                "atr": pos.atr_at_entry,
+                "stop_loss": pos.stop_loss,
+                "take_profit": pos.take_profit,
+                "score": pos.entry_score,
+                "entry_reason": pos.entry_reason,
+            },
         ))
         if not close_exec.success:
             release_gate = evaluate_a_v11_replacement_release_result_gate(
@@ -1726,7 +1740,7 @@ class Scanner:
         replacement_cases = [*candidate_cases, release_case, close_case]
         trade = {
             "symbol": pos.symbol, "side": pos.side,
-            "entry_price": pos.entry_price, "exit_price": fetch_current_price(pos.symbol),
+            "entry_price": pos.entry_price, "exit_price": exit_price,
             "entry_time": pos.entry_time, "exit_time": now_str,
             "exit_reason": reason, "pnl_pct": round(pnl_pct, 2),
             "pnl_usd": round(pnl_usd, 4), "leverage": pos.leverage,
@@ -2941,6 +2955,30 @@ class Scanner:
                 runtime_chain_cases.extend(risk_cases)
 
             # 下单
+            entry_reason = "|".join(reasons)
+            paper_context = {
+                "strategy": "A/v11",
+                "source_event_type": "SIGNAL",
+                "source_ts": now_str,
+                "timeframe": tf,
+                "atr": float(sig["atr"] or 0),
+                "stop_loss": float(sl or 0),
+                "take_profit": float(tp or 0),
+                "score": float(net_score or 0),
+                "reason": entry_reason or "scanner_paper_open",
+                "entry_reason": entry_reason,
+                "source_payload": {
+                    "symbol": inst_id,
+                    "side": side,
+                    "timeframe": tf,
+                    "score": float(net_score or 0),
+                    "atr": float(sig["atr"] or 0),
+                    "sl": float(sl or 0),
+                    "tp": float(tp or 0),
+                    "resonance": float(resonance or 0),
+                    "reasons": [str(x) for x in reasons],
+                },
+            }
             if side == "long":
                 exec_result = self.execution.open_position(OpenRequest(
                     symbol=inst_id, side="long", price=price,
@@ -2948,6 +2986,7 @@ class Scanner:
                     take_profit=tp, stop_loss=sl,
                     quantity=exchange_qty,
                     confirm_position=True,
+                    context=paper_context,
                 ))
             else:
                 exec_result = self.execution.open_position(OpenRequest(
@@ -2956,6 +2995,7 @@ class Scanner:
                     take_profit=tp, stop_loss=sl,
                     quantity=exchange_qty,
                     confirm_position=True,
+                    context=paper_context,
                 ))
             result = exec_result.raw if isinstance(exec_result.raw, dict) else {}
 
@@ -3000,6 +3040,19 @@ class Scanner:
                         side=side,
                         quantity=exchange_qty,
                         cancel_open_orders=True,
+                        context={
+                            "strategy": "A/v11",
+                            "reason": "post_open_sizing_mismatch",
+                            "exit_price": price,
+                            "entry_price": price,
+                            "entry_time": now_str,
+                            "timeframe": tf,
+                            "atr": sig["atr"],
+                            "stop_loss": sl,
+                            "take_profit": tp,
+                            "score": net_score,
+                            "entry_reason": entry_reason,
+                        },
                     ))
                     close_execution_case = _execution_result_case(
                         "a_v11_post_open_sizing_close_execution_result",
@@ -3321,6 +3374,19 @@ class Scanner:
                             side=pos_side,
                             quantity=pos.exchange_qty,
                             cancel_open_orders=True,
+                            context={
+                                "strategy": "A/v11",
+                                "reason": reason,
+                                "exit_price": exit_price,
+                                "entry_price": pos.entry_price,
+                                "entry_time": pos.entry_time,
+                                "timeframe": tf,
+                                "atr": pos.atr_at_entry,
+                                "stop_loss": pos.stop_loss,
+                                "take_profit": pos.take_profit,
+                                "score": pos.entry_score,
+                                "entry_reason": pos.entry_reason,
+                            },
                         ))
                         if close_exec.success:
                             exchange_close_success = True

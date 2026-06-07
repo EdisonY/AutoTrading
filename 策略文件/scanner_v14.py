@@ -1723,6 +1723,19 @@ class Scanner:
                         side=pos.side,
                         quantity=pos.exchange_qty,
                         cancel_open_orders=True,
+                        context={
+                            "strategy": "C/v14",
+                            "reason": reason,
+                            "exit_price": current_price,
+                            "entry_price": pos.entry_price,
+                            "entry_time": pos.entry_time,
+                            "timeframe": tf,
+                            "atr": pos.atr_at_entry,
+                            "stop_loss": pos.stop_loss,
+                            "take_profit": pos.take_profit,
+                            "score": pos.entry_score,
+                            "entry_reason": pos.entry_reason,
+                        },
                     ))
                     exchange_ok = close_exec.success
                     if not exchange_ok:
@@ -2396,6 +2409,36 @@ class Scanner:
             meta={"strategy": "C/v14", "timeframe": tf, "chain_step": "positive_quantity"},
         )
         runtime_chain_cases.append(quantity_case)
+        entry_reason = "|".join(reasons)
+        paper_context = {
+            "strategy": "C/v14",
+            "source_event_type": "SIGNAL",
+            "source_ts": now_str,
+            "timeframe": tf,
+            "atr": float(atr or 0),
+            "stop_loss": float(sl or 0),
+            "take_profit": float(tp or 0),
+            "score": float(abs_score or 0),
+            "reason": entry_reason or "scanner_paper_open",
+            "entry_reason": entry_reason,
+            "source_payload": {
+                "symbol": inst_id,
+                "side": side,
+                "timeframe": tf,
+                "score": float(abs_score or 0),
+                "atr": float(atr or 0),
+                "atr_pct": float(sig.get("atr_pct") or 0),
+                "sl": float(sl or 0),
+                "tp": float(tp or 0),
+                "bb_pos": float(sig.get("bb_pos") or 0),
+                "rsi": float(sig.get("rsi") or 0),
+                "adx": float(sig.get("adx") or 0),
+                "vol_ratio": float(sig.get("vol_ratio") or 0),
+                "mfi": float(sig.get("mfi") or 0),
+                "st_flipped": bool(sig.get("st_flipped")),
+                "reasons": [str(x) for x in reasons],
+            },
+        }
 
         if not scanner_order_enabled():
             exec_result = self.execution.open_position(OpenRequest(
@@ -2408,6 +2451,7 @@ class Scanner:
                 stop_loss=sl,
                 quantity=qty,
                 confirm_position=True,
+                context=paper_context,
             ))
         else:
             # 设置杠杆和保证金类型
@@ -2424,6 +2468,7 @@ class Scanner:
                 stop_loss=sl,
                 quantity=qty,
                 confirm_position=True,
+                context=paper_context,
             ))
         if not exec_result.success:
             execution_gate = evaluate_execution_result_gate(
@@ -2505,7 +2550,7 @@ class Scanner:
             atr_at_entry=atr,
             entry_time=now_str,
             entry_score=abs_score,
-            entry_reason="|".join(reasons),
+            entry_reason=entry_reason,
             timeframe=tf,
             sl_mult=sl_m, tp_mult=TP_MAX_MULT,
             trail_activate=TRAILING_ACTIVATE.get(tf, 1.5),
@@ -2536,7 +2581,7 @@ class Scanner:
             "sl": sl, "tp": tp, "score": abs_score,
             "reasons": reasons, "risk_usdt": risk_usdt,
             "atr": atr, "timeframe": tf,
-            "entry_reason": "|".join(reasons),
+            "entry_reason": entry_reason,
             "sample_expansion_policy": SAMPLE_EXPANSION_POLICY,
             "decision_stage": "open",
             "atr_pct": sig.get("atr_pct"),

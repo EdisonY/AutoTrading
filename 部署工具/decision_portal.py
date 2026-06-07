@@ -30,6 +30,8 @@ REPORTS_DIR = ROOT / "reports"
 RUNTIME_DIR = ROOT / "runtime"
 MIRROR_RUNTIME_DIR = ROOT / "server_logs_tencent" / "runtime"
 ATTENTION_JSON = ROOT / "research_memory" / "attention" / "open_items.json"
+LIVE_ATTENTION_JSON = RUNTIME_DIR / "live_attention_latest.json"
+MIRROR_ATTENTION_JSON = MIRROR_RUNTIME_DIR / "live_attention_latest.json"
 LOCAL_DB = RUNTIME_DIR / "event_store.sqlite3"
 MIRROR_DB = ROOT / "server_logs_tencent" / "runtime" / "event_store.sqlite3"
 EVENT_DB = MIRROR_DB if MIRROR_DB.exists() else LOCAL_DB
@@ -623,7 +625,7 @@ def strategy_rows(
 
 
 def attention_items(limit: int = 8) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-    payload = read_json(ATTENTION_JSON)
+    payload = read_first_json(ATTENTION_JSON, LIVE_ATTENTION_JSON, MIRROR_ATTENTION_JSON)
     items = [
         item for item in payload.get("items", [])
         if (
@@ -659,12 +661,40 @@ def plain_attention_title(item: dict[str, Any]) -> str:
     strategy = item_strategy(item)
     item_id = str(item.get("item_id") or "")
     if category == "策略回滚" or item_id.startswith("rollback:"):
-        return f"{strategy} 已上线改动需要复核"
+        change = plain_attention_change_name(item)
+        return f"{strategy} {change}上线后表现需要你复核"
     if category == "策略进化":
         if priority in {"P0", "P1"}:
             return f"{strategy} 有策略改动需要你决定"
         return f"{strategy} 有策略改进在观察"
     return title
+
+
+def plain_attention_change_name(item: dict[str, Any]) -> str:
+    text = " ".join(str(item.get(key) or "") for key in ("item_id", "title", "evidence")).lower()
+    if "atr-stop-bands" in text:
+        return "ATR止损带改动"
+    if "overheat-cap-85" in text:
+        return "过热上限 85 改动"
+    if "trailing-pullback" in text:
+        return "移动止盈回撤改动"
+    if "replacement-quality" in text:
+        return "换仓质量改动"
+    if "confirm-soft-pass" in text or "confirmation-soft-pass" in text:
+        return "确认条件放宽改动"
+    return "策略改动"
+
+
+def plain_attention_metrics(text: str) -> tuple[str | None, str | None]:
+    pnl = None
+    pf = None
+    pnl_match = re.search(r"pnl_after_cost=([-+]?\d+(?:\.\d+)?)", text)
+    pf_match = re.search(r"profit_factor=([-+]?\d+(?:\.\d+)?)", text)
+    if pnl_match:
+        pnl = pnl_match.group(1)
+    if pf_match:
+        pf = pf_match.group(1)
+    return pnl, pf
 
 
 def plain_attention_evidence(item: dict[str, Any]) -> str:
@@ -674,7 +704,15 @@ def plain_attention_evidence(item: dict[str, Any]) -> str:
     if "HTTP 418" in text or "-1003" in text:
         return "以前触发过交易所接口保护；如果再次出现，要先停扩量，等冷却清干净。"
     if category == "策略回滚" or item_id.startswith("rollback:"):
-        return "这项已经上线过，现在要看真实表现是否继续、收窄，还是准备回滚。"
+        pnl, pf = plain_attention_metrics(text)
+        if pnl or pf:
+            bits = []
+            if pnl:
+                bits.append(f"扣费后盈亏约 {pnl} USDT")
+            if pf:
+                bits.append(f"收益因子 PF={pf}")
+            return "为什么出现：最近评估窗口里 " + "，".join(bits) + "，低于系统的继续放开警戒线；所以提醒你复核这次 B/v16 改动是否还要继续跑。"
+        return "为什么出现：这项已经上线过，但最近表现触发了复核线；现在要判断继续观察、收窄，还是准备回滚。"
     if category == "策略进化":
         if "small_live_monitoring" in text:
             return "现在只是小仓观察，不能当成已经验证好的正式升级。"
@@ -695,7 +733,7 @@ def plain_attention_action(item: dict[str, Any]) -> str:
     priority = str(item.get("priority") or "")
     if category in {"策略进化", "策略回滚"}:
         if "rollback" in action or category == "策略回滚":
-            return "打开详情看盈亏和失败原因，决定继续观察、收窄，或准备回滚。"
+            return "你要做：先点右侧“策略进化”或“完整旧版详情”看这项的盈亏、失败原因和样本数。看完后，如果接受继续收样，就点“我已读”；如果不接受，告诉我收窄 B/v16 或准备回滚。点“我已读”不会自动改策略。"
         if "shadow" in action:
             return "不用现在上线，继续收样；等有真实/纸面盈利证据再说。"
         return "先看详情，再决定继续观察还是暂停扩样。"
@@ -704,6 +742,14 @@ def plain_attention_action(item: dict[str, Any]) -> str:
     if priority == "P1":
         return "看一眼是否接受这个风险；接受或处理完后点确认。"
     return "不用现在处理，继续观察。"
+
+
+def attention_button_label(item: dict[str, Any]) -> str:
+    category = str(item.get("category") or "")
+    item_id = str(item.get("item_id") or "")
+    if category in {"策略进化", "策略回滚"} or item_id.startswith(("rollback:", "evolution:")):
+        return "我已读"
+    return "确认"
 
 
 def cleanup_summary() -> dict[str, Any]:
@@ -1006,19 +1052,21 @@ def render_attention(items: list[dict[str, Any]]) -> str:
         title = plain_attention_title(item)
         evidence = plain_attention_evidence(item)
         action = plain_attention_action(item)
+        button = attention_button_label(item)
         rows.append(
             f"""
 <tr data-item="{h(item_id)}">
   <td><b>{h(attention_level_label(priority))}</b><small>{h(priority)}</small></td>
-  <td>{h(title)}<small>{h(evidence)}</small></td>
+  <td>{h(title)}<small>这不是服务故障，是上线后表现复核提醒。</small></td>
+  <td>{h(evidence)}</td>
   <td>{h(action)}</td>
-  <td><button class="icon-btn" onclick="ackItem('{h(item_id)}', this)">确认</button></td>
+  <td><button class="icon-btn" onclick="ackItem('{h(item_id)}', this)">{h(button)}</button></td>
 </tr>
 """.strip()
         )
     return f"""
 <table>
-  <thead><tr><th>级别</th><th>事项</th><th>建议</th><th></th></tr></thead>
+  <thead><tr><th>级别</th><th>事项</th><th>为什么出现</th><th>你现在要做什么</th><th></th></tr></thead>
   <tbody>{''.join(rows)}</tbody>
 </table>
 """

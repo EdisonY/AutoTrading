@@ -1,7 +1,9 @@
 import importlib.util
 import json
+import os
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -30,10 +32,16 @@ class DecisionPortalTests(unittest.TestCase):
         self.attention_json = self.root / "research_memory" / "attention" / "open_items.json"
         self.attention_json.parent.mkdir(parents=True)
         self.old_attention_json = self.tool.ATTENTION_JSON
+        self.old_live_attention_json = self.tool.LIVE_ATTENTION_JSON
+        self.old_mirror_attention_json = self.tool.MIRROR_ATTENTION_JSON
         self.tool.ATTENTION_JSON = self.attention_json
+        self.tool.LIVE_ATTENTION_JSON = self.root / "runtime" / "live_attention_latest.json"
+        self.tool.MIRROR_ATTENTION_JSON = self.root / "server_logs_tencent" / "runtime" / "live_attention_latest.json"
 
     def tearDown(self):
         self.tool.ATTENTION_JSON = self.old_attention_json
+        self.tool.LIVE_ATTENTION_JSON = self.old_live_attention_json
+        self.tool.MIRROR_ATTENTION_JSON = self.old_mirror_attention_json
         self.tmp.cleanup()
 
     def test_confirm_section_only_shows_current_p0_p1_in_plain_chinese(self):
@@ -75,11 +83,61 @@ class DecisionPortalTests(unittest.TestCase):
         html = self.tool.render_attention(items)
 
         self.assertEqual([item["item_id"] for item in items], ["rollback:exp-current"])
-        self.assertIn("A/v11 已上线改动需要复核", html)
-        self.assertIn("决定继续观察、收窄，或准备回滚", html)
+        self.assertIn("A/v11 策略改动上线后表现需要你复核", html)
+        self.assertIn("为什么出现", html)
+        self.assertIn("你现在要做什么", html)
+        self.assertIn("点“我已读”不会自动改策略", html)
         self.assertNotIn("EXP-current", html)
         self.assertNotIn("EXP-old", html)
         self.assertNotIn("replacement-quality", html)
+
+    def test_confirm_section_explains_b_v16_rollback_items(self):
+        item = {
+            "item_id": "rollback:exp-20260527-v16-atr-stop-bands",
+            "priority": "P1",
+            "category": "策略回滚",
+            "title": "P1 B/v16 回滚观察 EXP-20260527-v16-atr-stop-bands",
+            "status": "open",
+            "evidence": "状态 rollback_watch；阻塞 24h 实盘窗口质量差 pnl_after_cost=-85.98; profit_factor=0.68<1.05",
+            "recommended_action": "investigate_live_degradation",
+        }
+
+        html = self.tool.render_attention([item])
+
+        self.assertIn("B/v16 ATR止损带改动上线后表现需要你复核", html)
+        self.assertIn("扣费后盈亏约 -85.98 USDT", html)
+        self.assertIn("收益因子 PF=0.68", html)
+        self.assertIn("先点右侧“策略进化”或“完整旧版详情”", html)
+        self.assertIn("如果不接受，告诉我收窄 B/v16 或准备回滚", html)
+        self.assertIn(">我已读</button>", html)
+
+    def test_attention_items_uses_newer_live_attention_pull(self):
+        self.attention_json.write_text(
+            json.dumps({"summary": {"counts": {"P0": 0, "P1": 0}}, "items": []}, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        live_payload = {
+            "summary": {"counts": {"P0": 0, "P1": 1}},
+            "items": [
+                {
+                    "item_id": "rollback:exp-20260527-v16-overheat-cap-85",
+                    "priority": "P1",
+                    "category": "策略回滚",
+                    "title": "P1 B/v16 回滚观察 EXP-20260527-v16-overheat-cap-85",
+                    "status": "open",
+                    "evidence": "pnl_after_cost=-85.98; profit_factor=0.68<1.05",
+                    "recommended_action": "investigate_live_degradation",
+                }
+            ],
+        }
+        self.tool.LIVE_ATTENTION_JSON.parent.mkdir(parents=True)
+        self.tool.LIVE_ATTENTION_JSON.write_text(json.dumps(live_payload, ensure_ascii=False), encoding="utf-8")
+        newer = time.time() + 10
+        os.utime(self.tool.LIVE_ATTENTION_JSON, (newer, newer))
+
+        _summary, items = self.tool.attention_items()
+
+        self.assertEqual([item["item_id"] for item in items], ["rollback:exp-20260527-v16-overheat-cap-85"])
 
     def test_strategy_table_separates_execution_failures_from_skips(self):
         rows = [

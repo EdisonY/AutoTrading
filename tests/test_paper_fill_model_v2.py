@@ -177,6 +177,37 @@ class PaperFillModelV2Tests(unittest.TestCase):
         self.assertAlmostEqual(fill["executed_price"], 109.0)
         self.assertAlmostEqual(fill["realized_pnl"], (109.0 - 100.0) * 2 - 109.0 * 2 * 0.0004)
 
+    def test_close_tiny_residual_qty_preserves_nonzero_fill_quantity(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            exchange = PaperExchange(root)
+            os.environ["PAPER_FILL_MODEL_VERSION"] = "v1"
+            exchange.open_market(
+                strategy="A/v11",
+                symbol="DUSTUSDT",
+                side="long",
+                qty=1.0e-11,
+                price=0.005331,
+                leverage=4,
+                order_id="open-dust",
+            )
+            os.environ["PAPER_FILL_MODEL_VERSION"] = "v2"
+            exchange.close_market(
+                strategy="A/v11",
+                symbol="DUSTUSDT",
+                side="long",
+                qty=1.0e-11,
+                price=0.005166,
+                order_id="close-dust",
+            )
+
+            fill = self.latest_fill(root)
+
+        self.assertEqual(fill["action"], "CLOSE")
+        self.assertGreater(fill["executed_qty"], 0.0)
+        self.assertGreater(fill["executed_price"], 0.0)
+        self.assertEqual(fill["fill_status"], "FILLED")
+
 
 if __name__ == "__main__":
     unittest.main()

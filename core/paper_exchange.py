@@ -514,6 +514,14 @@ class PaperExchange:
             return 0.0
         return round(abs(float(executed_price) - float(requested_price)) / float(requested_price) * 10_000.0, 8)
 
+    @staticmethod
+    def _round_preserve_nonzero(value: float, digits: int = 10) -> float:
+        number = float(value)
+        rounded = round(number, digits)
+        if number != 0.0 and rounded == 0.0:
+            return number
+        return rounded
+
     def _fill_detail(
         self,
         *,
@@ -537,11 +545,11 @@ class PaperExchange:
             "position_side": str(position_side).lower(),
             "execution_side": execution_side,
             "liquidity_side": "asks" if execution_side == "long" else "bids",
-            "requested_qty": round(float(requested_qty), 10),
-            "requested_price": round(float(requested_price), 10),
-            "executed_qty": round(float(executed_qty), 10),
-            "executed_price": round(float(executed_price), 10),
-            "unfilled_qty": round(max(0.0, float(requested_qty) - float(executed_qty)), 10),
+            "requested_qty": self._round_preserve_nonzero(requested_qty),
+            "requested_price": self._round_preserve_nonzero(requested_price),
+            "executed_qty": self._round_preserve_nonzero(executed_qty),
+            "executed_price": self._round_preserve_nonzero(executed_price),
+            "unfilled_qty": self._round_preserve_nonzero(max(0.0, float(requested_qty) - float(executed_qty))),
             "fill_ratio": round(float(executed_qty) / float(requested_qty), 8) if requested_qty > 0 else 0.0,
             "partial_fill": float(executed_qty) + 1e-12 < float(requested_qty),
             "fill_status": "PARTIALLY_FILLED" if float(executed_qty) + 1e-12 < float(requested_qty) else "FILLED",

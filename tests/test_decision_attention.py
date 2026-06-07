@@ -46,6 +46,48 @@ class DecisionAttentionTests(unittest.TestCase):
 
         self.assertTrue(self.tool.is_acknowledged(item, ack))
 
+    def test_operator_decision_survives_evidence_fingerprint_drift(self):
+        item = {
+            "item_id": "rollback:exp-20260527-v16-atr-stop-bands",
+            "priority": "P1",
+            "category": "策略回滚",
+            "title": "P1 B/v16 回滚观察",
+            "evidence": "pnl_after_cost=-94.85; profit_factor=0.66<1.05",
+            "source": "test",
+        }
+        old_item = dict(item)
+        old_item["evidence"] = "pnl_after_cost=-87.04; profit_factor=0.79<1.05"
+        ack = {
+            item["item_id"]: {
+                "item_id": item["item_id"],
+                "status": "continue_observe",
+                "fingerprint": self.tool.item_fingerprint(old_item),
+            }
+        }
+
+        self.assertTrue(self.tool.is_acknowledged(item, ack))
+
+    def test_plain_acknowledgement_still_requires_matching_fingerprint(self):
+        item = {
+            "item_id": "alert:disk-pressure",
+            "priority": "P1",
+            "category": "系统告警",
+            "title": "磁盘压力",
+            "evidence": "disk=90%",
+            "source": "test",
+        }
+        old_item = dict(item)
+        old_item["evidence"] = "disk=80%"
+        ack = {
+            item["item_id"]: {
+                "item_id": item["item_id"],
+                "status": "acknowledged",
+                "fingerprint": self.tool.item_fingerprint(old_item),
+            }
+        }
+
+        self.assertFalse(self.tool.is_acknowledged(item, ack))
+
     def test_paper_positions_suppress_open_staleness_warning(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

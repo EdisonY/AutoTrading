@@ -44,6 +44,11 @@ ACKNOWLEDGED_STATUSES = {
     "narrow_b_v16_requested",
     "rollback_prepare_requested",
 }
+OPERATOR_DECISION_STATUSES = {
+    "continue_observe",
+    "narrow_b_v16_requested",
+    "rollback_prepare_requested",
+}
 SUPPRESSED_ARCHIVED_KEYWORDS = (
     "crypto-portal-refresh.service",
     "crypto-market-review.timer",
@@ -310,8 +315,11 @@ def is_acknowledged(item: dict[str, Any], acknowledgements: dict[str, dict[str, 
     row = acknowledgements.get(str(item.get("item_id") or ""))
     if not row:
         return False
-    if str(row.get("status") or "") not in ACKNOWLEDGED_STATUSES:
+    status = str(row.get("status") or "")
+    if status not in ACKNOWLEDGED_STATUSES:
         return False
+    if status in OPERATOR_DECISION_STATUSES:
+        return True
     expected = str(row.get("fingerprint") or "")
     return not expected or expected == item_fingerprint(item)
 

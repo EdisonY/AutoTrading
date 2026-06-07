@@ -16,6 +16,13 @@ Environment=OKX_MARKET_DATA_MAX_PER_MIN=60
 Environment=BYBIT_MARKET_DATA_MAX_PER_MIN=60
 Environment=COINGECKO_MAX_PER_MIN=20
 Environment=COINGECKO_REFRESH_INTERVAL_SEC=1800
+Environment=MARKET_KLINE_PREFETCH_ENABLED=1
+Environment=MARKET_KLINE_PREFETCH_SYMBOL_LIMIT=180
+Environment=MARKET_KLINE_PREFETCH_HOT_SYMBOL_LIMIT=100
+Environment=MARKET_KLINE_PREFETCH_HOT_SPECS=15m:100,30m:100,1h:200,4h:100
+Environment=MARKET_KLINE_PREFETCH_WARM_SPECS=15m:100,1h:200
+Environment=MARKET_KLINE_PREFETCH_MAX_REQUESTS_PER_RUN=45
+Environment=MARKET_KLINE_PREFETCH_CACHE_MAX_AGE_SEC=600
 ExecStart=/opt/crypto-auto-trader/.venv/bin/python -u /opt/crypto-auto-trader/market_data_service.py --root /opt/crypto-auto-trader --interval 60 --top-limit 180
 Restart=always
 RestartPreventExitStatus=75

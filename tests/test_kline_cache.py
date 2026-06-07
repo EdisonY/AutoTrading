@@ -71,6 +71,18 @@ class KlineCacheTest(unittest.TestCase):
             self.assertEqual(rows, load_cached_klines(root, "BTCUSDT", "1h", 200))
             self.assertEqual(7200, kline_cache_max_age_sec())
 
+    def test_smaller_request_can_use_larger_fresh_cache(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            rows = [
+                ["1", "2", "3", "4", "5", "6", "7", "8"],
+                ["2", "3", "4", "5", "6", "7", "8", "9"],
+                ["3", "4", "5", "6", "7", "8", "9", "10"],
+            ]
+            save_cached_klines(root, "BTCUSDT", "1h", 200, rows)
+
+            self.assertEqual(rows[-2:], load_cached_klines(root, "BTCUSDT", "1h", 2))
+
     def test_kline_request_url_defaults_to_mainnet_public(self):
         os.environ.pop("SCANNER_KLINE_BASE_URL", None)
         self.assertEqual(

@@ -1,5 +1,6 @@
 import importlib.util
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -58,6 +59,68 @@ class MarketDataServiceTests(unittest.TestCase):
         self.assertAlmostEqual(btc["velocity_pct"], 5.0)
         self.assertAlmostEqual(btc["volume_mult"], 7.0)
         self.assertEqual(payload["spike_symbols"], ["BTCUSDT"])
+
+    def test_kline_prefetch_saves_rotating_batch(self):
+        payload = {
+            "top_symbols": ["BTCUSDT", "ETHUSDT"],
+            "market_mover_symbols": ["SOLUSDT"],
+        }
+        rows = [["1", "2", "3", "4", "5", "6", "7", "8"]]
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(
+            "os.environ",
+            {
+                "MARKET_KLINE_PREFETCH_ENABLED": "1",
+                "MARKET_KLINE_PREFETCH_SYMBOL_LIMIT": "3",
+                "MARKET_KLINE_PREFETCH_HOT_SYMBOL_LIMIT": "2",
+                "MARKET_KLINE_PREFETCH_HOT_SPECS": "15m:100,1h:200",
+                "MARKET_KLINE_PREFETCH_WARM_SPECS": "15m:100",
+                "MARKET_KLINE_PREFETCH_MAX_REQUESTS_PER_RUN": "2",
+                "MARKET_KLINE_PREFETCH_CACHE_MAX_AGE_SEC": "600",
+            },
+            clear=False,
+        ), patch.object(self.tool, "fetch_okx_klines", return_value=rows) as mock_okx, patch.object(
+            self.tool, "fetch_bybit_klines", return_value=[]
+        ):
+            status, cursor = self.tool.prefetch_klines(Path(tmp), payload, 0)
+
+            self.assertTrue(status["enabled"])
+            self.assertEqual(status["attempted"], 2)
+            self.assertEqual(status["saved"], 2)
+            self.assertEqual(cursor, 2)
+            self.assertEqual(mock_okx.call_count, 2)
+            self.assertTrue((Path(tmp) / "runtime" / "kline_cache" / "BTCUSDT_15m_100.json").exists())
+            self.assertTrue((Path(tmp) / "runtime" / "kline_cache" / "BTCUSDT_1h_200.json").exists())
+
+    def test_kline_prefetch_uses_fresh_cache_without_fetch(self):
+        payload = {"top_symbols": ["BTCUSDT"], "market_mover_symbols": []}
+        rows = [["1", "2", "3", "4", "5", "6", "7", "8"]]
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(
+            "os.environ",
+            {
+                "MARKET_KLINE_PREFETCH_ENABLED": "1",
+                "MARKET_KLINE_PREFETCH_SYMBOL_LIMIT": "1",
+                "MARKET_KLINE_PREFETCH_HOT_SYMBOL_LIMIT": "1",
+                "MARKET_KLINE_PREFETCH_HOT_SPECS": "15m:100",
+                "MARKET_KLINE_PREFETCH_MAX_REQUESTS_PER_RUN": "1",
+                "MARKET_KLINE_PREFETCH_CACHE_MAX_AGE_SEC": "600",
+            },
+            clear=False,
+        ), patch.object(self.tool, "fetch_okx_klines", return_value=[]) as mock_okx:
+            self.tool.save_cached_klines(Path(tmp), "BTCUSDT", "15m", 100, rows)
+
+            status, cursor = self.tool.prefetch_klines(Path(tmp), payload, 0)
+
+            self.assertEqual(status["fresh"], 1)
+            self.assertEqual(status["attempted"], 0)
+            self.assertEqual(cursor, 0)
+            self.assertEqual(mock_okx.call_count, 0)
+
+    def test_kline_prefetch_disabled(self):
+        with patch.dict("os.environ", {"MARKET_KLINE_PREFETCH_ENABLED": "0"}, clear=False):
+            status, cursor = self.tool.prefetch_klines(Path("."), {"top_symbols": ["BTCUSDT"]}, 7)
+
+        self.assertFalse(status["enabled"])
+        self.assertEqual(cursor, 7)
 
 
 if __name__ == "__main__":

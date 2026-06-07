@@ -132,6 +132,33 @@ def okx_bar(interval: str) -> str:
     return mapping.get(value.lower(), value)
 
 
+def bybit_interval(interval: str) -> str:
+    value = str(interval or "").strip().lower()
+    mapping = {
+        "1m": "1",
+        "3m": "3",
+        "5m": "5",
+        "15m": "15",
+        "30m": "30",
+        "1h": "60",
+        "2h": "120",
+        "4h": "240",
+        "1d": "D",
+    }
+    return mapping.get(value, value)
+
+
+def interval_ms(interval: str) -> int:
+    value = str(interval or "").strip().lower()
+    if value.endswith("m"):
+        return int(float(value[:-1])) * 60_000
+    if value.endswith("h"):
+        return int(float(value[:-1])) * 3_600_000
+    if value.endswith("d"):
+        return int(float(value[:-1] or 1)) * 86_400_000
+    return 60_000
+
+
 def okx_public_get(path: str, params: dict[str, Any], timeout: int = 10) -> dict[str, Any]:
     if not _okx_rate_limit():
         raise RuntimeError("okx_rate_budget_exhausted")
@@ -285,6 +312,47 @@ def fetch_okx_klines(symbol: str, interval: str, limit: int = 200) -> list[list[
     rows.reverse()
     if not rows:
         _mark_negative(key)
+    return rows[-int(limit):]
+
+
+def fetch_bybit_klines(symbol: str, interval: str, limit: int = 200) -> list[list[str]]:
+    if not bybit_market_data_enabled():
+        return []
+    symbol = str(symbol or "").upper()
+    if not symbol.endswith("USDT") or not symbol.isascii():
+        return []
+    key = f"bybit:klines:{symbol}:{bybit_interval(interval)}"
+    if _bybit_negative_blocked(key):
+        return []
+    try:
+        payload = bybit_public_get(
+            "/v5/market/kline",
+            {"category": "linear", "symbol": symbol, "interval": bybit_interval(interval), "limit": int(limit)},
+        )
+    except Exception as exc:
+        if "bybit_rate_budget_exhausted" not in str(exc):
+            _mark_bybit_negative(key)
+        raise
+    rows = []
+    step_ms = interval_ms(interval)
+    for row in ((payload.get("result") or {}).get("list") or []):
+        if len(row) < 7:
+            continue
+        open_ms = int(float(row[0]))
+        close_ms = open_ms + step_ms - 1
+        rows.append([
+            str(open_ms),
+            str(row[1]),
+            str(row[2]),
+            str(row[3]),
+            str(row[4]),
+            str(row[5]),
+            str(close_ms),
+            str(row[6]),
+        ])
+    rows.sort(key=lambda item: int(float(item[0])))
+    if not rows:
+        _mark_bybit_negative(key)
     return rows[-int(limit):]
 
 

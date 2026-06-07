@@ -13,6 +13,10 @@ class ExternalMarketDataTests(unittest.TestCase):
         self.assertEqual(emd.okx_bar("1h"), "1H")
         self.assertEqual(emd.okx_bar("15m"), "15m")
 
+    def test_bybit_interval_maps_hour_to_minutes(self):
+        self.assertEqual(emd.bybit_interval("1h"), "60")
+        self.assertEqual(emd.bybit_interval("15m"), "15")
+
     def test_okx_symbol_supported_rejects_non_ascii(self):
         self.assertTrue(emd.okx_symbol_supported("BTCUSDT"))
         self.assertFalse(emd.okx_symbol_supported("币安人生USDT"))
@@ -52,6 +56,27 @@ class ExternalMarketDataTests(unittest.TestCase):
 
         self.assertEqual(rows[0][0], "1000")
         self.assertEqual(rows[0][1:6], ["9", "12", "8", "11", "4"])
+        self.assertEqual(rows[0][7], "44")
+        self.assertEqual(rows[1][0], "2000")
+
+    @patch("core.external_market_data.bybit_market_data_enabled", return_value=True)
+    @patch("core.external_market_data.bybit_public_get")
+    def test_fetch_bybit_klines_returns_binance_shape(self, mock_get, _enabled):
+        mock_get.return_value = {
+            "retCode": 0,
+            "result": {
+                "list": [
+                    ["2000", "11", "13", "10", "12", "5", "60"],
+                    ["1000", "9", "12", "8", "11", "4", "44"],
+                ]
+            },
+        }
+
+        rows = emd.fetch_bybit_klines("BTCUSDT", "1m", 2)
+
+        self.assertEqual(rows[0][0], "1000")
+        self.assertEqual(rows[0][1:6], ["9", "12", "8", "11", "4"])
+        self.assertEqual(rows[0][6], "60999")
         self.assertEqual(rows[0][7], "44")
         self.assertEqual(rows[1][0], "2000")
 

@@ -456,6 +456,7 @@
 - 2026-06-07：用户明确要求“干掉 Binance 模拟盘”，最快落地新方案：三策略分析输入优先走现有线上 API，复盘/进化不能因为无数据断链，服务器硬盘做合理分配，旧脏数据/无关进程可停可清。新主线改为外部公共行情 + 自建 paper exchange 账本：OKX/Bybit 负责高频行情、K线、盘口/CVD/funding，CoinGecko 做市值/Top universe 参考；Binance Testnet signed/order/account/listen-key/queue 不再是第一版 blocker，也不得被随手恢复。新增市场缓存与 B/v16 微结构特征仓只存 compact features，不存全量原始 tick，默认 14 天 retention；后期 backlog 是 paper-vs-small-real 校准、真实撮合滑点/排队模型、report 图表 polish、未来真实交易所恢复 gate。
 - 2026-06-07：report 首页新口径固定为“外部行情 + 自建模拟账本”，不再显示旧模拟盘/Testnet/从零清理/服务器清理计划等恢复期文案。三策略模拟账本必须用 A/B/C tabs 分开，持仓行点击展开，展示入场前后约 20-30 根 K线或现有缓存到当前，图上标入场价和入场点；页面顶部必须有距离下次自动刷新的倒计时。清理结果只进 CHANGELOG/MEMORY，不再占首页。
 - 2026-06-07：用户要求降低扫描/report刷新并核算 API 用量。当前规则：A/B/C paper scanner 目标 `60s`，服务重启错峰 A/B/C `0/20/40s`，K线缓存 TTL `300s`；OKX/Bybit Top 成交量缓存 `60s`；CoinGecko 只做市值/Top universe 参考，刷新 `1800s`，避免 10k/月额度被烧光；B/v16 盘口/CVD/funding compact feature 仍 `30s`，paper 账本和 report 都 `60s`。这不改策略阈值/仓位/止损，不重启旧 Binance signed/order/account/listen-key/queue 主线。若后续出现 OKX/Bybit budget exhausted 或服务延迟，先回滚 scanner 到 `90s/120s` 或做中心 Kline 预取，不先动策略。
+- 2026-06-07：Top100/Top180 中央 Kline prefetch 已作为下一层外部数据骨架落地。`market_data_service.py` 负责从 Top180 universe 轮询预取 K线，Top100 是热层；OKX 主、Bybit 备，预算耗尽即停本轮，不碰 Binance。缓存仍写 `runtime/kline_cache` 的 scanner 兼容格式；`core.kline_cache` 支持用大 limit fresh cache 回答小 limit 请求，减少 A/B/C 重复拉 K线。部署后重点观察 `market_data_cache.json.kline_prefetch`、`rate_limited`、`saved/fresh` 和 scanner 侧 Kline 缺口。
 
 ---
 ## 2026-05-29 全局运行自检与账户方向口径修复

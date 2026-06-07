@@ -24,9 +24,10 @@ os.environ.setdefault("OKX_MARKET_DATA_ENABLED", "1")
 os.environ.setdefault("BYBIT_MARKET_DATA_ENABLED", "1")
 os.environ.setdefault("COINGECKO_MARKET_DATA_ENABLED", "1")
 
-from core.external_market_data import fetch_bybit_tickers, fetch_coingecko_top_markets, fetch_okx_tickers
+from core.external_market_data import fetch_bybit_klines, fetch_bybit_tickers, fetch_coingecko_top_markets, fetch_okx_klines, fetch_okx_tickers
 from core.audit_log import write_jsonl_with_daily_shard
 from core.event_store import insert_events
+from core.kline_cache import load_cached_klines, save_cached_klines
 from core.market_watchlist import watchlist_path
 from core.sentinel_event_bus import append_sentinel_events
 
@@ -45,6 +46,13 @@ def env_float(name: str, default: float) -> float:
         return float(default)
 
 
+def env_bool(name: str, default: bool = False) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return bool(default)
+    return str(raw).strip().lower() in {"1", "true", "yes", "on"}
+
+
 def to_float(value, default: float = 0.0) -> float:
     try:
         return float(value)
@@ -59,6 +67,143 @@ def previous_metric(previous: dict, symbol: str, key: str, default: float = 0.0)
     if key == "quote_volume":
         return to_float(item, default)
     return default
+
+
+def parse_kline_specs(raw: str, default: list[tuple[str, int]]) -> list[tuple[str, int]]:
+    specs: list[tuple[str, int]] = []
+    text = str(raw or "").strip()
+    for part in text.split(","):
+        item = part.strip()
+        if not item:
+            continue
+        if ":" in item:
+            tf, limit_text = item.split(":", 1)
+        else:
+            tf, limit_text = item, "100"
+        tf = tf.strip()
+        try:
+            limit = int(float(limit_text.strip()))
+        except Exception:
+            continue
+        if tf and limit > 0:
+            specs.append((tf, limit))
+    return specs or list(default)
+
+
+def unique_symbols(symbols: list[str], limit: int) -> list[str]:
+    out: list[str] = []
+    seen = set()
+    for raw in symbols:
+        sym = str(raw or "").upper()
+        if not sym.endswith("USDT") or not sym.isascii() or sym in seen:
+            continue
+        seen.add(sym)
+        out.append(sym)
+        if len(out) >= limit:
+            break
+    return out
+
+
+def kline_prefetch_tasks(payload: dict) -> tuple[list[tuple[str, str, int]], dict]:
+    symbol_limit = max(1, env_int("MARKET_KLINE_PREFETCH_SYMBOL_LIMIT", 180))
+    hot_limit = max(0, env_int("MARKET_KLINE_PREFETCH_HOT_SYMBOL_LIMIT", 100))
+    hot_specs = parse_kline_specs(
+        os.environ.get("MARKET_KLINE_PREFETCH_HOT_SPECS", "15m:100,30m:100,1h:200,4h:100"),
+        [("15m", 100), ("30m", 100), ("1h", 200), ("4h", 100)],
+    )
+    warm_specs = parse_kline_specs(
+        os.environ.get("MARKET_KLINE_PREFETCH_WARM_SPECS", "15m:100,1h:200"),
+        [("15m", 100), ("1h", 200)],
+    )
+    symbols = unique_symbols(
+        list(payload.get("top_symbols") or []) + list(payload.get("market_mover_symbols") or []),
+        symbol_limit,
+    )
+    tasks: list[tuple[str, str, int]] = []
+    for idx, sym in enumerate(symbols):
+        specs = hot_specs if idx < hot_limit else warm_specs
+        for tf, limit in specs:
+            tasks.append((sym, tf, limit))
+    meta = {
+        "symbol_limit": symbol_limit,
+        "hot_symbol_limit": hot_limit,
+        "symbols": len(symbols),
+        "hot_specs": [f"{tf}:{limit}" for tf, limit in hot_specs],
+        "warm_specs": [f"{tf}:{limit}" for tf, limit in warm_specs],
+    }
+    return tasks, meta
+
+
+def prefetch_klines(root: Path, payload: dict, cursor: int) -> tuple[dict, int]:
+    if not env_bool("MARKET_KLINE_PREFETCH_ENABLED", False):
+        return {"enabled": False, "reason": "disabled"}, cursor
+
+    tasks, meta = kline_prefetch_tasks(payload)
+    max_requests = max(0, env_int("MARKET_KLINE_PREFETCH_MAX_REQUESTS_PER_RUN", 45))
+    cache_max_age_sec = max(0, env_int("MARKET_KLINE_PREFETCH_CACHE_MAX_AGE_SEC", 600))
+    status = {
+        "enabled": True,
+        "source": "okx_primary_bybit_fallback",
+        "cache_max_age_sec": cache_max_age_sec,
+        "max_requests_per_run": max_requests,
+        "tasks_total": len(tasks),
+        "visited": 0,
+        "fresh": 0,
+        "attempted": 0,
+        "saved": 0,
+        "failed": 0,
+        "rate_limited": "",
+        "source_counts": {},
+        **meta,
+    }
+    if not tasks or max_requests <= 0:
+        status["cursor"] = 0
+        return status, 0
+
+    cursor = int(cursor) % len(tasks)
+    visited = 0
+    while visited < len(tasks) and status["attempted"] < max_requests:
+        idx = (cursor + visited) % len(tasks)
+        sym, tf, limit = tasks[idx]
+        visited += 1
+        if load_cached_klines(root, sym, tf, limit, max_age_sec=cache_max_age_sec):
+            status["fresh"] += 1
+            continue
+
+        status["attempted"] += 1
+        rows: list[list[str]] = []
+        source = ""
+        try:
+            rows = fetch_okx_klines(sym, tf, limit)
+            source = "okx" if rows else ""
+        except Exception as exc:
+            if "okx_rate_budget_exhausted" in str(exc):
+                status["rate_limited"] = "okx"
+                break
+        if not rows:
+            try:
+                rows = fetch_bybit_klines(sym, tf, limit)
+                source = "bybit" if rows else ""
+            except Exception as bybit_exc:
+                if "bybit_rate_budget_exhausted" in str(bybit_exc):
+                    status["rate_limited"] = "bybit"
+                    break
+                rows = []
+        if rows:
+            save_cached_klines(root, sym, tf, limit, rows)
+            status["saved"] += 1
+            counts = status["source_counts"]
+            counts[source] = int(counts.get(source, 0)) + 1
+        else:
+            status["failed"] += 1
+
+    next_cursor = (cursor + visited) % len(tasks)
+    status["visited"] = visited
+    status["cursor"] = next_cursor
+    if tasks:
+        next_sym, next_tf, next_limit = tasks[next_cursor]
+        status["next_task"] = f"{next_sym}:{next_tf}:{next_limit}"
+    return status, next_cursor
 
 
 def build_market_mover_watchlist(
@@ -313,6 +458,7 @@ def main() -> int:
     coingecko_top: list[dict] = []
     coingecko_last_fetch = 0.0
     coingecko_refresh_sec = max(300, env_int("COINGECKO_REFRESH_INTERVAL_SEC", 1800))
+    kline_prefetch_cursor = 0
     while True:
         try:
             now = time.time()
@@ -330,6 +476,8 @@ def main() -> int:
                 coingecko_age_sec=age,
                 interval_sec=max(5, args.interval),
             )
+            kline_prefetch_status, kline_prefetch_cursor = prefetch_klines(args.root, payload, kline_prefetch_cursor)
+            payload["kline_prefetch"] = kline_prefetch_status
             atomic_write(out, payload)
             atomic_write(watchlist_out, watchlist)
             append_watchlist_history(args.root, watchlist)
@@ -350,7 +498,21 @@ def main() -> int:
                 )
             except Exception as exc:
                 print(json.dumps({"status": "warn", "sink": "sentinel_events", "error": str(exc)[:180]}), flush=True)
-            print(json.dumps({"status": "ok", "symbols": len(payload["available_symbols"]), "top": len(payload["top_symbols"]), "spikes": len(payload["spike_symbols"]), "movers": len(watchlist.get("symbols") or []), "events": len(emitted)}), flush=True)
+            print(json.dumps({
+                "status": "ok",
+                "symbols": len(payload["available_symbols"]),
+                "top": len(payload["top_symbols"]),
+                "spikes": len(payload["spike_symbols"]),
+                "movers": len(watchlist.get("symbols") or []),
+                "events": len(emitted),
+                "kline_prefetch": {
+                    "enabled": kline_prefetch_status.get("enabled"),
+                    "attempted": kline_prefetch_status.get("attempted"),
+                    "saved": kline_prefetch_status.get("saved"),
+                    "fresh": kline_prefetch_status.get("fresh"),
+                    "rate_limited": kline_prefetch_status.get("rate_limited"),
+                },
+            }), flush=True)
         except Exception as exc:
             print(json.dumps({"status": "error", "error": str(exc)[:240]}), flush=True)
         if args.once:

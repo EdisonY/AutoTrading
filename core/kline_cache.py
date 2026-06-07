@@ -13,6 +13,36 @@ def _safe_name(symbol: str, bar: str, limit: int) -> str:
     return f"{symbol.upper()}_{bar}_{int(limit)}.json".replace("/", "_")
 
 
+def _read_rows(path: Path, max_age: int) -> list[list[Any]] | None:
+    if time.time() - path.stat().st_mtime > max(0, max_age):
+        return None
+    payload = json.loads(path.read_text(encoding="utf-8", errors="replace"))
+    rows = payload.get("rows")
+    return rows if isinstance(rows, list) else None
+
+
+def _larger_cache_paths(root: Path, symbol: str, bar: str, limit: int) -> list[tuple[int, Path]]:
+    cache_dir = root / "runtime" / "kline_cache"
+    prefix = f"{symbol.upper()}_{bar}_".replace("/", "_")
+    out: list[tuple[int, Path]] = []
+    try:
+        paths = list(cache_dir.glob(f"{prefix}*.json"))
+    except Exception:
+        return out
+    for path in paths:
+        name = path.name
+        if not name.startswith(prefix) or not name.endswith(".json"):
+            continue
+        try:
+            candidate_limit = int(name[len(prefix):-5])
+        except Exception:
+            continue
+        if candidate_limit >= int(limit):
+            out.append((candidate_limit, path))
+    out.sort(key=lambda item: item[0])
+    return out
+
+
 def kline_cache_max_age_sec(default: int = 90) -> int:
     try:
         return max(0, int(float(os.environ.get("SCANNER_KLINE_CACHE_MAX_AGE_SEC", str(default)))))
@@ -38,13 +68,22 @@ def load_cached_klines(root: Path, symbol: str, bar: str, limit: int, *, max_age
     path = root / "runtime" / "kline_cache" / _safe_name(symbol, bar, limit)
     try:
         max_age = kline_cache_max_age_sec() if max_age_sec is None else int(max_age_sec)
-        if time.time() - path.stat().st_mtime > max_age:
-            return None
-        payload = json.loads(path.read_text(encoding="utf-8", errors="replace"))
-        rows = payload.get("rows")
-        return rows if isinstance(rows, list) else None
+        rows = _read_rows(path, max_age)
+        if rows is not None:
+            return rows
     except Exception:
-        return None
+        pass
+    max_age = kline_cache_max_age_sec() if max_age_sec is None else int(max_age_sec)
+    for candidate_limit, candidate_path in _larger_cache_paths(root, symbol, bar, limit):
+        if candidate_path == path:
+            continue
+        try:
+            rows = _read_rows(candidate_path, max_age)
+            if rows is not None:
+                return rows[-int(limit):] if len(rows) > int(limit) else rows
+        except Exception:
+            continue
+    return None
 
 
 def load_latest_cached_close(root: Path, symbol: str, *, max_age_sec: int | None = None) -> float | None:

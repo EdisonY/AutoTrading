@@ -2,6 +2,14 @@
 
 This is the durable reason-and-outcome ledger for every material design, code, configuration, deployment, rollback, optimization, or live operational change.
 
+## 2026-06-08 00:25 CST - Add OKX fallback to external replay ingest
+- Trigger / reason: The first Aliyun public replay ingest hung without writing a latest report; after stopping the stale process, a bounded BTC smoke finished with `0` rows and `Network is unreachable` for Bybit Kline/depth. The replay/data goal still needs 30-day Kline coverage plus depth snapshots before automatic rollback or tuning can be enabled.
+- Completed: Updated `external_replay_data_ingest.py` so Kline backfill falls back from Bybit to OKX `history-candles` and orderbook snapshots fall back from Bybit to OKX `books`. Kline pagination now uses 300-candle chunks so OKX history windows can cover 30 days without silently returning only a short recent tail. Safety boundary remains public external data only: no Binance, no queue submit, no service restart, no strategy/config mutation.
+- Not completed / remaining: Deploy this fix to Aliyun, rerun bounded 30-day Kline/depth ingest batches, regenerate `research_store_query.py` and replay readiness reports, reverse-sync priority artifacts to Tencent, then pull live context. Automatic rollback/tuning remains disabled until replay readiness confirms coverage.
+- Verification: `python -m py_compile 部署工具\external_replay_data_ingest.py` passed. Local smoke `BTCUSDT`, 1 day, `1h`, no depth fetched `24` Kline rows with `0` errors. Remote pre-fix BTC smoke proved the blocker: `requests=8`, `errors=5`, `kline_rows_fetched=0`, `depth_rows_fetched=0`, Bybit errors `Network is unreachable`.
+- Live impact / deployment: Source/data-tool change only so far. The stale Aliyun ingest process was terminated; no scanner restart, Binance request, queue submit, signed account call, user-stream start, account-snapshot start, real order, close, cancel, leverage/margin change, strategy threshold/sizing/stop change, paper ledger mutation, market-data restart, automatic rollback, or config mutation was performed.
+- Files / release / commit: `部署工具/external_replay_data_ingest.py`, `CHANGELOG.md`, `PROJECT_STATE.md`, `记忆文档/MEMORY.md`; deployment/data-ingest receipt follows.
+
 ## 2026-06-08 00:08 CST - Include external replay ingest in Aliyun shadow bundle
 - Trigger / reason: Shadow deploy dry-run for commit `2efc0f2` showed `external_replay_data_ingest.py` was included in the Tencent research bundle but not the Aliyun shadow bundle where the first public replay-data ingest must run.
 - Completed: Added `部署工具/external_replay_data_ingest.py` to the Aliyun shadow release file list in `release_manager.py`.

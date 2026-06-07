@@ -26,7 +26,15 @@ ROOT = SCRIPT_DIR.parent if SCRIPT_DIR.name == "部署工具" else SCRIPT_DIR
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(SCRIPT_DIR))
 
-from core.external_market_data import bybit_interval, bybit_public_get, fetch_bybit_klines
+from core.external_market_data import (
+    bybit_interval,
+    bybit_public_get,
+    fetch_bybit_klines,
+    okx_bar,
+    okx_inst_id,
+    okx_public_get,
+    okx_symbol_supported,
+)
 from research_kline_features import build_features, dedupe_kline_rows, export_dataset, load_existing_rows
 
 
@@ -128,6 +136,39 @@ def bybit_kline_window(symbol: str, interval: str, start_ms: int, end_ms: int, l
     return rows
 
 
+def okx_kline_window(symbol: str, interval: str, start_ms: int, end_ms: int, limit: int = 300) -> list[list[Any]]:
+    if not okx_symbol_supported(symbol):
+        return []
+    payload = okx_public_get(
+        "/api/v5/market/history-candles",
+        {
+            "instId": okx_inst_id(symbol),
+            "bar": okx_bar(interval),
+            "after": int(end_ms + 1),
+            "limit": min(max(1, int(limit)), 300),
+        },
+    )
+    rows = []
+    for row in payload.get("data") or []:
+        if len(row) < 8:
+            continue
+        open_ms = int(float(row[0]))
+        if not (start_ms <= open_ms <= end_ms):
+            continue
+        rows.append([
+            str(open_ms),
+            str(row[1]),
+            str(row[2]),
+            str(row[3]),
+            str(row[4]),
+            str(row[5]),
+            str(open_ms + INTERVAL_MS.get(interval, 60_000) - 1),
+            str(row[7]),
+        ])
+    rows.sort(key=lambda item: int(float(item[0])))
+    return rows
+
+
 def fetch_kline_rows(symbols: list[str], intervals: list[str], target_days: int, request_gap_sec: float, max_requests: int) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     end_dt = now_cst()
     start_ms = dt_to_ms(end_dt - timedelta(days=max(1, int(target_days))))
@@ -140,7 +181,7 @@ def fetch_kline_rows(symbols: list[str], intervals: list[str], target_days: int,
             interval_ms = INTERVAL_MS.get(interval)
             if not interval_ms:
                 continue
-            chunk_span = interval_ms * 1000
+            chunk_span = interval_ms * 300
             cursor = start_ms
             while cursor < end_ms:
                 if requests >= max_requests:
@@ -151,12 +192,16 @@ def fetch_kline_rows(symbols: list[str], intervals: list[str], target_days: int,
                     source = "bybit"
                 except Exception as exc:
                     try:
-                        raw_rows = fetch_bybit_klines(symbol, interval, 1000)
-                        source = "bybit_recent_fallback"
-                    except Exception:
-                        errors.append(f"{symbol} {interval}: {exc}")
-                        raw_rows = []
-                        source = ""
+                        raw_rows = okx_kline_window(symbol, interval, cursor, chunk_end, 300)
+                        source = "okx_history"
+                    except Exception as okx_exc:
+                        try:
+                            raw_rows = fetch_bybit_klines(symbol, interval, 1000)
+                            source = "bybit_recent_fallback"
+                        except Exception:
+                            errors.append(f"{symbol} {interval}: bybit={exc}; okx={okx_exc}")
+                            raw_rows = []
+                            source = ""
                 requests += 1
                 for raw in raw_rows:
                     open_ms = to_int(raw[0])
@@ -194,14 +239,25 @@ def fetch_depth_rows(symbols: list[str], samples_per_symbol: int, limit: int, re
             if requests >= max_requests:
                 return rows, {"requests": requests, "errors": errors, "truncated": True}
             captured = now_cst()
+            source = "bybit_orderbook"
             try:
                 payload = bybit_public_get("/v5/market/orderbook", {"category": "linear", "symbol": symbol, "limit": int(limit)})
                 result = payload.get("result") or {}
                 bids = [[to_float(x[0]), to_float(x[1])] for x in (result.get("b") or []) if len(x) >= 2]
                 asks = [[to_float(x[0]), to_float(x[1])] for x in (result.get("a") or []) if len(x) >= 2]
             except Exception as exc:
-                errors.append(f"{symbol} depth: {exc}")
-                bids, asks = [], []
+                try:
+                    payload = okx_public_get(
+                        "/api/v5/market/books",
+                        {"instId": okx_inst_id(symbol), "sz": min(max(1, int(limit)), 400)},
+                    )
+                    book = (payload.get("data") or [{}])[0]
+                    bids = [[to_float(x[0]), to_float(x[1])] for x in (book.get("bids") or []) if len(x) >= 2]
+                    asks = [[to_float(x[0]), to_float(x[1])] for x in (book.get("asks") or []) if len(x) >= 2]
+                    source = "okx_orderbook"
+                except Exception as okx_exc:
+                    errors.append(f"{symbol} depth: bybit={exc}; okx={okx_exc}")
+                    bids, asks = [], []
             requests += 1
             if bids and asks:
                 best_bid = bids[0][0]
@@ -219,7 +275,7 @@ def fetch_depth_rows(symbols: list[str], samples_per_symbol: int, limit: int, re
                     "spread_bps": round(spread_bps, 6),
                     "bids_json": json.dumps(bids, separators=(",", ":")),
                     "asks_json": json.dumps(asks, separators=(",", ":")),
-                    "source": "bybit_orderbook",
+                    "source": source,
                 })
             if request_gap_sec > 0:
                 time.sleep(request_gap_sec)

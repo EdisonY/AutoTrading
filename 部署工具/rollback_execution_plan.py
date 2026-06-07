@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -25,6 +26,19 @@ STRATEGY_COMPONENTS = {
     "B/v16": "strategy-b",
     "C/v14": "strategy-c",
 }
+
+OPERATOR_DECISION_STATUSES = {
+    "narrow_b_v16_requested": "operator_requested_narrow_dry_run",
+    "rollback_prepare_requested": "operator_requested_rollback_dry_run",
+}
+ACTIONABLE_STATUSES = {
+    "manual_rollback_ready",
+    "rollback_review_ready",
+    "narrow_or_pause_ready",
+    "operator_requested_narrow_dry_run",
+    "operator_requested_rollback_dry_run",
+}
+EXP_RE = re.compile(r"(EXP-[A-Za-z0-9._-]+)", re.IGNORECASE)
 
 
 def read_json(path: Path) -> Any:
@@ -63,6 +77,52 @@ def slug(value: Any) -> str:
         elif ch in {"/", "-", "_", ".", " "}:
             out.append("-")
     return "-".join(part for part in "".join(out).split("-") if part) or "unknown"
+
+
+def normalize_id(value: Any) -> str:
+    return str(value or "").strip().lower()
+
+
+def extract_candidate_id(item: dict[str, Any]) -> str:
+    for key in ("candidate_id", "item_id", "title", "evidence"):
+        match = EXP_RE.search(str(item.get(key) or ""))
+        if match:
+            return match.group(1)
+    return ""
+
+
+def load_operator_decisions(path: Path) -> list[dict[str, Any]]:
+    payload = read_json(path)
+    items = payload.get("items") if isinstance(payload, dict) else []
+    out: list[dict[str, Any]] = []
+    for item in items if isinstance(items, list) else []:
+        if not isinstance(item, dict):
+            continue
+        status = str(item.get("status") or "")
+        if status not in OPERATOR_DECISION_STATUSES:
+            continue
+        candidate_id = extract_candidate_id(item)
+        out.append({
+            "item_id": item.get("item_id") or "",
+            "candidate_id": candidate_id,
+            "status": status,
+            "requested_execution_status": OPERATOR_DECISION_STATUSES[status],
+            "priority": item.get("priority") or "",
+            "title": item.get("title") or "",
+            "acknowledged_at": item.get("acknowledged_at") or "",
+            "acknowledged_reason": item.get("acknowledged_reason") or "",
+            "source": str(path),
+        })
+    return out
+
+
+def operator_decision_index(decisions: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    indexed: dict[str, list[dict[str, Any]]] = {}
+    for decision in decisions:
+        candidate_id = normalize_id(decision.get("candidate_id"))
+        if candidate_id:
+            indexed.setdefault(candidate_id, []).append(decision)
+    return indexed
 
 
 def classify_execution(item: dict[str, Any]) -> tuple[str, str]:
@@ -107,6 +167,15 @@ def build_checklist(item: dict[str, Any], execution_status: str) -> list[dict[st
 
     return [
         {
+            "step": "operator_decision",
+            "status": "ready" if execution_status in ACTIONABLE_STATUSES else "blocked",
+            "detail": (
+                "Operator requested dry-run review from report button."
+                if execution_status in {"operator_requested_narrow_dry_run", "operator_requested_rollback_dry_run"}
+                else "No report-side rollback/narrow request is attached yet."
+            ),
+        },
+        {
             "step": "freeze_expansion",
             "status": "ready" if execution_status != "not_actionable" else "blocked",
             "detail": f"Keep {strategy} candidate {candidate_id} from expanding while evidence is reviewed.",
@@ -144,10 +213,19 @@ def build_checklist(item: dict[str, Any], execution_status: str) -> list[dict[st
     ]
 
 
-def build_plan(item: dict[str, Any]) -> dict[str, Any]:
+def build_plan(item: dict[str, Any], operator_decisions: list[dict[str, Any]] | None = None) -> dict[str, Any]:
     execution_status, reason = classify_execution(item)
     candidate_id = str(item.get("candidate_id") or "")
     strategy = str(item.get("strategy") or "")
+    operator_decisions = operator_decisions or []
+    operator_request = operator_decisions[-1] if operator_decisions else {}
+    if operator_request:
+        execution_status = str(operator_request.get("requested_execution_status") or execution_status)
+        reason = (
+            "operator requested rollback dry-run from report"
+            if execution_status == "operator_requested_rollback_dry_run"
+            else "operator requested B/v16 narrowing dry-run from report"
+        )
     hints = command_hints(strategy, candidate_id)
     checklist = build_checklist(item, execution_status)
     return {
@@ -158,6 +236,8 @@ def build_plan(item: dict[str, Any]) -> dict[str, Any]:
         "watch_status": item.get("status") or "",
         "execution_status": execution_status,
         "reason": reason,
+        "operator_request": operator_request,
+        "operator_decisions": operator_decisions,
         "dry_run_only": True,
         "apply_enabled": False,
         "component": hints["component"],
@@ -175,19 +255,41 @@ def build_plan(item: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def build_payload_from_items(items: list[Any], source: str = "") -> dict[str, Any]:
-    plans = [build_plan(item) for item in items if isinstance(item, dict)]
-    actionable = [p for p in plans if p.get("execution_status") in {"manual_rollback_ready", "rollback_review_ready", "narrow_or_pause_ready"}]
-    status = "ready_for_dry_run_review" if actionable else "waiting_for_operator_ready_items" if plans else "no_rollback_watch_items"
+def build_payload_from_items(
+    items: list[Any],
+    source: str = "",
+    operator_decisions: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    decisions_by_candidate = operator_decision_index(operator_decisions or [])
+    plans = [
+        build_plan(item, decisions_by_candidate.get(normalize_id(item.get("candidate_id")), []))
+        for item in items
+        if isinstance(item, dict)
+    ]
+    actionable = [p for p in plans if p.get("execution_status") in ACTIONABLE_STATUSES]
+    requested = [p for p in plans if p.get("operator_request")]
+    status = (
+        "operator_requested_dry_run_review"
+        if requested
+        else "ready_for_dry_run_review"
+        if actionable
+        else "waiting_for_operator_ready_items"
+        if plans
+        else "no_rollback_watch_items"
+    )
     return {
         "generated_at": datetime.now(CST).isoformat(timespec="seconds"),
         "source": source,
+        "operator_decision_count": len(operator_decisions or []),
         "mode": "report_only",
         "apply_enabled": False,
         "status": status,
         "summary": {
             "plans": len(plans),
             "actionable_plans": len(actionable),
+            "operator_requested_plans": len(requested),
+            "operator_requested_rollback": sum(1 for p in plans if p.get("execution_status") == "operator_requested_rollback_dry_run"),
+            "operator_requested_narrow": sum(1 for p in plans if p.get("execution_status") == "operator_requested_narrow_dry_run"),
             "manual_rollback_ready": sum(1 for p in plans if p.get("execution_status") == "manual_rollback_ready"),
             "rollback_review_ready": sum(1 for p in plans if p.get("execution_status") == "rollback_review_ready"),
             "narrow_or_pause_ready": sum(1 for p in plans if p.get("execution_status") == "narrow_or_pause_ready"),
@@ -198,10 +300,11 @@ def build_payload_from_items(items: list[Any], source: str = "") -> dict[str, An
     }
 
 
-def build_payload(review_path: Path) -> dict[str, Any]:
+def build_payload(review_path: Path, attention_path: Path | None = None) -> dict[str, Any]:
     review = read_json(review_path)
     items = review.get("items") if isinstance(review, dict) else []
-    return build_payload_from_items(items, str(review_path))
+    operator_decisions = load_operator_decisions(attention_path) if attention_path else []
+    return build_payload_from_items(items, str(review_path), operator_decisions)
 
 
 def render_md(payload: dict[str, Any]) -> str:
@@ -215,19 +318,22 @@ def render_md(payload: dict[str, Any]) -> str:
         f"- Apply enabled: `{bool(payload.get('apply_enabled'))}`",
         f"- Plans: `{as_int(summary.get('plans'))}`",
         f"- Actionable dry-run plans: `{as_int(summary.get('actionable_plans'))}`",
+        f"- Operator requested plans: `{as_int(summary.get('operator_requested_plans'))}`",
         "",
         "## Plans",
         "",
-        "| Priority | Strategy | Candidate | Status | Component | Dry-run | Reason |",
-        "| --- | --- | --- | --- | --- | --- | --- |",
+        "| Priority | Strategy | Candidate | Status | Operator request | Component | Dry-run | Reason |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- |",
     ]
     for plan in payload.get("plans") or []:
+        request = plan.get("operator_request") if isinstance(plan.get("operator_request"), dict) else {}
         lines.append(
-            "| {priority} | {strategy} | {candidate} | {status} | {component} | {dry_run} | {reason} |".format(
+            "| {priority} | {strategy} | {candidate} | {status} | {request} | {component} | {dry_run} | {reason} |".format(
                 priority=plan.get("priority") or "",
                 strategy=plan.get("strategy") or "",
                 candidate=plan.get("candidate_id") or "",
                 status=plan.get("execution_status") or "",
+                request=request.get("status") or "-",
                 component=plan.get("component") or "",
                 dry_run="yes" if plan.get("dry_run_only") else "no",
                 reason=plan.get("reason") or "",
@@ -241,6 +347,9 @@ def render_md(payload: dict[str, Any]) -> str:
         lines.append(f"- Strategy: `{plan.get('strategy')}`")
         lines.append(f"- Execution status: `{plan.get('execution_status')}`")
         lines.append(f"- Component: `{plan.get('component')}`")
+        request = plan.get("operator_request") if isinstance(plan.get("operator_request"), dict) else {}
+        if request:
+            lines.append(f"- Operator request: `{request.get('status')}` from `{request.get('item_id')}` at `{request.get('acknowledged_at') or '-'}`")
         lines.append("- Dry-run commands:")
         for cmd in plan.get("dry_run_commands") or []:
             lines.append(f"  - `{cmd}`")
@@ -263,6 +372,7 @@ def render_md(payload: dict[str, Any]) -> str:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Build report-only rollback execution checklist")
     parser.add_argument("--rollback-watch-json", default="")
+    parser.add_argument("--attention-json", default="")
     parser.add_argument("--runtime-dir", default=str(ROOT / "runtime"))
     parser.add_argument("--reports-dir", default=str(ROOT / "reports"))
     args = parser.parse_args(argv)
@@ -270,7 +380,8 @@ def main(argv: list[str] | None = None) -> int:
     runtime_dir = Path(args.runtime_dir)
     reports_dir = Path(args.reports_dir)
     watch_path = Path(args.rollback_watch_json) if args.rollback_watch_json else runtime_dir / "rollback_watch_review_latest.json"
-    payload = build_payload(watch_path)
+    attention_path = Path(args.attention_json) if args.attention_json else ROOT / "research_memory" / "attention" / "open_items.json"
+    payload = build_payload(watch_path, attention_path)
 
     runtime_dir.mkdir(parents=True, exist_ok=True)
     reports_dir.mkdir(parents=True, exist_ok=True)

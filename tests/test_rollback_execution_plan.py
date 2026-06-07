@@ -77,6 +77,29 @@ class RollbackExecutionPlanTests(unittest.TestCase):
         self.assertEqual(plan["execution_status"], "not_actionable")
         self.assertEqual(plan["checklist"][0]["status"], "blocked")
 
+    def test_operator_attention_decision_promotes_plan_to_requested_dry_run(self):
+        payload = self.tool.build_payload_from_items(
+            [watch_item(action="prepare_rollback_review", priority="P1")],
+            operator_decisions=[
+                {
+                    "item_id": "rollback:exp-test-v16",
+                    "candidate_id": "EXP-test-v16",
+                    "status": "rollback_prepare_requested",
+                    "requested_execution_status": "operator_requested_rollback_dry_run",
+                    "acknowledged_at": "2026-06-07T20:00:00+08:00",
+                }
+            ],
+        )
+
+        self.assertEqual(payload["status"], "operator_requested_dry_run_review")
+        self.assertEqual(payload["summary"]["operator_requested_plans"], 1)
+        self.assertEqual(payload["summary"]["operator_requested_rollback"], 1)
+        plan = payload["plans"][0]
+        self.assertEqual(plan["execution_status"], "operator_requested_rollback_dry_run")
+        self.assertEqual(plan["operator_request"]["status"], "rollback_prepare_requested")
+        self.assertFalse(plan["apply_enabled"])
+        self.assertIn("operator requested", plan["reason"])
+
     def test_empty_review_has_no_items_status(self):
         payload = self.tool.build_payload_from_items([])
 
@@ -94,15 +117,35 @@ class RollbackExecutionPlanTests(unittest.TestCase):
                 json.dumps({"items": [watch_item()]}),
                 encoding="utf-8",
             )
+            attention = root / "research_memory" / "attention"
+            attention.mkdir(parents=True)
+            (attention / "open_items.json").write_text(
+                json.dumps({
+                    "items": [
+                        {
+                            "item_id": "rollback:exp-test-v16",
+                            "title": "P1 B/v16 EXP-test-v16",
+                            "status": "narrow_b_v16_requested",
+                        }
+                    ]
+                }),
+                encoding="utf-8",
+            )
 
-            rc = self.tool.main(["--runtime-dir", str(runtime), "--reports-dir", str(reports)])
+            rc = self.tool.main([
+                "--runtime-dir", str(runtime),
+                "--reports-dir", str(reports),
+                "--attention-json", str(attention / "open_items.json"),
+            ])
 
             self.assertEqual(rc, 0)
             out = json.loads((runtime / "rollback_execution_plan_latest.json").read_text(encoding="utf-8"))
             self.assertEqual(out["summary"]["actionable_plans"], 1)
+            self.assertEqual(out["summary"]["operator_requested_narrow"], 1)
             md = (reports / "rollback_execution_plan_latest.md").read_text(encoding="utf-8")
             self.assertIn("Rollback Execution Plan", md)
             self.assertIn("Apply enabled: `False`", md)
+            self.assertIn("Operator request", md)
 
 
 if __name__ == "__main__":

@@ -25,6 +25,13 @@ ROOT = SCRIPT_DIR.parent if SCRIPT_DIR.name == "部署工具" else SCRIPT_DIR
 CST = timezone(timedelta(hours=8))
 
 REQUIRED_POLICY_FIELDS = ("approved", "automatic_rollback_enabled", "approved_by", "approved_at", "scope", "procedure_version")
+ACTIONABLE_PLAN_STATUSES = {
+    "manual_rollback_ready",
+    "rollback_review_ready",
+    "narrow_or_pause_ready",
+    "operator_requested_narrow_dry_run",
+    "operator_requested_rollback_dry_run",
+}
 
 
 def read_json(path: Path) -> Any:
@@ -105,11 +112,11 @@ def execution_condition(execution: Any) -> dict[str, Any]:
     summary = execution.get("summary") if isinstance(execution.get("summary"), dict) else {}
     actionable = as_int(summary.get("actionable_plans"))
     status = str(execution.get("status") or "missing")
-    ready = status == "ready_for_dry_run_review" and actionable > 0
+    ready = status in {"ready_for_dry_run_review", "operator_requested_dry_run_review"} and actionable > 0
     blockers: list[str] = []
     if actionable <= 0:
         blockers.append("no_actionable_dry_run_plan")
-    if status != "ready_for_dry_run_review":
+    if status not in {"ready_for_dry_run_review", "operator_requested_dry_run_review"}:
         blockers.append(f"rollback_execution_status:{status}")
     return {
         "name": "rollback_execution_plan",
@@ -126,7 +133,7 @@ def release_id_condition(plans: list[Any]) -> dict[str, Any]:
         plan
         for plan in plans
         if isinstance(plan, dict)
-        and plan.get("execution_status") in {"manual_rollback_ready", "rollback_review_ready", "narrow_or_pause_ready"}
+        and plan.get("execution_status") in ACTIONABLE_PLAN_STATUSES
     ]
     unresolved = []
     for plan in actionable:
@@ -147,7 +154,7 @@ def release_id_condition(plans: list[Any]) -> dict[str, Any]:
 
 def build_candidate(plan: dict[str, Any], conditions: list[dict[str, Any]]) -> dict[str, Any]:
     blockers = [blocker for condition in conditions for blocker in (condition.get("blockers") or [])]
-    if plan.get("execution_status") not in {"manual_rollback_ready", "rollback_review_ready", "narrow_or_pause_ready"}:
+    if plan.get("execution_status") not in ACTIONABLE_PLAN_STATUSES:
         blockers.append("plan_not_actionable")
     return {
         "candidate_id": plan.get("candidate_id") or "",

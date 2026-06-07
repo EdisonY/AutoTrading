@@ -462,6 +462,7 @@
 - 2026-06-07：Top100/Top180 中央 Kline prefetch 已作为下一层外部数据骨架落地并部署到 Tencent release `20260607-123044-sentinel-503c015`。`market_data_service.py` 负责从 Top180 universe 轮询预取 K线，Top100 是热层；OKX 主、Bybit 备，预算耗尽即停本轮，不碰 Binance。缓存仍写 `runtime/kline_cache` 的 scanner 兼容格式；`core.kline_cache` 支持用大 limit fresh cache 回答小 limit 请求，减少 A/B/C 重复拉 K线。部署后首轮远端 `kline_prefetch` 为 `attempted=45/saved=45/failed=0/rate_limited=""`；后续重点观察 `rate_limited`、`saved/fresh` 和 scanner 侧 Kline 缺口。
 - 2026-06-07：用户指出 report 的 `你需要确认的事项` 不清楚要他做什么。已改规则：确认区必须拆成“事项 / 为什么出现 / 你现在要做什么”，B/v16 两条 rollback-watch 要写具体改动名（ATR止损带、过热上限85），用白话解释最近评估窗口亏损、PF 低于警戒线，并说明 `我已读` 只代表已看过提醒，不会自动改策略；如果用户不接受继续收样，应明确选择收窄 B/v16 或准备回滚。
 - 2026-06-07：修正 paper 主线下的 report/alert 一致性规则。只要 `paper_exchange_latest.json` 表明当前是自建模拟账本，真实 `crypto-account-snapshot.service` 停用、真实账户快照缺失/偏旧、`account_snapshots` 为空都不应作为首页或 attention 的 P1/P0 操作项。首页 KPI/功能卡要优先展示“自建模拟账本”的持仓、浮盈亏、刷新年龄和 A/B/C 分解；真实账户快照只属于未来真实交易所恢复 gate 的二级面板。
+- 2026-06-07：开始推进“手动干预闭环 + 半自动回滚”。`收窄 B/v16` / `准备回滚` 这类 report-side 决策现在会被 `rollback_execution_plan.py` 消费，并把匹配的 rollback-watch 候选升级为 operator-requested dry-run plan。它只生成可审计执行计划和 dry-run/review 状态，不自动选择 release id、不改 config、不部署、不重启 scanner、不下单；下一步才是执行计划预览 UI 和 release-id 人工复核路径。
 
 ---
 ## 2026-05-29 全局运行自检与账户方向口径修复

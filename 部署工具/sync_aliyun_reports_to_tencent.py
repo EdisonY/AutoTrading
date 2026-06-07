@@ -93,8 +93,6 @@ RUNTIME_FILES = [
     "replay_live_parity_latest.json",
     "replay_readiness_latest.json",
     "waiting_period_optimization_latest.json",
-    "market_microstructure_latest.json",
-    "paper_exchange_latest.json",
     "testnet_data_reset_latest.json",
     "long_term_skeleton_latest.json",
     "rollback_watch_review_latest.json",
@@ -128,9 +126,6 @@ PRIORITY_REPORT_FILES = [
 
 PRIORITY_RUNTIME_FILES = [
     "alerts_latest.json",
-    "paper_exchange_latest.json",
-    "market_data_cache.json",
-    "market_microstructure_latest.json",
     "research_store_summary_latest.json",
     "replay_readiness_latest.json",
     "external_replay_data_ingest_latest.json",

@@ -117,6 +117,30 @@ def event_payload(row: sqlite3.Row) -> dict[str, Any]:
         return {}
 
 
+def nested_payload_dicts(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    items = [payload]
+    for key in ("raw", "raw_event", "raw_signal", "signal", "context", "paper_context", "source_payload"):
+        value = payload.get(key)
+        if isinstance(value, dict):
+            items.append(value)
+    raw = payload.get("raw")
+    if isinstance(raw, dict):
+        for key in ("raw_event", "raw_signal", "signal"):
+            value = raw.get(key)
+            if isinstance(value, dict):
+                items.append(value)
+    return items
+
+
+def payload_value(payload: dict[str, Any], *keys: str) -> Any:
+    for item in nested_payload_dicts(payload):
+        for key in keys:
+            value = item.get(key)
+            if value not in (None, ""):
+                return value
+    return None
+
+
 def recent_candidates(root: Path, strategy: str, limit: int) -> list[dict[str, Any]]:
     db_path = root / "runtime" / "event_store.sqlite3"
     if not db_path.exists():
@@ -154,6 +178,13 @@ def recent_candidates(root: Path, strategy: str, limit: int) -> list[dict[str, A
             "side": side,
             "score": abs(safe_float(payload.get("score") or row["score"])),
             "source": f"{row['event_type']}#{row['id']}",
+            "source_event_type": row["event_type"],
+            "source_ts": row["ts"],
+            "source_payload": payload,
+            "timeframe": payload_value(payload, "timeframe", "tf", "source_timeframe"),
+            "atr": payload_value(payload, "atr", "atr_at_entry"),
+            "stop_loss": payload_value(payload, "sl", "stop_loss"),
+            "take_profit": payload_value(payload, "tp", "take_profit"),
             "reason": str(payload.get("reason") or row["reason"] or "recent_strategy_candidate"),
         })
         seen.add(symbol)
@@ -195,6 +226,9 @@ def bootstrap_candidates(root: Path, strategy: str, limit: int) -> list[dict[str
             "side": side,
             "score": abs(change),
             "source": "top100_market_cache",
+            "source_event_type": "MARKET_CACHE",
+            "source_payload": dict(row),
+            "timeframe": "",
             "reason": "Top100 paper exchange bootstrap",
         })
         if len(out) >= limit:
@@ -249,11 +283,19 @@ def open_bootstrap_positions(root: Path, exchange: PaperExchange, target_per_str
                 reason=str(item.get("reason") or "paper_exchange_bootstrap"),
                 context={
                     "source": item.get("source"),
+                    "source_event_type": item.get("source_event_type"),
+                    "source_ts": item.get("source_ts"),
+                    "source_payload": item.get("source_payload"),
                     "price_source": item.get("price_source"),
+                    "timeframe": item.get("timeframe"),
+                    "atr": item.get("atr"),
+                    "stop_loss": item.get("stop_loss"),
+                    "take_profit": item.get("take_profit"),
                     "margin_usdt": margin_usdt,
                     "paper_exchange_bootstrap": True,
                 },
             )
+            event_timeframe = str(item.get("timeframe") or "paper_exchange")
             writer.write_event(
                 {
                     "time": datetime.now(CST).isoformat(),
@@ -268,7 +310,11 @@ def open_bootstrap_positions(root: Path, exchange: PaperExchange, target_per_str
                     "score": item.get("score", 0),
                     "reason": "paper_exchange_bootstrap",
                     "entry_reason": item.get("reason"),
-                    "timeframe": "paper_exchange",
+                    "timeframe": event_timeframe,
+                    "source_timeframe": item.get("timeframe"),
+                    "atr": item.get("atr"),
+                    "sl": item.get("stop_loss"),
+                    "tp": item.get("take_profit"),
                     "category": "opened",
                     "decision_stage": "open",
                     "filter_layer": "paper_exchange",
@@ -280,6 +326,9 @@ def open_bootstrap_positions(root: Path, exchange: PaperExchange, target_per_str
                     "target_margin_usdt": margin_usdt,
                     "price_source": item.get("price_source"),
                     "source_candidate": item.get("source"),
+                    "source_event_type": item.get("source_event_type"),
+                    "source_ts": item.get("source_ts"),
+                    "source_payload": item.get("source_payload"),
                 },
                 source=f"{strategy}/paper_exchange",
             )
@@ -309,8 +358,9 @@ def close_hit_positions(root: Path, exchange: PaperExchange, take_profit_pct: fl
         strategy = str(pos.get("strategy"))
         symbol = str(pos.get("symbol"))
         qty = safe_float(pos.get("qty"))
+        context = pos.get("context") if isinstance(pos.get("context"), dict) else {}
+        event_timeframe = str(context.get("timeframe") or "paper_exchange")
         order_id = f"PAPERX-CLOSE-{strategy.replace('/', '-')}-{symbol}-{int(datetime.now(CST).timestamp())}"
-        before = exchange.load()
         exchange.close_market(strategy=strategy, symbol=symbol, side=side, qty=qty, price=mark, order_id=order_id, reason=reason)
         after_fill = (exchange.load().get("fills") or [])[-1]
         writer.write_event(
@@ -322,11 +372,16 @@ def close_hit_positions(root: Path, exchange: PaperExchange, take_profit_pct: fl
                 "side": side,
                 "exit_price": mark,
                 "entry_price": entry,
+                "entry_time": pos.get("opened_at"),
                 "qty": qty,
                 "reason": reason,
                 "pnl_usd": after_fill.get("realized_pnl"),
                 "fee": after_fill.get("fee"),
-                "timeframe": "paper_exchange",
+                "timeframe": event_timeframe,
+                "source_timeframe": context.get("timeframe"),
+                "atr": context.get("atr"),
+                "sl": context.get("stop_loss"),
+                "tp": context.get("take_profit"),
                 "category": "closed",
                 "decision_stage": "close",
                 "filter_layer": "paper_exchange",
@@ -334,6 +389,11 @@ def close_hit_positions(root: Path, exchange: PaperExchange, take_profit_pct: fl
                 "paper": True,
                 "mode": "paper_exchange",
                 "simulation_only": True,
+                "source_candidate": context.get("source"),
+                "source_event_type": context.get("source_event_type"),
+                "source_ts": context.get("source_ts"),
+                "source_payload": context.get("source_payload"),
+                "paper_context": context,
             },
             source=f"{strategy}/paper_exchange",
         )

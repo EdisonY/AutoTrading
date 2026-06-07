@@ -103,7 +103,7 @@ def payload_text(payload: dict[str, Any], *keys: str) -> str:
 
 def nested_payload_dicts(payload: dict[str, Any]) -> list[dict[str, Any]]:
     items = [payload]
-    for key in ("raw", "raw_event", "raw_signal", "signal"):
+    for key in ("raw", "raw_event", "raw_signal", "signal", "context", "paper_context", "source_payload"):
         value = payload.get(key)
         if isinstance(value, dict):
             items.append(value)
@@ -136,6 +136,20 @@ def normalize_timeframe(value: Any) -> str:
     if text.isdigit():
         return f"{text}m"
     return text
+
+
+def payload_timeframe(payload: dict[str, Any]) -> str:
+    primary = normalize_timeframe(payload_value(payload, "timeframe", "tf"))
+    if primary and primary != "paper_exchange":
+        return primary
+    source = normalize_timeframe(payload_value(payload, "source_timeframe"))
+    if source and source != "paper_exchange":
+        return source
+    for item in nested_payload_dicts(payload)[1:]:
+        nested = normalize_timeframe(item.get("source_timeframe") or item.get("timeframe") or item.get("tf"))
+        if nested and nested != "paper_exchange":
+            return nested
+    return primary
 
 
 def timeframe_ms(timeframe: str) -> int:
@@ -273,7 +287,7 @@ def pair_open_close_rows(rows: list[sqlite3.Row], start: datetime, end: datetime
         event_type = str(row["event_type"] or "")
         symbol = str(row["symbol"] or payload_value(payload, "symbol") or "").upper()
         side = str(row["side"] or payload_value(payload, "side") or "").lower()
-        timeframe = normalize_timeframe(payload_value(payload, "timeframe", "tf"))
+        timeframe = payload_timeframe(payload)
         key = (symbol, side, timeframe)
         if event_type == "OPEN":
             pending[key].append({"row": row, "payload": payload, "ts": event_dt})
@@ -315,10 +329,13 @@ def replay_trade_pair(pair: dict[str, Any]) -> dict[str, Any]:
         close_row = pair.get("close_row")
         symbol = str(getattr(close_row, "__getitem__", lambda _: "")("symbol") or payload_value(close_payload, "symbol") or "").upper()
         side = str(getattr(close_row, "__getitem__", lambda _: "")("side") or payload_value(close_payload, "side") or "").lower()
-        timeframe = normalize_timeframe(payload_value(close_payload, "timeframe", "tf"))
+        timeframe = payload_timeframe(close_payload)
         close_ts = pair.get("close_ts")
+        status = pair.get("status") or "unpaired"
+        if status == "missing_open" and timeframe == "paper_exchange":
+            status = "paper_missing_open_context"
         return {
-            "status": pair.get("status") or "unpaired",
+            "status": status,
             "symbol": symbol,
             "side": side,
             "timeframe": timeframe,
@@ -331,7 +348,9 @@ def replay_trade_pair(pair: dict[str, Any]) -> dict[str, Any]:
     close_row = pair.get("close_row")
     symbol = str(getattr(close_row, "__getitem__", lambda _: "")("symbol") or payload_value(close_payload, "symbol") or "").upper()
     side = str(getattr(close_row, "__getitem__", lambda _: "")("side") or payload_value(close_payload, "side") or "").lower()
-    timeframe = normalize_timeframe(payload_value(close_payload, "timeframe", "tf") or payload_value(open_payload, "timeframe", "tf"))
+    timeframe = payload_timeframe(close_payload) or payload_timeframe(open_payload)
+    if timeframe == "paper_exchange":
+        return {"status": "paper_context_timeframe_gap", "symbol": symbol, "side": side, "timeframe": timeframe}
     if timeframe not in A_V11_TRAILING_PULLBACK_ATR:
         return {"status": "unsupported_timeframe", "symbol": symbol, "side": side, "timeframe": timeframe}
     entry_ts = parse_dt(payload_value(close_payload, "entry_time")) or pair.get("open_ts")

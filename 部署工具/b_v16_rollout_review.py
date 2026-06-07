@@ -348,7 +348,20 @@ def pair_open_close_rows(rows: list[sqlite3.Row], start: datetime, end: datetime
 
 def replay_trade_pair(pair: dict[str, Any]) -> dict[str, Any]:
     if pair.get("status") != "paired":
-        return {"status": pair.get("status") or "unpaired"}
+        close_payload = pair.get("close_payload") or {}
+        close_row = pair.get("close_row")
+        symbol = str(getattr(close_row, "__getitem__", lambda _: "")("symbol") or payload_value(close_payload, "symbol") or "").upper()
+        side = str(getattr(close_row, "__getitem__", lambda _: "")("side") or payload_value(close_payload, "side") or "").lower()
+        timeframe = normalize_timeframe(payload_value(close_payload, "timeframe", "tf"))
+        close_ts = pair.get("close_ts")
+        return {
+            "status": pair.get("status") or "unpaired",
+            "symbol": symbol,
+            "side": side,
+            "timeframe": timeframe,
+            "close_ts": close_ts.isoformat(timespec="seconds") if isinstance(close_ts, datetime) else None,
+            "entry_time_hint": str(payload_value(close_payload, "entry_time") or ""),
+        }
     open_payload = pair.get("open_payload") or {}
     close_payload = pair.get("close_payload") or {}
     close_row = pair.get("close_row")
@@ -463,6 +476,7 @@ def build_replay_fill_comparison(rows: list[sqlite3.Row], start: datetime, end: 
             "timeframe": item.get("timeframe"),
             "entry_ts": item.get("entry_ts"),
             "close_ts": item.get("close_ts"),
+            "entry_time_hint": item.get("entry_time_hint"),
             "kline_source": item.get("kline_source"),
         }
         for item in results

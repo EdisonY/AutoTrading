@@ -6,6 +6,7 @@ from the portal UI. Uses Python's built-in http.server — no Flask/FastAPI need
 Endpoints:
   GET  /api/attention        - List current attention items
   POST /api/attention/ack    - Acknowledge an item
+  POST /api/attention/decision - Record an operator decision
   POST /api/attention/resolve - Resolve an item
   GET  /api/report/refresh   - Read safe report-refresh status
   POST /api/report/refresh   - Start safe report-only refresh
@@ -55,6 +56,24 @@ _refresh_state: dict[str, Any] = {
     "mode": None,
     "ok": None,
     "error": None,
+}
+
+ATTENTION_DECISIONS: dict[str, dict[str, str]] = {
+    "continue_observe": {
+        "label": "继续收样",
+        "status": "continue_observe",
+        "effect": "已记录：继续收样。这条会从首页待确认移除，系统继续收集样本。",
+    },
+    "narrow_b_v16": {
+        "label": "收窄 B/v16",
+        "status": "narrow_b_v16_requested",
+        "effect": "已记录：请求收窄 B/v16。执行链路会按台账处理，并继续留痕。",
+    },
+    "prepare_rollback": {
+        "label": "准备回滚",
+        "status": "rollback_prepare_requested",
+        "effect": "已记录：请求准备回滚。执行链路会按台账准备回滚证据和操作。",
+    },
 }
 
 
@@ -259,6 +278,44 @@ def _update_json_item_status(item_id: str, new_status: str) -> dict[str, Any]:
         return {"ok": True, "item_id": item_id, "action": new_status}
     except Exception as e:
         return {"ok": False, "error": str(e)}
+
+
+def record_attention_decision(item_id: str, decision: str, user: str = "portal") -> dict[str, Any]:
+    """Record an operator decision from the report UI."""
+    meta = ATTENTION_DECISIONS.get(str(decision or ""))
+    if not meta:
+        return {"ok": False, "error": f"Unsupported decision: {decision}"}
+    status = meta["status"]
+    if EVENT_STORE_DB.exists():
+        con = get_db()
+        try:
+            ensure_attention_schema(con)
+            item = con.execute(
+                """SELECT item_id, priority, category, title, status, evidence,
+                          recommended_action, first_seen, last_seen, last_confirmed_active, source
+                   FROM attention_items WHERE item_id = ?""",
+                (item_id,),
+            ).fetchone()
+            if item:
+                persist_acknowledgement(con, item, status, user)
+                con.commit()
+                return {
+                    "ok": True,
+                    "item_id": item_id,
+                    "action": status,
+                    "decision": decision,
+                    "label": meta["label"],
+                    "effect": meta["effect"],
+                }
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+        finally:
+            con.close()
+
+    result = _update_json_item_status(item_id, status)
+    if result.get("ok"):
+        result.update({"decision": decision, "label": meta["label"], "effect": meta["effect"]})
+    return result
 
 
 def resolve_item(item_id: str, user: str = "portal") -> dict[str, Any]:
@@ -477,6 +534,19 @@ class AttentionHandler(BaseHTTPRequestHandler):
                 self._json_response({"error": "item_id required"}, 400)
                 return
             result = acknowledge_item(item_id, user)
+            export_attention_json()
+            refresh_decision_portal()
+            self._json_response(result)
+
+        elif parsed.path == "/api/attention/decision":
+            decision = data.get("decision", "")
+            if not item_id:
+                self._json_response({"error": "item_id required"}, 400)
+                return
+            if not decision:
+                self._json_response({"error": "decision required"}, 400)
+                return
+            result = record_attention_decision(item_id, decision, user)
             export_attention_json()
             refresh_decision_portal()
             self._json_response(result)

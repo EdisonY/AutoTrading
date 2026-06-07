@@ -111,6 +111,27 @@ class AttentionApiServerTests(unittest.TestCase):
         self.assertTrue(ack["fingerprint"])
         self.assertIn("Needs review", ack["payload_json"])
 
+    def test_report_decision_writes_operator_choice(self):
+        self.seed_current_schema()
+
+        result = self.tool.record_attention_decision("item-1", "narrow_b_v16", "tester")
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["label"], "收窄 B/v16")
+        con = sqlite3.connect(str(self.db))
+        con.row_factory = sqlite3.Row
+        try:
+            item = con.execute("select * from attention_items where item_id = ?", ("item-1",)).fetchone()
+            ack = con.execute("select * from attention_acknowledgements where item_id = ?", ("item-1",)).fetchone()
+        finally:
+            con.close()
+
+        self.assertEqual(item["status"], "narrow_b_v16_requested")
+        self.assertEqual(item["acknowledged_reason"], "tester:narrow_b_v16_requested")
+        self.assertEqual(ack["status"], "narrow_b_v16_requested")
+        self.assertEqual(ack["reason"], "tester:narrow_b_v16_requested")
+        self.assertIn("执行链路", result["effect"])
+
     def test_legacy_ack_table_gets_new_columns_and_resolve_works(self):
         con = sqlite3.connect(str(self.db))
         try:

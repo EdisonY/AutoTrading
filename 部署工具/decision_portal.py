@@ -697,6 +697,22 @@ def plain_attention_metrics(text: str) -> tuple[str | None, str | None]:
     return pnl, pf
 
 
+def plain_attention_metric_rows(item: dict[str, Any]) -> list[tuple[str, str]]:
+    text = str(item.get("evidence") or "")
+    pnl, pf = plain_attention_metrics(text)
+    rows: list[tuple[str, str]] = []
+    if pnl:
+        rows.append(("最近扣费后盈亏", f"{pnl} USDT"))
+    if pf:
+        rows.append(("收益因子 PF", pf))
+    threshold_match = re.search(r"profit_factor=[-+]?\d+(?:\.\d+)?<([-+]?\d+(?:\.\d+)?)", text)
+    if threshold_match:
+        rows.append(("PF 警戒线", threshold_match.group(1)))
+    rows.append(("当前状态", "低于继续放开线，需要你选下一步"))
+    rows.append(("按钮含义", "会写入决策台账；继续收样会从待确认移除"))
+    return rows
+
+
 def plain_attention_evidence(item: dict[str, Any]) -> str:
     text = str(item.get("evidence") or "")
     category = str(item.get("category") or "")
@@ -711,8 +727,8 @@ def plain_attention_evidence(item: dict[str, Any]) -> str:
                 bits.append(f"扣费后盈亏约 {pnl} USDT")
             if pf:
                 bits.append(f"收益因子 PF={pf}")
-            return "为什么出现：最近评估窗口里 " + "，".join(bits) + "，低于系统的继续放开警戒线；所以提醒你复核这次 B/v16 改动是否还要继续跑。"
-        return "为什么出现：这项已经上线过，但最近表现触发了复核线；现在要判断继续观察、收窄，还是准备回滚。"
+            return "最近评估窗口里 " + "，".join(bits) + "，低于系统的继续放开警戒线；所以提醒你复核这次改动是否还要继续跑。"
+        return "这项已经上线过，但最近表现触发了复核线；现在要判断继续观察、收窄，还是准备回滚。"
     if category == "策略进化":
         if "small_live_monitoring" in text:
             return "现在只是小仓观察，不能当成已经验证好的正式升级。"
@@ -744,12 +760,134 @@ def plain_attention_action(item: dict[str, Any]) -> str:
     return "不用现在处理，继续观察。"
 
 
+def plain_attention_action_html(item: dict[str, Any]) -> str:
+    category = str(item.get("category") or "")
+    item_id = str(item.get("item_id") or "")
+    if category in {"策略进化", "策略回滚"} or item_id.startswith(("rollback:", "evolution:")):
+        metric_rows = "".join(
+            f"<li><span>{h(label)}</span><b>{h(value)}</b></li>"
+            for label, value in plain_attention_metric_rows(item)
+        )
+        return f"""
+<div class="decision-box">
+  <ul class="decision-facts">{metric_rows}</ul>
+  <div class="decision-actions">
+    <button class="decision-btn good" onclick="decideItem('{h(item_id)}','continue_observe',this)">继续收样</button>
+    <button class="decision-btn warn" onclick="decideItem('{h(item_id)}','narrow_b_v16',this)">收窄 B/v16</button>
+    <button class="decision-btn bad" onclick="decideItem('{h(item_id)}','prepare_rollback',this)">准备回滚</button>
+  </div>
+  <p class="decision-note">你在这里点选后会写入决策台账；不用再单独告诉我。收窄/回滚是执行请求，后续由执行链路处理并在台账留痕。</p>
+</div>
+""".strip()
+    return h(plain_attention_action(item))
+
+
 def attention_button_label(item: dict[str, Any]) -> str:
     category = str(item.get("category") or "")
     item_id = str(item.get("item_id") or "")
     if category in {"策略进化", "策略回滚"} or item_id.startswith(("rollback:", "evolution:")):
         return "我已读"
     return "确认"
+
+
+def market_mover_rows(state: dict[str, Any], limit: int = 20) -> list[dict[str, Any]]:
+    market = state.get("market") if isinstance(state.get("market"), dict) else {}
+    paper = state.get("paper_exchange") if isinstance(state.get("paper_exchange"), dict) else {}
+    movers = market.get("market_mover_preview") if isinstance(market.get("market_mover_preview"), list) else []
+    positions = paper.get("positions") if isinstance(paper.get("positions"), list) else []
+    by_symbol: dict[str, list[dict[str, Any]]] = {}
+    for pos in positions:
+        if not isinstance(pos, dict):
+            continue
+        symbol = str(pos.get("symbol") or "").upper()
+        if symbol:
+            by_symbol.setdefault(symbol, []).append(pos)
+
+    rows: list[dict[str, Any]] = []
+    for idx, mover in enumerate(movers[:limit], start=1):
+        if not isinstance(mover, dict):
+            continue
+        symbol = str(mover.get("symbol") or "").upper()
+        try:
+            change = float(mover.get("change_pct") or 0.0)
+        except Exception:
+            change = 0.0
+        desired = "long" if change >= 0 else "short"
+        move_label = "上涨" if change >= 0 else "下跌"
+        matched = by_symbol.get(symbol, [])
+        pnl = sum(float(pos.get("unrealized_pnl") or 0.0) for pos in matched)
+        side_bits: list[str] = []
+        correct = "未进场"
+        if matched:
+            aligned = 0
+            for pos in matched:
+                side = str(pos.get("side") or "").lower()
+                strategy = str(pos.get("strategy") or "-")
+                if side == desired:
+                    aligned += 1
+                side_bits.append(f"{strategy} {side or '-'}")
+            if aligned == len(matched):
+                correct = "顺势"
+            elif aligned == 0:
+                correct = "逆势"
+            else:
+                correct = "多空混合"
+        result = "未进场"
+        if matched:
+            result = "赚钱" if pnl > 0 else "亏钱" if pnl < 0 else "持平"
+        rows.append({
+            "rank": idx,
+            "symbol": symbol,
+            "reason": mover.get("reason") or move_label,
+            "change_pct": change,
+            "velocity_pct": mover.get("velocity_pct"),
+            "quote_volume": mover.get("quote_volume"),
+            "source": ",".join(str(x) for x in (mover.get("sources") or [mover.get("source") or "-"])),
+            "scan": "已进扫描池",
+            "entry": "已进场" if matched else "未进场",
+            "direction": correct,
+            "positions": "；".join(side_bits) if side_bits else "-",
+            "pnl": pnl,
+            "result": result,
+        })
+    return rows
+
+
+def render_market_movers(state: dict[str, Any]) -> str:
+    rows = market_mover_rows(state)
+    if not rows:
+        return '<p class="empty">今天还没有可展示的涨跌榜/突然加速榜。</p>'
+    entered = sum(1 for row in rows if row["entry"] == "已进场")
+    aligned = sum(1 for row in rows if row["direction"] == "顺势")
+    pnl = sum(float(row.get("pnl") or 0.0) for row in rows)
+    body = "".join(
+        f"""
+<tr>
+  <td>{h(row['rank'])}</td>
+  <td>{h(row['symbol'])}</td>
+  <td>{h(row['reason'])}<small>{h('上涨' if row['change_pct'] >= 0 else '下跌')} {h(number(row['change_pct'], 2))}%</small></td>
+  <td>{h(row['scan'])}</td>
+  <td>{h(row['entry'])}<small>{h(row['positions'])}</small></td>
+  <td>{h(row['direction'])}</td>
+  <td class="{position_upnl_class(row['pnl'])}">{h(row['result'])} {h(number(row['pnl'], 4))}</td>
+  <td>{h(fmt_plain(row.get('quote_volume'), 2))}<small>{h(row['source'])}</small></td>
+</tr>
+""".strip()
+        for row in rows
+    )
+    return f"""
+<div class="mover-summary">
+  <div><span>榜单数量</span><b>{h(len(rows))}</b></div>
+  <div><span>已进场</span><b>{h(entered)}</b></div>
+  <div><span>顺势方向</span><b>{h(aligned)}</b></div>
+  <div><span>榜单持仓浮盈亏</span><b class="{position_upnl_class(pnl)}">{h(number(pnl, 4))} USDT</b></div>
+</div>
+<div class="table-scroll"><table class="mover-table">
+  <thead><tr><th>#</th><th>币种</th><th>榜单原因</th><th>扫描</th><th>是否进场</th><th>方向关系</th><th>当前结果</th><th>成交额/来源</th></tr></thead>
+  <tbody>{body}</tbody>
+</table></div>
+<p class="empty">方向关系只说明是否顺着当天涨跌榜方向；当前结果看模拟账本浮盈亏。旧版完整市场复盘仍在“市场复盘日报”链接里。</p>
+"""
 
 
 def cleanup_summary() -> dict[str, Any]:
@@ -1051,16 +1189,23 @@ def render_attention(items: list[dict[str, Any]]) -> str:
         priority = str(item.get("priority") or "")
         title = plain_attention_title(item)
         evidence = plain_attention_evidence(item)
-        action = plain_attention_action(item)
+        action_html = plain_attention_action_html(item)
         button = attention_button_label(item)
+        is_strategy_attention = str(item.get("category") or "") in {"策略进化", "策略回滚"} or item_id.startswith(("rollback:", "evolution:"))
+        subtitle = "这不是服务故障，是上线后表现复核提醒。" if is_strategy_attention else "这是运行提醒；确认后会从首页待确认区移除。"
+        final_button = (
+            f'<button class="icon-btn" onclick="ackItem(\'{h(item_id)}\', this)">{h(button)}</button>'
+            if not is_strategy_attention
+            else ""
+        )
         rows.append(
             f"""
 <tr data-item="{h(item_id)}">
   <td><b>{h(attention_level_label(priority))}</b><small>{h(priority)}</small></td>
-  <td>{h(title)}<small>这不是服务故障，是上线后表现复核提醒。</small></td>
+  <td>{h(title)}<small>{h(subtitle)}</small></td>
   <td>{h(evidence)}</td>
-  <td>{h(action)}</td>
-  <td><button class="icon-btn" onclick="ackItem('{h(item_id)}', this)">{h(button)}</button></td>
+  <td>{action_html}</td>
+  <td>{final_button}</td>
 </tr>
 """.strip()
         )
@@ -1238,6 +1383,23 @@ tr:hover td {{ background:#101827; }}
 .alerts b,.alerts span {{ display:block; }} .alerts span {{ color:var(--muted); margin-top:2px; }}
 .icon-btn {{ border:0; background:linear-gradient(135deg,var(--cyan),var(--blue)); color:#06101a; border-radius:8px; padding:8px 12px; cursor:pointer; font-weight:850; }}
 .icon-btn:disabled {{ opacity:.65; cursor:default; }}
+.decision-box {{ display:grid; gap:10px; min-width:380px; }}
+.decision-facts {{ list-style:none; padding:0; margin:0; display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; }}
+.decision-facts li {{ border:1px solid var(--line); border-radius:8px; background:#0b1320; padding:8px; }}
+.decision-facts span {{ display:block; color:var(--muted); font-size:12px; }}
+.decision-facts b {{ display:block; color:#f7fbff; margin-top:2px; }}
+.decision-actions {{ display:flex; flex-wrap:wrap; gap:8px; }}
+.decision-btn {{ border:1px solid var(--line); color:#06101a; border-radius:8px; padding:8px 10px; cursor:pointer; font-weight:850; }}
+.decision-btn.good {{ background:var(--good); }}
+.decision-btn.warn {{ background:var(--warn); }}
+.decision-btn.bad {{ background:var(--bad); color:#fff; }}
+.decision-btn:disabled {{ opacity:.65; cursor:default; }}
+.decision-note {{ margin:0; color:var(--muted); font-size:12px; }}
+.mover-summary {{ display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px; margin-bottom:12px; }}
+.mover-summary div {{ border:1px solid var(--line); border-radius:8px; background:#0b1320; padding:12px; }}
+.mover-summary span {{ display:block; color:var(--muted); font-size:12px; }}
+.mover-summary b {{ display:block; font-size:20px; margin-top:4px; }}
+.mover-table {{ min-width:1080px; }}
 .gate-grid {{ display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px; }}
 .gate-grid div {{ border:1px solid var(--line); border-radius:8px; background:#0b1320; padding:12px; min-height:76px; }}
 .gate-grid b {{ display:block; margin:2px 0 4px; }}
@@ -1258,6 +1420,7 @@ tr:hover td {{ background:#101827; }}
   <nav class="nav">
     <a class="active" href="#overview">总览</a>
     <a href="#paper">模拟账本</a>
+    <a href="#movers">涨跌榜</a>
     <a href="#strategies">三策略</a>
     <a href="#actions">确认事项</a>
   </nav>
@@ -1285,6 +1448,10 @@ tr:hover td {{ background:#101827; }}
     <h2>三策略模拟账本运行总览</h2>
     {render_paper_exchange(state)}
   </section>
+  <section class="panel" id="movers">
+    <h2>今日涨跌榜跟踪</h2>
+    {render_market_movers(state)}
+  </section>
   <section class="panel">
     <h2>复盘 / 进化成熟度</h2>
     <div class="cards">{render_evolution_readiness(state)}</div>
@@ -1311,6 +1478,7 @@ tr:hover td {{ background:#101827; }}
           <a href="/reports/portal_latest.html">完整旧版详情</a>
           <a href="/reports/replay_readiness_latest.md">Replay 验收</a>
           <a href="/reports/waiting_period_optimization_latest.html">等待期优化</a>
+          <a href="/reports/market_review_latest.html">市场复盘日报</a>
           <a href="/reports/long_term_skeleton_latest.md">长期目标骨架</a>
           <a href="/reports/strategy_evolution_latest.html">策略进化</a>
           <a href="/reports/research_store_summary_latest.md">研究仓</a>
@@ -1345,6 +1513,33 @@ async function ackItem(itemId, btn) {{
   }} catch (err) {{
     btn.textContent = '网络错误';
     btn.disabled = false;
+  }}
+}}
+async function decideItem(itemId, decision, btn) {{
+  if (!itemId || !decision || !btn) return;
+  const siblings = btn.closest('.decision-actions')?.querySelectorAll('button') || [];
+  siblings.forEach((el) => el.disabled = true);
+  const old = btn.textContent;
+  btn.textContent = '记录中';
+  try {{
+    const resp = await fetch('/api/attention/decision', {{
+      method: 'POST',
+      headers: {{'Content-Type': 'application/json'}},
+      body: JSON.stringify({{item_id: itemId, decision: decision, user: 'decision_portal'}})
+    }});
+    const data = await resp.json();
+    if (!data.ok) throw new Error(data.error || '记录失败');
+    btn.textContent = data.label || '已记录';
+    const row = btn.closest('tr');
+    if (row) {{
+      row.style.opacity = '0.55';
+      const note = row.querySelector('.decision-note');
+      if (note) note.textContent = data.effect || '已写入决策台账。';
+    }}
+  }} catch (err) {{
+    btn.textContent = old;
+    siblings.forEach((el) => el.disabled = false);
+    alert((err && err.message) ? err.message : '记录失败');
   }}
 }}
 async function refreshReport(btn) {{

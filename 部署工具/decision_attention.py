@@ -35,6 +35,14 @@ STRATEGY_EVOLUTION_JSON = RUNTIME_DIR / "strategy_evolution_latest.json"
 EVENT_STORE_DB = RUNTIME_DIR / "event_store.sqlite3"
 CST = timezone(timedelta(hours=8))
 PRIORITY_ORDER = {"P0": 0, "P1": 1, "P2": 2, "P3": 3}
+ACKNOWLEDGED_STATUSES = {
+    "acknowledged",
+    "archived",
+    "resolved",
+    "continue_observe",
+    "narrow_b_v16_requested",
+    "rollback_prepare_requested",
+}
 SUPPRESSED_ARCHIVED_KEYWORDS = (
     "crypto-portal-refresh.service",
     "crypto-market-review.timer",
@@ -301,7 +309,7 @@ def is_acknowledged(item: dict[str, Any], acknowledgements: dict[str, dict[str, 
     row = acknowledgements.get(str(item.get("item_id") or ""))
     if not row:
         return False
-    if str(row.get("status") or "") not in {"acknowledged", "archived", "resolved"}:
+    if str(row.get("status") or "") not in ACKNOWLEDGED_STATUSES:
         return False
     expected = str(row.get("fingerprint") or "")
     return not expected or expected == item_fingerprint(item)
@@ -557,7 +565,7 @@ def merge_items(existing: dict[str, dict[str, Any]], detected: list[dict[str, An
             merged[item_id] = current
             continue
         ack = acknowledgements.get(item_id)
-        if ack and str(ack.get("status") or "") in {"acknowledged", "archived", "resolved"}:
+        if ack and str(ack.get("status") or "") in ACKNOWLEDGED_STATUSES:
             current = dict(prior)
             current["status"] = str(ack.get("status") or "archived")
             current["acknowledged_at"] = ack.get("acknowledged_at") or now

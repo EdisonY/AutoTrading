@@ -86,7 +86,7 @@ class DecisionPortalTests(unittest.TestCase):
         self.assertIn("A/v11 策略改动上线后表现需要你复核", html)
         self.assertIn("为什么出现", html)
         self.assertIn("你现在要做什么", html)
-        self.assertIn("点“我已读”不会自动改策略", html)
+        self.assertIn("继续收样", html)
         self.assertNotIn("EXP-current", html)
         self.assertNotIn("EXP-old", html)
         self.assertNotIn("replacement-quality", html)
@@ -107,9 +107,12 @@ class DecisionPortalTests(unittest.TestCase):
         self.assertIn("B/v16 ATR止损带改动上线后表现需要你复核", html)
         self.assertIn("扣费后盈亏约 -85.98 USDT", html)
         self.assertIn("收益因子 PF=0.68", html)
-        self.assertIn("先点右侧“策略进化”或“完整旧版详情”", html)
-        self.assertIn("如果不接受，告诉我收窄 B/v16 或准备回滚", html)
-        self.assertIn(">我已读</button>", html)
+        self.assertIn("PF 警戒线", html)
+        self.assertIn("继续收样", html)
+        self.assertIn("收窄 B/v16", html)
+        self.assertIn("准备回滚", html)
+        self.assertIn("/api/attention/decision", self.tool.render_html())
+        self.assertNotIn("为什么出现：", html)
 
     def test_attention_items_uses_newer_live_attention_pull(self):
         self.attention_json.write_text(
@@ -281,6 +284,42 @@ class DecisionPortalTests(unittest.TestCase):
         self.assertIn("资金费率", html)
         self.assertNotIn("Binance", html)
 
+    def test_market_mover_followup_shows_entry_direction_and_pnl(self):
+        html = self.tool.render_market_movers({
+            "market": {
+                "market_mover_preview": [
+                    {
+                        "symbol": "BEATUSDT",
+                        "reason": "涨幅榜",
+                        "change_pct": 27.0,
+                        "quote_volume": 123456,
+                        "sources": ["okx"],
+                    },
+                    {
+                        "symbol": "MEUSDT",
+                        "reason": "跌幅榜",
+                        "change_pct": -8.0,
+                        "quote_volume": 1000,
+                        "sources": ["bybit"],
+                    },
+                ]
+            },
+            "paper_exchange": {
+                "positions": [
+                    {"strategy": "B/v16", "symbol": "BEATUSDT", "side": "long", "unrealized_pnl": 3.2},
+                    {"strategy": "A/v11", "symbol": "MEUSDT", "side": "long", "unrealized_pnl": -1.1},
+                ]
+            },
+        })
+
+        self.assertIn("BEATUSDT", html)
+        self.assertIn("已进场", html)
+        self.assertIn("顺势", html)
+        self.assertIn("MEUSDT", html)
+        self.assertIn("逆势", html)
+        self.assertIn("+3.2000", html)
+        self.assertIn("-1.1000", html)
+
     def test_render_html_has_countdown_and_no_legacy_report_sections(self):
         old_read_first_json = self.tool.read_first_json
         old_queue_summary = self.tool.queue_summary
@@ -300,6 +339,7 @@ class DecisionPortalTests(unittest.TestCase):
 
         self.assertIn("refreshCountdown", html)
         self.assertIn("下次自动刷新", html)
+        self.assertIn("今日涨跌榜跟踪", html)
         self.assertNotIn("从零运行状态", html)
         self.assertNotIn("服务器清理计划", html)
         self.assertNotIn("小放开闸门", html)

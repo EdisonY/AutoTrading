@@ -303,6 +303,49 @@ class WaitingPeriodOptimizationTests(unittest.TestCase):
             self.assertEqual(payload["readiness"]["decision"], "hold_frequency")
             self.assertIn("账户资料仍会挡开仓", payload["readiness"]["reason"])
 
+    def test_paper_mainline_ignores_binance_restore_blockers(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            runtime = root / "runtime"
+            reports = root / "reports"
+            mirror_runtime = root / "server_logs_tencent" / "runtime"
+            runtime.mkdir(parents=True)
+            reports.mkdir()
+            mirror_runtime.mkdir(parents=True)
+            self.create_queue_db(runtime / "binance_api_queue.sqlite3")
+            with closing(sqlite3.connect(runtime / "binance_api_queue.sqlite3")) as conn:
+                conn.execute(
+                    "insert into api_requests(label,scope,account,path,status,result_status,error) values(?,?,?,?,?,?,?)",
+                    ("old", "signed", "A", "/fapi/v2/balance", "queued", None, ""),
+                )
+                conn.commit()
+            self.create_event_db(mirror_runtime / "event_store.sqlite3")
+            (runtime / "account_state_latest.json").write_text(
+                json.dumps({
+                    "accounts": [
+                        {
+                            "strategy": "A/v11",
+                            "ts": (datetime.now(timezone.utc) - timedelta(hours=5)).isoformat(),
+                            "stale": True,
+                            "open_positions": 1,
+                        }
+                    ]
+                }),
+                encoding="utf-8",
+            )
+            (runtime / "paper_exchange_latest.json").write_text(
+                json.dumps({"mode": "paper_exchange", "open_positions": 4, "total_unrealized_pnl": -1.25}),
+                encoding="utf-8",
+            )
+
+            payload = self.tool.build_payload(root=root, hours=24)
+
+            self.assertEqual(payload["status"], "paper_mainline_observing")
+            self.assertEqual(payload["summary"]["active_requests"], 0)
+            self.assertFalse(payload["summary"]["account_state_blocking"])
+            self.assertEqual(payload["account_state"]["status"], "not_applicable_paper_mainline")
+            self.assertIn("自建 paper 账本", payload["readiness"]["reason"])
+
     def test_alert_rate_limit_fallback_marks_cooldown_when_queue_db_missing(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

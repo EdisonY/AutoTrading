@@ -32,6 +32,7 @@ ATTENTION_MD = REPORTS_DIR / "decision_attention_latest.md"
 ATTENTION_HTML = REPORTS_DIR / "decision_attention_latest.html"
 ALERTS_JSON = RUNTIME_DIR / "alerts_latest.json"
 STRATEGY_EVOLUTION_JSON = RUNTIME_DIR / "strategy_evolution_latest.json"
+PAPER_EXCHANGE_JSON = RUNTIME_DIR / "paper_exchange_latest.json"
 EVENT_STORE_DB = RUNTIME_DIR / "event_store.sqlite3"
 CST = timezone(timedelta(hours=8))
 PRIORITY_ORDER = {"P0": 0, "P1": 1, "P2": 2, "P3": 3}
@@ -402,6 +403,9 @@ def detect_open_staleness_items() -> list[dict[str, Any]]:
             system_ts = parse_dt(system_row["ts"]) if system_row else None
             if not system_ts or (now_cst() - system_ts).total_seconds() > 90 * 60:
                 continue
+            paper = paper_strategy_activity(strategy)
+            if paper.get("active"):
+                continue
             open_row = conn.execute(
                 """
                 select ts, symbol, side from events
@@ -436,6 +440,33 @@ def detect_open_staleness_items() -> list[dict[str, Any]]:
         except Exception:
             pass
     return out
+
+
+def paper_strategy_activity(strategy: str) -> dict[str, Any]:
+    """Return current paper activity for stale-open suppression.
+
+    In paper mainline, an open paper position means the strategy is participating
+    even when the older event DB lacks scanner OPEN rows.
+    """
+    payload = read_json(PAPER_EXCHANGE_JSON)
+    if not isinstance(payload, dict) or payload.get("mode") != "paper_exchange":
+        return {"active": False, "reason": "not_paper_mainline"}
+    by_strategy = payload.get("by_strategy") if isinstance(payload.get("by_strategy"), dict) else {}
+    row = by_strategy.get(strategy) if isinstance(by_strategy.get(strategy), dict) else {}
+    if int(row.get("positions") or 0) > 0:
+        return {"active": True, "reason": "paper_open_positions", "positions": int(row.get("positions") or 0)}
+    latest_open: datetime | None = None
+    for fill in payload.get("recent_fills") or []:
+        if not isinstance(fill, dict):
+            continue
+        if str(fill.get("strategy") or "") != strategy or str(fill.get("action") or "").upper() != "OPEN":
+            continue
+        dt = parse_dt(fill.get("ts"))
+        if dt and (latest_open is None or dt > latest_open):
+            latest_open = dt
+    if latest_open and (now_cst() - latest_open).total_seconds() <= 48 * 3600:
+        return {"active": True, "reason": "recent_paper_open", "latest_open": latest_open.isoformat()}
+    return {"active": False, "reason": "no_recent_paper_activity"}
 
 
 def load_existing() -> dict[str, dict[str, Any]]:

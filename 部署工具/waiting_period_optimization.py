@@ -322,6 +322,17 @@ def account_state_review(runtime_dir: Path, mirror_runtime: Path) -> dict[str, A
     return out
 
 
+def paper_mainline_review(runtime_dir: Path, mirror_runtime: Path) -> dict[str, Any]:
+    payload = read_json(first_existing(runtime_dir / "paper_exchange_latest.json", mirror_runtime / "paper_exchange_latest.json") or Path(""))
+    active = payload.get("mode") == "paper_exchange"
+    return {
+        "active": active,
+        "source": str(first_existing(runtime_dir / "paper_exchange_latest.json", mirror_runtime / "paper_exchange_latest.json") or ""),
+        "open_positions": int(payload.get("open_positions") or 0) if active else 0,
+        "total_unrealized_pnl": payload.get("total_unrealized_pnl") if active else None,
+    }
+
+
 def open_skipped_review(db_path: Path | None, hours: int) -> dict[str, Any]:
     out: dict[str, Any] = {
         "available": False,
@@ -636,16 +647,30 @@ def build_payload(root: Path = ROOT, hours: int = 24) -> dict[str, Any]:
     scan_coverage = scan_coverage_review(event_db, top100.get("top100_symbols") or [], hours)
     live_activity = live_activity_review(runtime_dir)
     account_state = account_state_review(runtime_dir, mirror_runtime)
+    paper_mainline = paper_mainline_review(runtime_dir, mirror_runtime)
     active_cooldowns = int(queue.get("active_cooldowns") or 0)
     active_requests = int(queue.get("active_requests") or 0)
     recent_bad = int(queue.get("recent_bad") or 0)
     account_blocking = bool(account_state.get("pre_entry_blocking"))
+    if paper_mainline.get("active"):
+        queue = dict(queue)
+        queue["ignored_for_paper_mainline"] = True
+        queue["paper_mainline_note"] = "当前主线是外部行情 + 自建 paper 账本；旧 Binance 队列/账户状态不作为 report 阻塞。"
+        account_state = dict(account_state)
+        account_state["pre_entry_blocking"] = False
+        account_state["status"] = "not_applicable_paper_mainline"
+        account_state["plain_status"] = "当前主线使用自建 paper 账本，不依赖 Binance 账户快照；账户资料不应阻塞报告/收样。"
+        active_cooldowns = 0
+        active_requests = 0
+        account_blocking = False
     if active_cooldowns:
         status = "blocked_by_cooldown"
     elif active_requests:
         status = "blocked_by_queue"
     elif account_blocking:
         status = "blocked_by_account_state"
+    elif paper_mainline.get("active"):
+        status = "paper_mainline_observing"
     elif recent_bad:
         status = "cooldown_clear_recent_bad_history"
     else:
@@ -657,6 +682,8 @@ def build_payload(root: Path = ROOT, hours: int = 24) -> dict[str, Any]:
         readiness_reason = "队列里还有未完成请求；先等清空，再判断下一层恢复。"
     elif account_blocking:
         readiness_reason = "账户资料仍会挡开仓；先修复账户状态/用户流，不恢复订单、不提频。"
+    elif paper_mainline.get("active"):
+        readiness_reason = "当前为外部行情 + 自建 paper 账本主线；旧 Binance 队列/账户状态不阻塞收样，继续只读补齐回放数据。"
     elif recent_bad:
         readiness_reason = "当前冷却和队列已清；历史坏请求只作风险提示，仍按分阶段恢复计划推进。"
     else:
@@ -683,6 +710,7 @@ def build_payload(root: Path = ROOT, hours: int = 24) -> dict[str, Any]:
         "top100": top100,
         "scan_coverage": scan_coverage,
         "account_state": account_state,
+        "paper_mainline": paper_mainline,
         "open_skipped": skipped,
         "research_gaps": gaps,
         "reports": report_review(runtime_dir, reports_dir),
@@ -690,8 +718,8 @@ def build_payload(root: Path = ROOT, hours: int = 24) -> dict[str, Any]:
         "readiness": readiness,
         "actions": actions,
         "summary": {
-            "active_requests": int(queue.get("active_requests") or 0),
-            "active_cooldowns": int(queue.get("active_cooldowns") or 0),
+            "active_requests": active_requests,
+            "active_cooldowns": active_cooldowns,
             "recent_bad": int(queue.get("recent_bad") or 0),
             "open_skipped": int(skipped.get("total") or 0),
             "open_failed": int(skipped.get("recent_open_failed") or 0),

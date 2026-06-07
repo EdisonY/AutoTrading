@@ -1,6 +1,11 @@
 import importlib.util
+import json
+import sqlite3
 import sys
+import tempfile
+from contextlib import closing
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 
@@ -40,6 +45,44 @@ class DecisionAttentionTests(unittest.TestCase):
         }
 
         self.assertTrue(self.tool.is_acknowledged(item, ack))
+
+    def test_paper_positions_suppress_open_staleness_warning(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            runtime = root / "runtime"
+            runtime.mkdir()
+            db = runtime / "event_store.sqlite3"
+            now = datetime.now(timezone(timedelta(hours=8)))
+            with closing(sqlite3.connect(db)) as conn:
+                conn.execute(
+                    "create table events(id integer primary key, ts text, strategy text, source text, event_type text, category text, symbol text, side text)"
+                )
+                conn.execute(
+                    "insert into events(ts,strategy,source,event_type,category,symbol,side) values(?,?,?,?,?,?,?)",
+                    (now.isoformat(), "B/v16", "B/system", "HEARTBEAT", "", "", ""),
+                )
+                conn.commit()
+            paper = runtime / "paper_exchange_latest.json"
+            paper.write_text(
+                json.dumps({
+                    "mode": "paper_exchange",
+                    "by_strategy": {"B/v16": {"positions": 3}},
+                    "recent_fills": [],
+                }),
+                encoding="utf-8",
+            )
+
+            old_db = self.tool.EVENT_STORE_DB
+            old_paper = self.tool.PAPER_EXCHANGE_JSON
+            self.tool.EVENT_STORE_DB = db
+            self.tool.PAPER_EXCHANGE_JSON = paper
+            try:
+                items = self.tool.detect_open_staleness_items()
+            finally:
+                self.tool.EVENT_STORE_DB = old_db
+                self.tool.PAPER_EXCHANGE_JSON = old_paper
+
+            self.assertFalse([item for item in items if item["item_id"] == "strategy-open-stale:b-v16"])
 
 
 if __name__ == "__main__":

@@ -350,6 +350,7 @@ TENCENT_COMPONENTS: dict[str, dict[str, Any]] = {
             file_pair("部署工具/research_kline_features.py", "research_kline_features.py"),
             file_pair("部署工具/research_kline_backfill.py", "research_kline_backfill.py"),
             file_pair("部署工具/research_depth_backfill.py", "research_depth_backfill.py"),
+            file_pair("部署工具/external_replay_data_ingest.py", "external_replay_data_ingest.py"),
             file_pair("部署工具/research_store_retention.py", "research_store_retention.py"),
             file_pair("部署工具/research_store_compaction.py", "research_store_compaction.py"),
             file_pair("部署工具/replay_feature_dataset.py", "replay_feature_dataset.py"),

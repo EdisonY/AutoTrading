@@ -43,6 +43,7 @@ REPORT_FILES = [
     "research_store_summary_latest.md",
     "research_kline_backfill_latest.md",
     "research_depth_backfill_latest.md",
+    "external_replay_data_ingest_latest.md",
     "research_store_retention_latest.md",
     "research_store_compaction_latest.md",
     "replay_feature_dataset_latest.md",
@@ -81,6 +82,7 @@ RUNTIME_FILES = [
     "research_store_summary_latest.json",
     "research_kline_backfill_latest.json",
     "research_depth_backfill_latest.json",
+    "external_replay_data_ingest_latest.json",
     "research_store_retention_latest.json",
     "research_store_compaction_latest.json",
     "replay_feature_dataset_latest.json",
@@ -102,6 +104,29 @@ RUNTIME_FILES = [
 RESEARCH_FILES = [
     "open_items.json",
 ]
+
+PRIORITY_REPORT_FILES = [
+    "index.html",
+    "decision_portal_latest.html",
+    "rollback_execution_plan_latest.md",
+    "rollback_automation_guard_latest.md",
+    "alerts_latest.md",
+]
+
+PRIORITY_RUNTIME_FILES = [
+    "alerts_latest.json",
+    "paper_exchange_latest.json",
+    "market_data_cache.json",
+    "market_microstructure_latest.json",
+    "rollback_execution_plan_latest.json",
+    "rollback_automation_guard_latest.json",
+    "waiting_period_optimization_latest.json",
+]
+
+
+def without_priority(files: list[str], priority: list[str]) -> list[str]:
+    priority_set = set(priority)
+    return [name for name in files if name not in priority_set]
 
 
 def shell_quote(value: str) -> str:
@@ -243,7 +268,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.dry_run:
         print("[DRY RUN] Would sync:")
-        for name in REPORT_FILES:
+        for name in [*PRIORITY_REPORT_FILES, *without_priority(REPORT_FILES, PRIORITY_REPORT_FILES)]:
             local = ALIYUN_REPORTS / name
             status = "EXISTS" if local.exists() else "MISSING"
             print(f"  [{status}] reports/{name}")
@@ -252,7 +277,7 @@ def main(argv: list[str] | None = None) -> int:
                 local = ALIYUN_REPORTS / name
                 status = "EXISTS" if local.exists() else "MISSING"
                 print(f"  [{status}] reports/{name}")
-        for name in RUNTIME_FILES:
+        for name in [*PRIORITY_RUNTIME_FILES, *without_priority(RUNTIME_FILES, PRIORITY_RUNTIME_FILES)]:
             local = ALIYUN_RUNTIME / name
             status = "EXISTS" if local.exists() else "MISSING"
             print(f"  [{status}] runtime/{name}")
@@ -265,15 +290,21 @@ def main(argv: list[str] | None = None) -> int:
     client = None if args.method == "ssh" else ssh_client()
     try:
         total = 0
-        print("--- Syncing runtime ---")
-        total += sync_files(client, ALIYUN_RUNTIME, TENCENT_RUNTIME, RUNTIME_FILES, "runtime", max_bytes, args.file_timeout, args.method, args.max_errors, args.retries)
+        print("--- Syncing priority runtime ---")
+        total += sync_files(client, ALIYUN_RUNTIME, TENCENT_RUNTIME, PRIORITY_RUNTIME_FILES, "runtime-priority", max_bytes, args.file_timeout, args.method, args.max_errors, args.retries)
         print()
-        print("--- Syncing reports ---")
-        report_files = REPORT_FILES + (OPTIONAL_REPORT_FILES if args.include_optional else [])
-        total += sync_files(client, ALIYUN_REPORTS, TENCENT_REPORTS, report_files, "reports", max_bytes, args.file_timeout, args.method, args.max_errors, args.retries)
+        print("--- Syncing priority reports ---")
+        total += sync_files(client, ALIYUN_REPORTS, TENCENT_REPORTS, PRIORITY_REPORT_FILES, "reports-priority", max_bytes, args.file_timeout, args.method, args.max_errors, args.retries)
         print()
         print("--- Syncing research attention ---")
         total += sync_files(client, ALIYUN_RESEARCH, TENCENT_RESEARCH, RESEARCH_FILES, "research", max_bytes, args.file_timeout, args.method, args.max_errors, args.retries)
+        print()
+        print("--- Syncing runtime ---")
+        total += sync_files(client, ALIYUN_RUNTIME, TENCENT_RUNTIME, without_priority(RUNTIME_FILES, PRIORITY_RUNTIME_FILES), "runtime", max_bytes, args.file_timeout, args.method, args.max_errors, args.retries)
+        print()
+        print("--- Syncing reports ---")
+        report_files = REPORT_FILES + (OPTIONAL_REPORT_FILES if args.include_optional else [])
+        total += sync_files(client, ALIYUN_REPORTS, TENCENT_REPORTS, without_priority(report_files, PRIORITY_REPORT_FILES), "reports", max_bytes, args.file_timeout, args.method, args.max_errors, args.retries)
         print()
         print(f"Total: {total} files uploaded to Tencent")
         return 0

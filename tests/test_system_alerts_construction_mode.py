@@ -35,12 +35,14 @@ class SystemAlertsConstructionModeTests(unittest.TestCase):
         self.old_skeleton = self.tool.LONG_TERM_SKELETON_LATEST
         self.old_market = self.tool.MARKET_CACHE
         self.old_account = self.tool.ACCOUNT_LATEST
+        self.old_paper = self.tool.PAPER_EXCHANGE_LATEST
         self.old_attention = self.tool.ATTENTION_LATEST
         self.old_db = self.tool.EVENT_STORE_DB
         self.tool.CONSTRUCTION_MODE_MARKER = self.runtime / "construction_mode.json"
         self.tool.LONG_TERM_SKELETON_LATEST = self.runtime / "long_term_skeleton_latest.json"
         self.tool.MARKET_CACHE = self.runtime / "market_data_cache.json"
         self.tool.ACCOUNT_LATEST = self.runtime / "account_snapshot_latest.json"
+        self.tool.PAPER_EXCHANGE_LATEST = self.runtime / "paper_exchange_latest.json"
         self.tool.ATTENTION_LATEST = self.root / "research_memory" / "attention" / "open_items.json"
         self.tool.EVENT_STORE_DB = self.runtime / "event_store.sqlite3"
         con = sqlite3.connect(str(self.tool.EVENT_STORE_DB))
@@ -56,6 +58,7 @@ class SystemAlertsConstructionModeTests(unittest.TestCase):
         self.tool.LONG_TERM_SKELETON_LATEST = self.old_skeleton
         self.tool.MARKET_CACHE = self.old_market
         self.tool.ACCOUNT_LATEST = self.old_account
+        self.tool.PAPER_EXCHANGE_LATEST = self.old_paper
         self.tool.ATTENTION_LATEST = self.old_attention
         self.tool.EVENT_STORE_DB = self.old_db
         self.tmp.cleanup()
@@ -82,6 +85,35 @@ class SystemAlertsConstructionModeTests(unittest.TestCase):
         self.assertTrue(payload["construction_mode"]["enabled"])
         bad_titles = [item["title"] for item in payload["alerts"] if item["level"] == "bad"]
         self.assertFalse([title for title in bad_titles if "服务异常" in title or "定时任务未运行" in title])
+
+    def test_paper_mainline_suppresses_real_account_snapshot_alerts(self):
+        self.tool.CONSTRUCTION_MODE_MARKER.write_text(
+            json.dumps({"enabled": True, "reason": "testnet_runtime_reset_and_long_term_staged_validation"}),
+            encoding="utf-8",
+        )
+        self.tool.PAPER_EXCHANGE_LATEST.write_text(
+            json.dumps({"mode": "paper_exchange", "open_positions": 3}),
+            encoding="utf-8",
+        )
+
+        service_states = {name: "active" for name in self.tool.SERVICES}
+        service_states["crypto-account-snapshot.service"] = "inactive"
+        timer_states = {name: "active" for name in self.tool.TIMERS}
+        with mock.patch.object(self.tool, "service_states", return_value=service_states), \
+             mock.patch.object(self.tool, "unit_states", return_value=timer_states), \
+             mock.patch.object(self.tool, "systemctl_value", return_value="success"), \
+             mock.patch.object(self.tool, "read_meminfo", return_value={}), \
+             mock.patch.object(self.tool, "recent_oom_lines", return_value=[]), \
+             mock.patch.object(self.tool, "recent_api_rate_limits", return_value={"total": 0, "by_service": {}, "latest": "", "latest_ts": None, "ban_until": None}), \
+             mock.patch.object(self.tool, "read_binance_api_guard", return_value={}), \
+             mock.patch.object(self.tool, "recent_failed_close_alerts", return_value=[]):
+            payload = self.tool.collect_alerts()
+
+        titles = [item["title"] for item in payload["alerts"]]
+        self.assertTrue(payload["paper_mainline"]["active"])
+        self.assertNotIn("施工暂停：crypto-account-snapshot.service", titles)
+        self.assertNotIn("账户快照偏旧", titles)
+        self.assertNotIn("账户快照未入库", titles)
 
 
 if __name__ == "__main__":

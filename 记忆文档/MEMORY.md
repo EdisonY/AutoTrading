@@ -461,6 +461,7 @@
 - 2026-06-07：用户要求降低扫描/report刷新并核算 API 用量。当前规则：A/B/C paper scanner 目标 `60s`，服务重启错峰 A/B/C `0/20/40s`，K线缓存 TTL `300s`；OKX/Bybit Top 成交量缓存 `60s`；CoinGecko 只做市值/Top universe 参考，刷新 `1800s`，避免 10k/月额度被烧光；B/v16 盘口/CVD/funding compact feature 仍 `30s`，paper 账本和 report 都 `60s`。这不改策略阈值/仓位/止损，不重启旧 Binance signed/order/account/listen-key/queue 主线。若后续出现 OKX/Bybit budget exhausted 或服务延迟，先回滚 scanner 到 `90s/120s` 或做中心 Kline 预取，不先动策略。
 - 2026-06-07：Top100/Top180 中央 Kline prefetch 已作为下一层外部数据骨架落地并部署到 Tencent release `20260607-123044-sentinel-503c015`。`market_data_service.py` 负责从 Top180 universe 轮询预取 K线，Top100 是热层；OKX 主、Bybit 备，预算耗尽即停本轮，不碰 Binance。缓存仍写 `runtime/kline_cache` 的 scanner 兼容格式；`core.kline_cache` 支持用大 limit fresh cache 回答小 limit 请求，减少 A/B/C 重复拉 K线。部署后首轮远端 `kline_prefetch` 为 `attempted=45/saved=45/failed=0/rate_limited=""`；后续重点观察 `rate_limited`、`saved/fresh` 和 scanner 侧 Kline 缺口。
 - 2026-06-07：用户指出 report 的 `你需要确认的事项` 不清楚要他做什么。已改规则：确认区必须拆成“事项 / 为什么出现 / 你现在要做什么”，B/v16 两条 rollback-watch 要写具体改动名（ATR止损带、过热上限85），用白话解释最近评估窗口亏损、PF 低于警戒线，并说明 `我已读` 只代表已看过提醒，不会自动改策略；如果用户不接受继续收样，应明确选择收窄 B/v16 或准备回滚。
+- 2026-06-07：修正 paper 主线下的 report/alert 一致性规则。只要 `paper_exchange_latest.json` 表明当前是自建模拟账本，真实 `crypto-account-snapshot.service` 停用、真实账户快照缺失/偏旧、`account_snapshots` 为空都不应作为首页或 attention 的 P1/P0 操作项。首页 KPI/功能卡要优先展示“自建模拟账本”的持仓、浮盈亏、刷新年龄和 A/B/C 分解；真实账户快照只属于未来真实交易所恢复 gate 的二级面板。
 
 ---
 ## 2026-05-29 全局运行自检与账户方向口径修复

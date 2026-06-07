@@ -28,6 +28,7 @@ MARKET_CACHE = ROOT / "runtime" / "market_data_cache.json"
 PORTAL_HTML = ROOT / "reports" / "portal_latest.html"
 ACCOUNT_LATEST = ROOT / "runtime" / "account_snapshot_latest.json"
 ACCOUNT_ERROR_LATEST = ROOT / "runtime" / "account_snapshot_error_latest.json"
+PAPER_EXCHANGE_LATEST = ROOT / "runtime" / "paper_exchange_latest.json"
 BINANCE_API_GUARD_STATE = ROOT / "runtime" / "binance_api_guard_state.json"
 PORTAL_REFRESH_STATUS = ROOT / "runtime" / "portal_refresh_latest.json"
 STRATEGY_EVOLUTION_LATEST = ROOT / "runtime" / "strategy_evolution_latest.json"
@@ -61,6 +62,7 @@ ACCOUNT_RESUME_TIMER = "crypto-account-snapshot-resume.timer"
 
 CONSTRUCTION_PAUSED_SERVICES = set(SERVICES)
 CONSTRUCTION_PAUSED_TIMERS = set(TIMERS)
+REAL_ACCOUNT_SNAPSHOT_SERVICE = "crypto-account-snapshot.service"
 
 WATCH_SHARDS = [
     ROOT / "logs" / "decisions",
@@ -175,6 +177,20 @@ def read_construction_mode() -> dict[str, Any]:
         payload.setdefault("reason", "long_term_staged_validation_pending")
     payload["enabled"] = enabled
     return payload
+
+
+def paper_mainline_active() -> bool:
+    if not PAPER_EXCHANGE_LATEST.exists():
+        return False
+    try:
+        payload = json.loads(PAPER_EXCHANGE_LATEST.read_text(encoding="utf-8", errors="replace"))
+    except Exception:
+        return False
+    if not isinstance(payload, dict):
+        return False
+    mode = str(payload.get("mode") or "")
+    safety = str(payload.get("safety") or "")
+    return mode == "paper_exchange" or "paper_exchange_only_no_binance_order" in safety
 
 
 def systemctl_value(unit: str, prop: str) -> str:
@@ -412,6 +428,7 @@ def collect_alerts() -> dict[str, Any]:
     alerts: list[dict[str, str]] = []
     states = service_states()
     construction_mode = read_construction_mode()
+    paper_mainline = paper_mainline_active()
     account_error_payload = read_account_error()
     account_retry = account_retry_at(account_error_payload)
     account_resume_timer_state = unit_states([ACCOUNT_RESUME_TIMER]).get(ACCOUNT_RESUME_TIMER, "")
@@ -423,13 +440,15 @@ def collect_alerts() -> dict[str, Any]:
     )
     for service, state in states.items():
         if state != "active":
+            if paper_mainline and service == REAL_ACCOUNT_SNAPSHOT_SERVICE:
+                continue
             if construction_mode.get("enabled") and service in CONSTRUCTION_PAUSED_SERVICES:
                 alerts.append({
                     "level": "warn",
                     "title": f"施工暂停：{service}",
                     "body": f"systemd 状态为 {state}；长期任务 staged validation 未完成，服务按计划保持暂停。",
                 })
-            elif service == "crypto-account-snapshot.service" and account_in_cooldown:
+            elif service == REAL_ACCOUNT_SNAPSHOT_SERVICE and account_in_cooldown:
                 resume_text = account_retry.isoformat() if account_retry else "resume timer active"
                 alerts.append({
                     "level": "warn",
@@ -562,7 +581,7 @@ def collect_alerts() -> dict[str, Any]:
         by_service = api_rate_limits.get("by_service") or {}
         offenders = sorted(by_service.items(), key=lambda item: int(item[1]), reverse=True)
         offender_text = "，".join(f"{name}:{count}" for name, count in offenders[:4])
-        only_account_snapshot = set(by_service) <= {"crypto-account-snapshot.service"}
+        only_account_snapshot = set(by_service) <= {REAL_ACCOUNT_SNAPSHOT_SERVICE}
         ban_until = api_rate_limits.get("ban_until") or (account_retry.isoformat() if account_retry else "")
         ban_until_dt = parse_dt(ban_until) if ban_until else None
         resolved_cooldown = bool(ban_until_dt and ban_until_dt <= now and not api_guard.get("in_cooldown"))
@@ -636,10 +655,10 @@ def collect_alerts() -> dict[str, Any]:
                 if account_in_cooldown
                 else ACCOUNT_SNAPSHOT_EXPECTED_INTERVAL_SECONDS * 2 + ACCOUNT_SNAPSHOT_STALE_GRACE_SECONDS
             )
-            if not snapshot_ts or (now - snapshot_ts).total_seconds() > stale_threshold:
+            if (not paper_mainline) and (not snapshot_ts or (now - snapshot_ts).total_seconds() > stale_threshold):
                 title = "账户快照冷却中，使用最后有效快照" if account_in_cooldown else "账户快照偏旧"
                 alerts.append({"level": "warn", "title": title, "body": f"最新快照 {snapshot_ts or '无'}"})
-            if total_snapshots == 0:
+            if (not paper_mainline) and total_snapshots == 0:
                 alerts.append({"level": "warn", "title": "账户快照未入库", "body": "account_snapshots 表暂无记录"})
         except Exception as exc:
             alerts.append({"level": "bad", "title": "SQLite 健康检查失败", "body": str(exc)})
@@ -660,6 +679,7 @@ def collect_alerts() -> dict[str, Any]:
         "api_rate_limits": api_rate_limits,
         "api_guard": api_guard,
         "construction_mode": construction_mode,
+        "paper_mainline": {"active": paper_mainline},
     }
 
 

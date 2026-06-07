@@ -32,6 +32,7 @@ EVENT_STORE_DB = MIRROR_EVENT_STORE_DB if MIRROR_EVENT_STORE_DB.exists() else LO
 MARKET_CACHE_PATH = ROOT / "runtime" / "market_data_cache.json"
 ALERTS_PATH = ROOT / "runtime" / "alerts_latest.json"
 ACCOUNT_SNAPSHOT_PATH = ROOT / "runtime" / "account_snapshot_latest.json"
+PAPER_EXCHANGE_PATH = ROOT / "runtime" / "paper_exchange_latest.json"
 COUNTERFACTUAL_JSON = REPORTS_DIR / "counterfactual_open_skips_latest.json"
 COUNTERFACTUAL_HTML = REPORTS_DIR / "counterfactual_open_skips_latest.html"
 STRATEGY_EVOLUTION_JSON = ROOT / "runtime" / "strategy_evolution_latest.json"
@@ -1560,6 +1561,41 @@ def sqlite_strategy_status() -> list[dict[str, Any]]:
     return out
 
 
+def paper_exchange_summary() -> dict[str, Any]:
+    payload = read_json(PAPER_EXCHANGE_PATH)
+    if not isinstance(payload, dict) or payload.get("mode") != "paper_exchange":
+        return {
+            "available": False,
+            "fresh": False,
+            "age": "无账本",
+            "open_positions": 0,
+            "total_unrealized_pnl": 0.0,
+            "by_strategy": {},
+            "note": "自建模拟账本尚未生成。",
+        }
+    ts = parse_dt(payload.get("ts"))
+    age_seconds = (datetime.now(CST) - ts).total_seconds() if ts else None
+    by_strategy = payload.get("by_strategy") if isinstance(payload.get("by_strategy"), dict) else {}
+    strategy_bits = []
+    for name in ("A/v11", "B/v16", "C/v14"):
+        row = by_strategy.get(name) if isinstance(by_strategy.get(name), dict) else {}
+        strategy_bits.append(
+            f"{name} {int(row.get('positions') or 0)}仓 {float(row.get('unrealized_pnl') or 0):+.2f}"
+        )
+    return {
+        "available": True,
+        "fresh": bool(ts and age_seconds is not None and age_seconds <= 180),
+        "ts": ts,
+        "age": age_text(ts),
+        "open_positions": int(payload.get("open_positions") or 0),
+        "total_unrealized_pnl": float(payload.get("total_unrealized_pnl") or 0),
+        "total_equity": float(payload.get("total_equity") or 0),
+        "by_strategy": by_strategy,
+        "fidelity": payload.get("fidelity") if isinstance(payload.get("fidelity"), dict) else {},
+        "note": "；".join(strategy_bits),
+    }
+
+
 def sqlite_strategy_decision_summary() -> list[dict[str, Any]]:
     if not EVENT_STORE_DB.exists():
         return []
@@ -1840,6 +1876,7 @@ def function_status_cards(data: dict[str, Any]) -> list[dict[str, str]]:
     event_store = data.get("event_store_shadow") or {}
     market_cache = data.get("market_cache") or {}
     realtime_account = data.get("realtime_account") or {}
+    paper_exchange = data.get("paper_exchange") or {}
     alerts = data.get("alerts") or {}
     api_rate_limits = alerts.get("api_rate_limits") or {}
     api_guard = alerts.get("api_guard") or {}
@@ -1991,12 +2028,21 @@ def function_status_cards(data: dict[str, Any]) -> list[dict[str, str]]:
             "value": market_cache.get("age") or "无缓存",
             "body": market_cache.get("note") or "缓存服务未生成可读行情快照。",
         },
-        {
-            "level": "bad" if int(realtime_account.get("risk_count") or 0) else "ok" if realtime_account.get("fresh") else "warn",
-            "name": "实时账户快照",
-            "value": realtime_account.get("age") or "无快照",
-            "body": realtime_account.get("note") or "账户快照服务尚未写入 SQLite。",
-        },
+        (
+            {
+                "level": "ok" if paper_exchange.get("fresh") else "warn",
+                "name": "自建模拟账本",
+                "value": f"{int(paper_exchange.get('open_positions') or 0)} 仓 / {float(paper_exchange.get('total_unrealized_pnl') or 0):+.2f}",
+                "body": f"刷新 {paper_exchange.get('age') or '无'}；{paper_exchange.get('note') or 'A/B/C paper 持仓账本。'}",
+            }
+            if paper_exchange.get("available")
+            else {
+                "level": "bad" if int(realtime_account.get("risk_count") or 0) else "ok" if realtime_account.get("fresh") else "warn",
+                "name": "实时账户快照",
+                "value": realtime_account.get("age") or "无快照",
+                "body": realtime_account.get("note") or "账户快照服务尚未写入 SQLite。",
+            }
+        ),
         {
             "level": "ok" if alerts.get("status") == "ok" else "bad" if alerts.get("status") == "bad" else "warn",
             "name": "自动告警",
@@ -2839,6 +2885,7 @@ def build_data() -> dict[str, Any]:
     data["event_store_shadow"] = event_shadow
     data["market_cache"] = market_cache_summary()
     data["realtime_account"] = realtime_account_summary()
+    data["paper_exchange"] = paper_exchange_summary()
     data["alerts"] = alert_summary()
     data["counterfactual"] = counterfactual_summary(COUNTERFACTUAL_JSON)
     data["strategy_evolution"] = strategy_evolution_summary(STRATEGY_EVOLUTION_JSON)
@@ -2926,6 +2973,7 @@ def render_html(out_dir: Path) -> str:
     account_fresh = data["account_snapshot"].exists()
     binance_ok = account_fresh
     realtime_account = data.get("realtime_account") or {}
+    paper_exchange = data.get("paper_exchange") or {}
 
     a_interval = next((s["interval"] for s in data["strategies"] if s["name"] == "A/v11"), "暂无")
     b_interval = next((s["interval"] for s in data["strategies"] if s["name"] == "B/v16"), "暂无")
@@ -2934,6 +2982,8 @@ def render_html(out_dir: Path) -> str:
     live_trades = sum(int(r.get("closed") or 0) for r in data.get("decision_summary", []))
     account_upnl = float(realtime_account.get("unrealized_pnl_usdt") or 0)
     account_positions = int(realtime_account.get("open_positions") or 0)
+    paper_upnl = float(paper_exchange.get("total_unrealized_pnl") or 0)
+    paper_positions = int(paper_exchange.get("open_positions") or 0)
     attention = data.get("attention") or {}
     attention_summary_data = attention.get("summary") or {}
     attention_counts = attention_summary_data.get("counts") or {}
@@ -2943,9 +2993,11 @@ def render_html(out_dir: Path) -> str:
     metrics = [
         ("昨日复盘PnL", f"{data['signal_summary']['total_pnl']:+.2f}", "最新完整复盘周期"),
         (
-            "实时账户浮盈亏",
-            f"{account_upnl:+.2f}" if realtime_account.get("available") else "暂无",
-            f"持仓 {account_positions} / 快照 {realtime_account.get('age', '无')}",
+            "模拟账本浮盈亏" if paper_exchange.get("available") else "实时账户浮盈亏",
+            f"{paper_upnl:+.2f}" if paper_exchange.get("available") else f"{account_upnl:+.2f}" if realtime_account.get("available") else "暂无",
+            f"持仓 {paper_positions} / 刷新 {paper_exchange.get('age', '无')}"
+            if paper_exchange.get("available")
+            else f"持仓 {account_positions} / 快照 {realtime_account.get('age', '无')}",
         ),
         (
             "策略运行",

@@ -176,7 +176,6 @@ TENCENT_COMPONENTS: dict[str, dict[str, Any]] = {
             file_pair("部署工具/decision_attention.py", "decision_attention.py"),
             file_pair("部署工具/acknowledge_attention_items.py", "acknowledge_attention_items.py"),
             file_pair("部署工具/long_term_skeleton_review.py", "long_term_skeleton_review.py"),
-            file_pair("部署工具/paper_sample_executor.py", "paper_sample_executor.py"),
             file_pair("部署工具/paper_exchange_runner.py", "paper_exchange_runner.py"),
             file_pair("部署工具/portal_dashboard.py", "portal_dashboard.py"),
             file_pair("部署工具/decision_portal.py", "decision_portal.py"),
@@ -246,14 +245,12 @@ TENCENT_COMPONENTS: dict[str, dict[str, Any]] = {
         "files": CORE_FILES
         + [
             file_pair("部署工具/binance_start_guard.py", "binance_start_guard.py"),
-            file_pair("策略文件/market_mover_sentinel.py", "market_mover_sentinel.py"),
             file_pair("策略文件/market_data_service.py", "market_data_service.py"),
             file_pair("部署工具/systemd/crypto-market-data-cache.service", "systemd/crypto-market-data-cache.service"),
-            file_pair("部署工具/systemd/crypto-market-mover-sentinel.service", "systemd/crypto-market-mover-sentinel.service"),
         ],
-        "services": ["crypto-market-mover-sentinel.service", "crypto-market-data-cache.service"],
+        "services": ["crypto-market-data-cache.service"],
         "post": [
-            "sudo cp systemd/crypto-market-data-cache.service /etc/systemd/system/crypto-market-data-cache.service && sudo cp systemd/crypto-market-mover-sentinel.service /etc/systemd/system/crypto-market-mover-sentinel.service && sudo systemctl daemon-reload",
+            "sudo cp systemd/crypto-market-data-cache.service /etc/systemd/system/crypto-market-data-cache.service && sudo systemctl daemon-reload",
         ],
     },
     "market-data": {
@@ -360,7 +357,6 @@ TENCENT_COMPONENTS: dict[str, dict[str, Any]] = {
             file_pair("部署工具/replay_live_parity_audit.py", "replay_live_parity_audit.py"),
             file_pair("部署工具/replay_readiness_review.py", "replay_readiness_review.py"),
             file_pair("部署工具/waiting_period_optimization.py", "waiting_period_optimization.py"),
-            file_pair("部署工具/paper_sample_executor.py", "paper_sample_executor.py"),
             file_pair("部署工具/paper_exchange_runner.py", "paper_exchange_runner.py"),
             file_pair("部署工具/rollback_watch_review.py", "rollback_watch_review.py"),
             file_pair("部署工具/rollback_execution_plan.py", "rollback_execution_plan.py"),
@@ -426,7 +422,6 @@ ALIYUN_COMPONENTS: dict[str, dict[str, Any]] = {
             file_pair("部署工具/replay_live_parity_audit.py", "replay_live_parity_audit.py"),
             file_pair("部署工具/replay_readiness_review.py", "replay_readiness_review.py"),
             file_pair("部署工具/waiting_period_optimization.py", "waiting_period_optimization.py"),
-            file_pair("部署工具/paper_sample_executor.py", "paper_sample_executor.py"),
             file_pair("部署工具/paper_exchange_runner.py", "paper_exchange_runner.py"),
             file_pair("部署工具/rollback_watch_review.py", "rollback_watch_review.py"),
             file_pair("部署工具/rollback_execution_plan.py", "rollback_execution_plan.py"),

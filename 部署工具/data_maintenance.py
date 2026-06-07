@@ -24,7 +24,6 @@ LEGACY_JSONL = [
     ROOT / "logs" / "signals.jsonl",
     ROOT / "logs" / "operations.jsonl",
     ROOT / "logs" / "system.jsonl",
-    ROOT / "logs" / "market_mover_sentinel.jsonl",
     ROOT / "logs" / "account_snapshots.jsonl",
     ROOT / "logs_v14" / "decisions.jsonl",
     ROOT / "logs_v14" / "signals.jsonl",
@@ -49,7 +48,6 @@ TRADE_SOURCES = [
 NOISY_SHARD_DIRS = [
     ROOT / "runtime" / "sentinel_events",
     ROOT / "logs" / "account_snapshots",
-    ROOT / "logs" / "market_mover_sentinel",
 ]
 
 TEXT_LOGS = [

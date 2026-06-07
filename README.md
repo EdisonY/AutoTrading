@@ -1,6 +1,6 @@
 # AutoTrading
 
-AutoTrading is a live crypto strategy system with three Binance futures strategies, a market-mover sentinel, a command-center report, and a strategy-evolution gate.
+AutoTrading is a crypto strategy system with three futures-style strategies, an external public-market data cache, a self-owned paper-exchange ledger, a command-center report, and a strategy-evolution gate.
 
 This repository is designed for multi-machine development. It contains code, configs, deployment scripts, compact research memory, and project state. It intentionally does not contain live secrets or bulky runtime artifacts.
 
@@ -17,7 +17,7 @@ When opening this project on a new computer, read these files in order:
 
 ## Repository Layout
 
-- `策略文件/` - live strategy scanners and sentinel-related strategy code.
+- `策略文件/` - strategy scanners and external market-data services.
 - `交易客户端/` - Binance account clients. API keys come from environment variables, not source code.
 - `core/` - shared event store, risk, research, experiment, sentinel, and paper-broker utilities.
 - `部署工具/` - report generation, deployment, sync, alerts, strategy evolution, and maintenance scripts.
@@ -69,8 +69,9 @@ Important Tencent live services include:
 - `crypto-scanner.service` - A/v11
 - `crypto-scanner-v16.service` - B/v16
 - `crypto-scanner-v14.service` - C/v14
-- `crypto-market-mover-sentinel.service`
-- `crypto-account-snapshot.service`
+- `crypto-market-data-cache.service`
+- `crypto-market-microstructure.service`
+- `crypto-paper-exchange-refresh.timer`
 - `crypto-system-alerts.service`
 
 Aliyun owns the generated command-center/report pipeline:

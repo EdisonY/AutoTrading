@@ -285,7 +285,7 @@ DEFAULT_SPECS: list[dict[str, Any]] = [
         priority="P2",
         name="Sentinel quality review",
         objective="Sentinel watchlist history, coverage, forward returns, and portal visibility.",
-        inputs=[bone("watchlist history producer", "策略文件/market_mover_sentinel.py", contains="market_mover_watchlist_history.jsonl")],
+        inputs=[bone("watchlist history producer", "策略文件/market_data_service.py", contains="market_mover_watchlist_history.jsonl")],
         main=[bone("sentinel quality review", "部署工具/sentinel_quality_review.py", contains="watchlist_history")],
         outputs=[bone("sentinel report output", "部署工具/sentinel_quality_review.py", contains="sentinel_quality_latest")],
         portal=[bone("sentinel portal section", "部署工具/portal_dashboard.py", contains="SENTINEL_QUALITY_JSON")],

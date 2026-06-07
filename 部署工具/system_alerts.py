@@ -51,7 +51,7 @@ SERVICES = [
     "crypto-scanner.service",
     "crypto-scanner-v14.service",
     "crypto-scanner-v16.service",
-    "crypto-market-mover-sentinel.service",
+    "crypto-market-microstructure.service",
 ]
 
 TIMERS = [

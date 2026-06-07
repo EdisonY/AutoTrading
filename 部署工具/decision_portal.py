@@ -120,7 +120,6 @@ def report_text(value: Any, default: str = "-") -> str:
         "OKX public funding when available; missing/unavailable records 0 with source": "能取到就用 OKX 公开资金费，缺失时按来源标记",
         "Binance": "交易所",
         "币安": "交易所",
-        "paper_sample": "模拟采样",
         "paper sample": "模拟采样",
     }
     for old, new in replacements.items():
@@ -426,7 +425,6 @@ def event_summary(db_path: Path = EVENT_DB) -> dict[str, Any]:
                     """
                     select
                       sum(case when event_type='OPEN' or category='opened' then 1 else 0 end) as opens,
-                      sum(case when event_type='OPEN' and (source like '%paper_sample%' or payload_json like '%"paper_sample":true%') then 1 else 0 end) as paper_sample_opens,
                       sum(case when event_type in ('CLOSE','FORCED_CLOSE') or category in ('closed','forced_close') then 1 else 0 end) as closes,
                       sum(case when event_type='OPEN_FAILED' or category='open_failed' then 1 else 0 end) as open_failed,
                       sum(case when event_type='OPEN_SKIPPED' or category='open_skipped' then 1 else 0 end) as open_skipped,
@@ -462,7 +460,6 @@ def event_summary(db_path: Path = EVENT_DB) -> dict[str, Any]:
                     "name": name,
                     "latest": parse_dt(latest["ts"]) if latest else None,
                     "opens": int(counts["opens"] or 0) if counts else 0,
-                    "paper_sample_opens": int(counts["paper_sample_opens"] or 0) if counts else 0,
                     "closes": int(counts["closes"] or 0) if counts else 0,
                     "open_failed": int(counts["open_failed"] or 0) if counts else 0,
                     "open_skipped": int(counts["open_skipped"] or 0) if counts else 0,
@@ -502,48 +499,6 @@ def fee_estimate(notional: Any) -> tuple[str, str]:
     return f"单边约 {fmt_plain(one_way, 4)} / 往返约 {fmt_plain(one_way * 2, 4)} USDT", "估算：按 taker 0.04%，不是交易所逐笔扣费流水。"
 
 
-def latest_paper_open_rows(strategy: str, db_path: Path = EVENT_DB, limit: int = 6) -> list[dict[str, Any]]:
-    if not db_path.exists():
-        return []
-    try:
-        conn = sqlite3.connect(str(db_path))
-        conn.row_factory = sqlite3.Row
-        if not table_exists(conn, "events"):
-            conn.close()
-            return []
-        rows = conn.execute(
-            """
-            select ts,symbol,side,source,payload_json
-            from events
-            where strategy=?
-              and event_type='OPEN'
-              and (source like '%paper_sample%' or payload_json like '%"paper_sample":true%')
-            order by id desc
-            limit ?
-            """,
-            (strategy, limit),
-        ).fetchall()
-        conn.close()
-        out = []
-        for row in rows:
-            payload: dict[str, Any] = {}
-            try:
-                parsed = json.loads(row["payload_json"] or "{}")
-                payload = parsed if isinstance(parsed, dict) else {}
-            except Exception:
-                payload = {}
-            out.append({
-                "ts": row["ts"],
-                "symbol": row["symbol"],
-                "side": row["side"],
-                "source": row["source"],
-                "payload": payload,
-            })
-        return out
-    except Exception:
-        return []
-
-
 def position_upnl_class(value: Any) -> str:
     try:
         return "up" if float(value) >= 0 else "down"
@@ -554,7 +509,6 @@ def position_upnl_class(value: Any) -> str:
 def strategy_detail_html(strategy: str, account: dict[str, Any]) -> str:
     account_row = account_for_strategy(account, strategy)
     positions = account_row.get("positions") if isinstance(account_row.get("positions"), list) else []
-    paper_rows = latest_paper_open_rows(strategy)
     rows: list[str] = []
     for pos in positions:
         if not isinstance(pos, dict):
@@ -583,33 +537,11 @@ def strategy_detail_html(strategy: str, account: dict[str, Any]) -> str:
 </tr>
 """.strip()
         )
-    for paper in paper_rows:
-        payload = paper.get("payload") if isinstance(paper.get("payload"), dict) else {}
-        notional = payload.get("expected_notional_usdt") or payload.get("notional") or payload.get("target_notional_usdt")
-        fee_text, fee_note = fee_estimate(notional)
-        rows.append(
-            f"""
-<tr>
-  <td>模拟采样</td>
-  <td>{h(paper.get('symbol'))}</td>
-  <td>{h(paper.get('side'))}</td>
-  <td>{h(fmt_plain(payload.get('exchange_qty') or payload.get('qty')))}</td>
-  <td>{h(fmt_plain(payload.get('price')))}</td>
-  <td>待盯市</td>
-  <td class="muted">不计入实盘</td>
-  <td>{h(fmt_plain(notional, 4))}</td>
-  <td>{h(fmt_plain(payload.get('target_margin_usdt'), 4))}</td>
-  <td>{h(fee_text)}<small>{h(fee_note)}</small></td>
-  <td>旧采样未结算<small>只验证数据链路，不是真实成交。</small></td>
-  <td>旧采样，不计入当前主账本。</td>
-</tr>
-""".strip()
-        )
     if not rows:
         rows.append(
             """
 <tr>
-  <td colspan="12">当前没有可展示持仓或模拟采样。若策略有信号但没开仓，先看“主要原因”和候选被挡住。</td>
+  <td colspan="12">当前没有可展示持仓。若策略有信号但没开仓，先看“主要原因”和候选被挡住。</td>
 </tr>
 """.strip()
         )

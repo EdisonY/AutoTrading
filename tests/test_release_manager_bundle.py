@@ -38,6 +38,21 @@ class ReleaseManagerBundleTests(unittest.TestCase):
 
                 self.assertIn("binance_start_guard.py", remotes)
 
+    def test_obsolete_binance_simulation_files_are_not_bundled(self):
+        forbidden = {
+            "market_mover_sentinel.py",
+            "systemd/crypto-market-mover-sentinel.service",
+            "paper_sample_executor.py",
+        }
+        for target, components in (
+            (self.tool.TENCENT_COMPONENTS, ("portal", "sentinel", "research", "all")),
+            (self.tool.ALIYUN_COMPONENTS, ("shadow", "all")),
+        ):
+            for component in components:
+                with self.subTest(component=component):
+                    remotes = {remote for _local, remote in target[component]["files"]}
+                    self.assertFalse(forbidden & remotes)
+
 
 if __name__ == "__main__":
     unittest.main()

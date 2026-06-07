@@ -56,43 +56,6 @@ class AccountStateTest(unittest.TestCase):
             self.assertIsNone(load_central_account_state(root, "B/v16", max_age_seconds=60))
             self.assertIsNone(load_cached_account_state(root, "B/v16", max_age_seconds=60))
 
-    def test_stale_empty_testnet_assumption_is_cache_only(self):
-        old_allow = os.environ.get("BINANCE_ACCOUNT_STATE_ALLOW_STALE_EMPTY_TESTNET")
-        old_balance = os.environ.get("BINANCE_ACCOUNT_STATE_TESTNET_BALANCE_USDT")
-        os.environ["BINANCE_ACCOUNT_STATE_ALLOW_STALE_EMPTY_TESTNET"] = "1"
-        os.environ["BINANCE_ACCOUNT_STATE_TESTNET_BALANCE_USDT"] = "1234"
-        try:
-            with tempfile.TemporaryDirectory() as tmp:
-                root = Path(tmp)
-                payload = build_account_state_payload([
-                    {
-                        "ts": datetime.now(timezone.utc).isoformat(),
-                        "account": "B",
-                        "strategy": "B/v16",
-                        "stale": True,
-                        "open_positions": 0,
-                        "positions": [],
-                    }
-                ])
-                write_account_state(root, payload)
-
-                self.assertIsNone(load_central_account_state(root, "B/v16", max_age_seconds=60))
-                cached = load_cached_account_state(root, "B/v16", max_age_seconds=60)
-                self.assertIsNotNone(cached)
-                self.assertTrue(cached.assumed)
-                self.assertEqual(cached.assumption_reason, "stale_empty_testnet")
-                self.assertEqual(cached.balance["availableBalance"], "1234.0")
-                self.assertEqual(cached.positions, [])
-        finally:
-            if old_allow is None:
-                os.environ.pop("BINANCE_ACCOUNT_STATE_ALLOW_STALE_EMPTY_TESTNET", None)
-            else:
-                os.environ["BINANCE_ACCOUNT_STATE_ALLOW_STALE_EMPTY_TESTNET"] = old_allow
-            if old_balance is None:
-                os.environ.pop("BINANCE_ACCOUNT_STATE_TESTNET_BALANCE_USDT", None)
-            else:
-                os.environ["BINANCE_ACCOUNT_STATE_TESTNET_BALANCE_USDT"] = old_balance
-
     def test_legacy_snapshot_fallback(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

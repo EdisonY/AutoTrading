@@ -198,7 +198,6 @@ services = {
         "crypto-scanner-v14.service",
         "crypto-market-data-cache.service",
         "crypto-market-microstructure.service",
-        "crypto-market-mover-sentinel.service",
         "crypto-paper-exchange-refresh.timer",
         "crypto-account-snapshot.service",
         "crypto-system-alerts.service",

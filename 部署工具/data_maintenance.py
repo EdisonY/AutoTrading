@@ -60,6 +60,10 @@ TEXT_LOGS = [
     ROOT / "logs_v16" / "stderr.log",
 ]
 
+SERVER_LOG_MIRROR_DIRS = [
+    ROOT / "server_logs_tencent",
+]
+
 ARCHIVABLE_SHARD_DIRS = [
     ROOT / "logs" / "decisions",
     ROOT / "logs" / "signals",
@@ -315,6 +319,51 @@ def trim_text_logs(lines: int = 5000, min_bytes: int = 5_000_000) -> dict[str, i
     return counts
 
 
+def prune_release_dirs(keep_releases: int) -> dict[str, Any]:
+    releases = ROOT / "releases"
+    if not releases.exists():
+        return {"removed": 0, "bytes_removed": 0, "kept": 0, "status": "missing"}
+    dirs = [path for path in releases.iterdir() if path.is_dir()]
+    dirs.sort(key=lambda path: path.stat().st_mtime, reverse=True)
+    keep = max(0, int(keep_releases))
+    removed = 0
+    bytes_removed = 0
+    for path in dirs[keep:]:
+        try:
+            size = sum(item.stat().st_size for item in path.rglob("*") if item.is_file())
+            shutil.rmtree(path)
+            removed += 1
+            bytes_removed += size
+        except Exception:
+            continue
+    return {"removed": removed, "bytes_removed": bytes_removed, "kept": min(len(dirs), keep), "status": "ok"}
+
+
+def prune_server_log_mirror(retention_days: int) -> dict[str, Any]:
+    cutoff = datetime.now(CST).timestamp() - max(1, int(retention_days)) * 86400
+    result: dict[str, Any] = {}
+    for root in SERVER_LOG_MIRROR_DIRS:
+        removed = 0
+        bytes_removed = 0
+        if not root.exists():
+            result[str(root.relative_to(ROOT)) if root.is_relative_to(ROOT) else str(root)] = {"status": "missing", "removed": 0, "bytes_removed": 0}
+            continue
+        for path in sorted(root.rglob("*"), key=lambda p: len(p.parts), reverse=True):
+            if path.is_file() and path.stat().st_mtime < cutoff:
+                size = path.stat().st_size
+                path.unlink()
+                removed += 1
+                bytes_removed += size
+            elif path.is_dir():
+                try:
+                    path.rmdir()
+                except OSError:
+                    pass
+        label = str(root.relative_to(ROOT)) if root.is_relative_to(ROOT) else str(root)
+        result[label] = {"status": "ok", "removed": removed, "bytes_removed": bytes_removed}
+    return result
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="AutoTrading data maintenance")
     parser.add_argument("--partition-legacy", action="store_true")
@@ -335,6 +384,10 @@ def main() -> int:
     parser.add_argument("--archive-days", type=int, default=90)
     parser.add_argument("--trim-text-logs", action="store_true")
     parser.add_argument("--text-log-lines", type=int, default=5000)
+    parser.add_argument("--prune-releases", action="store_true")
+    parser.add_argument("--keep-releases", type=int, default=60)
+    parser.add_argument("--prune-server-log-mirror", action="store_true")
+    parser.add_argument("--server-log-mirror-days", type=int, default=7)
     args = parser.parse_args()
     output: dict[str, Any] = {}
     if args.ingest_trades:
@@ -360,6 +413,10 @@ def main() -> int:
         output["archives_removed"] = prune_archives(args.archive_days)
     if args.trim_text_logs:
         output["trimmed_text_logs"] = trim_text_logs(args.text_log_lines)
+    if args.prune_releases:
+        output["releases"] = prune_release_dirs(args.keep_releases)
+    if args.prune_server_log_mirror:
+        output["server_log_mirror"] = prune_server_log_mirror(args.server_log_mirror_days)
     print(json.dumps(output, ensure_ascii=False, indent=2))
     return 0
 

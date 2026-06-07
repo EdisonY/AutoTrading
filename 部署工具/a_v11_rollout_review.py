@@ -407,6 +407,19 @@ def build_replay_fill_comparison(rows: list[sqlite3.Row], start: datetime, end: 
     results = [replay_trade_pair(pair) for pair in pairs]
     status_counts = collections.Counter(str(item.get("status") or "unknown") for item in results)
     completed = [item for item in results if item.get("status") == "complete"]
+    incomplete_examples = [
+        {
+            "status": item.get("status"),
+            "symbol": item.get("symbol"),
+            "side": item.get("side"),
+            "timeframe": item.get("timeframe"),
+            "entry_ts": item.get("entry_ts"),
+            "close_ts": item.get("close_ts"),
+            "kline_source": item.get("kline_source"),
+        }
+        for item in results
+        if item.get("status") != "complete"
+    ][:12]
     deltas = [float(item.get("pnl_delta_usdt") or 0.0) for item in completed]
     replay_pnl = sum(float(item.get("replay_pnl_usdt") or 0.0) for item in completed)
     actual_pnl = sum(float(item.get("actual_pnl_usdt") or 0.0) for item in completed)
@@ -422,6 +435,7 @@ def build_replay_fill_comparison(rows: list[sqlite3.Row], start: datetime, end: 
         "completed": len(completed),
         "completion_rate": round(len(completed) / max(1, len(pairs)), 4),
         "status_counts": dict(status_counts),
+        "incomplete_examples": incomplete_examples,
         "actual_pnl_usdt": round(actual_pnl, 4),
         "replay_pnl_usdt": round(replay_pnl, 4),
         "pnl_delta_usdt": round(replay_pnl - actual_pnl, 4),
@@ -833,6 +847,7 @@ def render_md(payload: dict[str, Any]) -> str:
             f"- Delta: `{float(replay72.get('pnl_delta_usdt') or 0):+.2f}` USDT; median abs delta `{float(replay72.get('median_abs_delta_usdt') or 0):.2f}`",
             f"- Depth entry fills: `{int(replay72.get('order_book_fill_count') or 0)}`; depth slippage `{float(replay72.get('depth_slippage_usdt') or 0):.2f}` USDT; avg depth age `{float(replay72.get('avg_depth_snapshot_age_seconds') or 0):.1f}s`",
             f"- Status counts: `{json.dumps(replay72.get('status_counts') or {}, ensure_ascii=False)}`",
+            f"- Incomplete examples: `{json.dumps((replay72.get('incomplete_examples') or [])[:5], ensure_ascii=False)}`",
             f"- Note: {replay72.get('note') or 'local research_store/klines when available, then kline/depth cache; no Binance API call'}",
             "",
             "| Symbol | Side | TF | Fill | Actual PnL | Replay PnL | Delta | Actual exit | Replay exit | Replay reason |",

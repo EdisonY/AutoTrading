@@ -11,6 +11,8 @@ import os
 import sys
 import base64
 import subprocess
+import tarfile
+import tempfile
 from pathlib import Path
 
 import paramiko
@@ -32,6 +34,7 @@ TENCENT_PASS = os.environ.get("TENCENT_SSH_PASSWORD")
 TENCENT_REPORTS = "/opt/crypto-auto-trader/reports"
 TENCENT_RUNTIME = "/opt/crypto-auto-trader/runtime"
 TENCENT_RESEARCH = "/opt/crypto-auto-trader/research_memory/attention"
+TENCENT_ROOT = "/opt/crypto-auto-trader"
 
 # Reports generated on Aliyun that should be synced to Tencent
 REPORT_FILES = [
@@ -108,8 +111,18 @@ RESEARCH_FILES = [
 PRIORITY_REPORT_FILES = [
     "index.html",
     "decision_portal_latest.html",
+    "decision_attention_latest.md",
+    "decision_attention_latest.html",
+    "portal_latest.html",
+    "research_store_summary_latest.md",
+    "replay_readiness_latest.md",
+    "external_replay_data_ingest_latest.md",
+    "waiting_period_optimization_latest.md",
+    "waiting_period_optimization_latest.html",
     "rollback_execution_plan_latest.md",
     "rollback_automation_guard_latest.md",
+    "a_v11_rollout_review_latest.md",
+    "b_v16_rollout_review_latest.md",
     "alerts_latest.md",
 ]
 
@@ -118,6 +131,11 @@ PRIORITY_RUNTIME_FILES = [
     "paper_exchange_latest.json",
     "market_data_cache.json",
     "market_microstructure_latest.json",
+    "research_store_summary_latest.json",
+    "replay_readiness_latest.json",
+    "external_replay_data_ingest_latest.json",
+    "a_v11_rollout_review_latest.json",
+    "b_v16_rollout_review_latest.json",
     "rollback_execution_plan_latest.json",
     "rollback_automation_guard_latest.json",
     "waiting_period_optimization_latest.json",
@@ -153,6 +171,59 @@ def upload_with_system_ssh(local_path: Path, remote_path: str, file_timeout: int
     if proc.returncode != 0:
         err = (proc.stderr or proc.stdout).decode("utf-8", errors="replace")
         raise RuntimeError(err[-1200:] or f"ssh upload failed rc={proc.returncode}")
+
+
+def upload_priority_tar(max_bytes: int, file_timeout: int) -> dict[str, int]:
+    entries: list[tuple[Path, str]] = []
+    skipped = 0
+    for base, prefix, names in (
+        (ALIYUN_REPORTS, "reports", PRIORITY_REPORT_FILES),
+        (ALIYUN_RUNTIME, "runtime", PRIORITY_RUNTIME_FILES),
+        (ALIYUN_RESEARCH, "research_memory/attention", RESEARCH_FILES),
+    ):
+        for name in names:
+            local = base / name
+            if not local.exists():
+                skipped += 1
+                print(f"  [SKIP] {prefix}/{name} - not found locally")
+                continue
+            size = local.stat().st_size
+            if size > max_bytes:
+                skipped += 1
+                print(f"  [SKIP] {prefix}/{name} - {size} bytes exceeds max {max_bytes}")
+                continue
+            entries.append((local, f"{prefix}/{name}"))
+    if not entries:
+        return {"uploaded": 0, "skipped": skipped, "bytes": 0}
+    with tempfile.NamedTemporaryFile(prefix="aliyun_priority_sync_", suffix=".tgz", delete=False) as tmp:
+        tar_path = Path(tmp.name)
+    try:
+        with tarfile.open(tar_path, "w:gz") as tar:
+            for local, arcname in entries:
+                tar.add(local, arcname=arcname)
+        remote_tmp = f"/tmp/{tar_path.name}"
+        upload_with_system_ssh(tar_path, remote_tmp, max(file_timeout, 60))
+        cmd = [
+            "ssh",
+            "-o",
+            "BatchMode=yes",
+            "-o",
+            "ConnectTimeout=12",
+            "-o",
+            "ServerAliveInterval=5",
+            "-o",
+            "ServerAliveCountMax=2",
+            f"{TENCENT_USER}@{TENCENT_HOST}",
+            f"cd {shell_quote(TENCENT_ROOT)} && tar -xzf {shell_quote(remote_tmp)} && rm -f {shell_quote(remote_tmp)}",
+        ]
+        proc = subprocess.run(cmd, capture_output=True, timeout=max(file_timeout, 60))
+        if proc.returncode != 0:
+            err = (proc.stderr or proc.stdout).decode("utf-8", errors="replace")
+            raise RuntimeError(err[-1200:] or f"remote tar extract failed rc={proc.returncode}")
+        print(f"  [OK] priority tar uploaded {len(entries)} files ({tar_path.stat().st_size} bytes)")
+        return {"uploaded": len(entries), "skipped": skipped, "bytes": tar_path.stat().st_size}
+    finally:
+        tar_path.unlink(missing_ok=True)
 
 
 def ssh_client() -> paramiko.SSHClient:
@@ -259,6 +330,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--max-errors", type=int, default=2, help="Stop a section after this many upload errors")
     parser.add_argument("--include-optional", action="store_true", help="Also sync bulky/detail reports such as market review")
     parser.add_argument("--retries", type=int, default=1, help="Retry each file this many times after a timeout/error")
+    parser.add_argument("--priority-tar-only", action="store_true", help="Upload priority reports/runtime/research as one tarball and exit")
     args = parser.parse_args(argv)
     max_bytes = int(args.max_file_mb * 1024 * 1024)
 
@@ -285,6 +357,11 @@ def main(argv: list[str] | None = None) -> int:
             local = ALIYUN_RESEARCH / name
             status = "EXISTS" if local.exists() else "MISSING"
             print(f"  [{status}] research_memory/attention/{name}")
+        return 0
+
+    if args.priority_tar_only:
+        result = upload_priority_tar(max_bytes, args.file_timeout)
+        print(f"Priority tar result: {result}")
         return 0
 
     client = None if args.method == "ssh" else ssh_client()

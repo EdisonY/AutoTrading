@@ -51,6 +51,7 @@ $PYTHON rollback_watch_review.py --evolution-json $REMOTE_DIR/runtime/strategy_e
 $PYTHON rollback_execution_plan.py --runtime-dir $REMOTE_DIR/runtime --reports-dir $REMOTE_DIR/reports || echo "[WARN] rollback execution plan failed"
 $PYTHON rollback_automation_guard.py --runtime-dir $REMOTE_DIR/runtime --reports-dir $REMOTE_DIR/reports || echo "[WARN] rollback automation guard failed"
 $PYTHON auto_upgrade_readiness.py --runtime-dir $REMOTE_DIR/runtime --reports-dir $REMOTE_DIR/reports || echo "[WARN] auto upgrade readiness failed"
+$PYTHON strategy_candidate_governance.py --runtime-dir $REMOTE_DIR/runtime --reports-dir $REMOTE_DIR/reports || echo "[WARN] strategy candidate governance failed"
 
 echo "--- Step 4: Decision attention ledger ---"
 $PYTHON decision_attention.py || echo "[WARN] attention ledger failed"

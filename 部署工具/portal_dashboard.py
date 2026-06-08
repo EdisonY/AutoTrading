@@ -69,6 +69,8 @@ ROLLBACK_AUTOMATION_JSON = ROOT / "runtime" / "rollback_automation_guard_latest.
 ROLLBACK_AUTOMATION_MD = REPORTS_DIR / "rollback_automation_guard_latest.md"
 AUTO_UPGRADE_READINESS_JSON = ROOT / "runtime" / "auto_upgrade_readiness_latest.json"
 AUTO_UPGRADE_READINESS_MD = REPORTS_DIR / "auto_upgrade_readiness_latest.md"
+STRATEGY_CANDIDATE_GOVERNANCE_JSON = ROOT / "runtime" / "strategy_candidate_governance_latest.json"
+STRATEGY_CANDIDATE_GOVERNANCE_MD = REPORTS_DIR / "strategy_candidate_governance_latest.md"
 LONG_TERM_SKELETON_JSON = ROOT / "runtime" / "long_term_skeleton_latest.json"
 LONG_TERM_SKELETON_MD = REPORTS_DIR / "long_term_skeleton_latest.md"
 A_V11_ROLLOUT_JSON = ROOT / "runtime" / "a_v11_rollout_review_latest.json"
@@ -1108,6 +1110,49 @@ def auto_upgrade_readiness_summary(path: Path | None) -> dict[str, Any]:
     }
 
 
+def strategy_candidate_governance_summary(path: Path | None) -> dict[str, Any]:
+    empty = {
+        "available": False,
+        "path": STRATEGY_CANDIDATE_GOVERNANCE_MD,
+        "age": "No candidate governance report",
+        "fresh": False,
+        "status": "missing",
+        "summary": {
+            "candidates": 0,
+            "parameters": 0,
+            "upgrade_ready_candidates": 0,
+            "rollback_watch_candidates": 0,
+            "sample_contract_blockers": 0,
+        },
+        "lifecycle_summary": {},
+        "candidate_registry": [],
+        "parameter_registry": [],
+        "sample_acceptance_contract": {},
+        "pruning_hints": [],
+        "automatic_upgrade_allowed": False,
+        "apply_enabled": False,
+    }
+    payload = read_json(path) if path else None
+    if not isinstance(payload, dict):
+        return empty
+    generated_at = parse_dt(payload.get("generated_at"))
+    return {
+        "available": True,
+        "path": STRATEGY_CANDIDATE_GOVERNANCE_MD,
+        "age": age_text(generated_at),
+        "fresh": bool(generated_at and (datetime.now(CST) - generated_at).total_seconds() < 4 * 3600),
+        "status": payload.get("status") or "missing",
+        "summary": payload.get("summary") if isinstance(payload.get("summary"), dict) else empty["summary"],
+        "lifecycle_summary": payload.get("lifecycle_summary") if isinstance(payload.get("lifecycle_summary"), dict) else {},
+        "candidate_registry": payload.get("candidate_registry") if isinstance(payload.get("candidate_registry"), list) else [],
+        "parameter_registry": payload.get("parameter_registry") if isinstance(payload.get("parameter_registry"), list) else [],
+        "sample_acceptance_contract": payload.get("sample_acceptance_contract") if isinstance(payload.get("sample_acceptance_contract"), dict) else {},
+        "pruning_hints": payload.get("pruning_hints") if isinstance(payload.get("pruning_hints"), list) else [],
+        "automatic_upgrade_allowed": bool(payload.get("automatic_upgrade_allowed")),
+        "apply_enabled": bool(payload.get("apply_enabled")),
+    }
+
+
 def long_term_skeleton_summary(path: Path | None) -> dict[str, Any]:
     empty = {
         "available": False,
@@ -1967,6 +2012,8 @@ def function_status_cards(data: dict[str, Any]) -> list[dict[str, str]]:
     rollback_automation_summary_data = rollback_automation.get("summary") or {}
     auto_upgrade = data.get("auto_upgrade_readiness") or {}
     auto_upgrade_summary_data = auto_upgrade.get("summary") or {}
+    candidate_governance = data.get("strategy_candidate_governance") or {}
+    candidate_governance_summary_data = candidate_governance.get("summary") or {}
     long_term_skeleton = data.get("long_term_skeleton") or {}
     long_term_skeleton_summary_data = long_term_skeleton.get("summary") or {}
     a_v11_rollout = data.get("a_v11_rollout") or {}
@@ -2431,6 +2478,32 @@ def function_status_cards(data: dict[str, Any]) -> list[dict[str, str]]:
                 f"auto allowed no; apply enabled no; updated {auto_upgrade.get('age')}."
                 if auto_upgrade.get("available")
                 else "Automatic upgrade readiness guard missing. Upgrade blockers cannot be audited from the portal."
+            ),
+        },
+        {
+            "level": (
+                "bad"
+                if candidate_governance.get("automatic_upgrade_allowed") or candidate_governance.get("apply_enabled")
+                else "warn"
+                if int(candidate_governance_summary_data.get("rollback_watch_candidates") or 0) > 0
+                else "ok"
+                if candidate_governance.get("fresh")
+                else "warn"
+            ),
+            "name": "候选治理",
+            "value": (
+                str(candidate_governance.get("status") or "missing")
+                if candidate_governance.get("available")
+                else "not built"
+            ),
+            "body": (
+                f"candidates {int(candidate_governance_summary_data.get('candidates') or 0)}; "
+                f"parameters {int(candidate_governance_summary_data.get('parameters') or 0)}; "
+                f"rollback-watch {int(candidate_governance_summary_data.get('rollback_watch_candidates') or 0)}; "
+                f"sample blockers {int(candidate_governance_summary_data.get('sample_contract_blockers') or 0)}; "
+                f"auto allowed no; apply enabled no; updated {candidate_governance.get('age')}."
+                if candidate_governance.get("available")
+                else "Candidate governance registry missing. Parameter/sample lifecycle is not visible."
             ),
         },
         {
@@ -2996,6 +3069,8 @@ def build_data() -> dict[str, Any]:
     data["rollback_automation_html"] = ROLLBACK_AUTOMATION_MD
     data["auto_upgrade_readiness"] = auto_upgrade_readiness_summary(AUTO_UPGRADE_READINESS_JSON)
     data["auto_upgrade_readiness_html"] = AUTO_UPGRADE_READINESS_MD
+    data["strategy_candidate_governance"] = strategy_candidate_governance_summary(STRATEGY_CANDIDATE_GOVERNANCE_JSON)
+    data["strategy_candidate_governance_html"] = STRATEGY_CANDIDATE_GOVERNANCE_MD
     data["long_term_skeleton"] = long_term_skeleton_summary(LONG_TERM_SKELETON_JSON)
     data["long_term_skeleton_html"] = LONG_TERM_SKELETON_MD
     data["a_v11_rollout"] = a_v11_rollout_summary(A_V11_ROLLOUT_JSON)
@@ -3787,6 +3862,56 @@ def render_html(out_dir: Path) -> str:
         for r in (auto_upgrade.get("candidates") or [])
     ) or '<tr><td colspan="8">暂无 verified P0/P1 upgrade candidate</td></tr>'
 
+    candidate_governance = data.get("strategy_candidate_governance") or {}
+    candidate_governance_summary_data = candidate_governance.get("summary") or {}
+    governance_candidate_rows = "".join(
+        f"""
+<tr>
+  <td>{h(r.get('priority'))}</td>
+  <td>{h(r.get('strategy'))}</td>
+  <td>{h(r.get('candidate_id'))}</td>
+  <td>{h(r.get('lifecycle'))}</td>
+  <td>{h(r.get('champion_challenger_role'))}</td>
+  <td>{h(r.get('quality'))}</td>
+  <td>{h(r.get('recommended_action'))}</td>
+  <td>{h(compact_text(', '.join(str(item) for item in (r.get('parameter_keys') or [])) or '-', 180))}</td>
+  <td>{'no' if not r.get('apply_enabled') else 'yes'}</td>
+</tr>
+""".strip()
+        for r in (candidate_governance.get("candidate_registry") or [])[:12]
+    ) or '<tr><td colspan="9">暂无 candidate governance registry</td></tr>'
+    governance_parameter_rows = "".join(
+        f"""
+<tr>
+  <td>{h(r.get('strategy'))}</td>
+  <td>{h(r.get('parameter_key'))}</td>
+  <td>{h(r.get('parameter_version'))}</td>
+  <td>{h(compact_text(r.get('current_value') or '-', 120))}</td>
+  <td>{h(compact_text(r.get('bounds') or '-', 120))}</td>
+  <td>{'no' if not r.get('apply_enabled') else 'yes'}</td>
+</tr>
+""".strip()
+        for r in (candidate_governance.get("parameter_registry") or [])[:12]
+    ) or '<tr><td colspan="6">暂无 parameter registry</td></tr>'
+    sample_contract = (
+        candidate_governance.get("sample_acceptance_contract")
+        if isinstance(candidate_governance.get("sample_acceptance_contract"), dict)
+        else {}
+    )
+    governance_sample_rows = "".join(
+        f"""
+<tr>
+  <td>{h(r.get('name'))}</td>
+  <td>{'yes' if r.get('ready') else 'no'}</td>
+  <td>{h(r.get('category'))}</td>
+  <td>{int(r.get('paired_trades') or 0)}</td>
+  <td>{int(r.get('completed') or 0)}</td>
+  <td>{h(compact_text(r.get('gap_detail') or r.get('detail') or '-', 180))}</td>
+</tr>
+""".strip()
+        for r in (sample_contract.get("components") or [])
+    ) or '<tr><td colspan="6">暂无 sample acceptance contract</td></tr>'
+
     a_v11_rollout = data.get("a_v11_rollout") or {}
     a_v11_rollout_decision = a_v11_rollout.get("decision") or {}
     a_v11_rollout_windows = a_v11_rollout.get("windows") or {}
@@ -4008,6 +4133,14 @@ def render_html(out_dir: Path) -> str:
             data["auto_upgrade_readiness_html"],
             "看升级readiness",
             "amber",
+        ),
+        route_card(
+            "候选怎么治理",
+            "参数/样本/生命周期",
+            "看每个候选对应哪些参数、处于 champion/challenger 哪个阶段、样本契约缺什么，以及该继续收样还是暂停扩张。",
+            data["strategy_candidate_governance_html"],
+            "看候选治理",
+            "blue",
         ),
         route_card(
             "是否有更优方案",
@@ -4405,6 +4538,23 @@ th {{ background:#f1f5f9; color:#334155; }}
     <table class="subtable">
       <thead><tr><th>优先级</th><th>策略</th><th>候选</th><th>状态</th><th>自动化状态</th><th>Auto</th><th>Apply</th><th>阻塞</th></tr></thead>
       <tbody>{auto_upgrade_candidate_rows}</tbody>
+    </table>
+  </section>
+
+  <section class="section panel">
+    <h2>Strategy Candidate Governance</h2>
+    <p class="note">只读候选治理视图。状态 {h(candidate_governance.get('status', '-'))}；candidates {int(candidate_governance_summary_data.get('candidates') or 0)}；parameters {int(candidate_governance_summary_data.get('parameters') or 0)}；rollback-watch {int(candidate_governance_summary_data.get('rollback_watch_candidates') or 0)}；sample blockers {int(candidate_governance_summary_data.get('sample_contract_blockers') or 0)}；auto allowed no；apply enabled no；更新 {h(candidate_governance.get('age'))}。</p>
+    <table>
+      <thead><tr><th>优先级</th><th>策略</th><th>候选</th><th>生命周期</th><th>角色</th><th>质量</th><th>建议动作</th><th>参数</th><th>Apply</th></tr></thead>
+      <tbody>{governance_candidate_rows}</tbody>
+    </table>
+    <table class="subtable">
+      <thead><tr><th>策略</th><th>参数键</th><th>版本</th><th>当前值</th><th>边界</th><th>Apply</th></tr></thead>
+      <tbody>{governance_parameter_rows}</tbody>
+    </table>
+    <table class="subtable">
+      <thead><tr><th>样本组件</th><th>Ready</th><th>类型</th><th>Paired</th><th>Completed</th><th>缺口</th></tr></thead>
+      <tbody>{governance_sample_rows}</tbody>
     </table>
   </section>
 

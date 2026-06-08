@@ -1734,6 +1734,7 @@ tr:hover td {{ background:#101827; }}
           <a href="/reports/portal_latest.html">完整旧版详情</a>
           <a href="/reports/replay_readiness_latest.md">Replay 验收</a>
           <a href="/reports/auto_upgrade_readiness_latest.md">自动升级闸门</a>
+          <a href="/reports/strategy_candidate_governance_latest.md">候选治理</a>
           <a href="/reports/waiting_period_optimization_latest.html">等待期优化</a>
           <a href="/reports/market_review_latest.html">市场复盘日报</a>
           <a href="/reports/long_term_skeleton_latest.md">长期目标骨架</a>

@@ -29,6 +29,7 @@ $PYTHON portal_dashboard.py --out-dir $REMOTE_DIR/reports || echo "[WARN] portal
 $PYTHON decision_portal.py --out-dir $REMOTE_DIR/reports || echo "[WARN] decision portal generation failed"
 
 timeout 75s $PYTHON sync_aliyun_reports_to_tencent.py \
+  --priority-tar-only \
   --max-file-mb 1.2 \
   --file-timeout 20 \
   --max-errors 4 \

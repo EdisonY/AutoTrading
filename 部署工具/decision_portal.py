@@ -76,6 +76,13 @@ def read_alerts_json() -> dict[str, Any]:
     return read_json(RUNTIME_DIR / "alerts_latest.json")
 
 
+def read_live_runtime_json(name: str) -> dict[str, Any]:
+    mirror = read_json(MIRROR_RUNTIME_DIR / name)
+    if mirror:
+        return mirror
+    return read_json(RUNTIME_DIR / name)
+
+
 def parse_dt(value: Any) -> datetime | None:
     if not value:
         return None
@@ -952,10 +959,10 @@ def build_state() -> dict[str, Any]:
     research = read_first_json(RUNTIME_DIR / "research_store_summary_latest.json", MIRROR_RUNTIME_DIR / "research_store_summary_latest.json")
     kline = read_first_json(RUNTIME_DIR / "research_kline_backfill_latest.json", MIRROR_RUNTIME_DIR / "research_kline_backfill_latest.json")
     depth = read_first_json(RUNTIME_DIR / "research_depth_backfill_latest.json", MIRROR_RUNTIME_DIR / "research_depth_backfill_latest.json")
-    paper_exchange = read_first_json(RUNTIME_DIR / "paper_exchange_latest.json", MIRROR_RUNTIME_DIR / "paper_exchange_latest.json")
-    market = read_first_json(RUNTIME_DIR / "market_data_cache.json", MIRROR_RUNTIME_DIR / "market_data_cache.json")
-    microstructure = read_first_json(RUNTIME_DIR / "market_microstructure_latest.json", MIRROR_RUNTIME_DIR / "market_microstructure_latest.json")
-    reset = read_first_json(RUNTIME_DIR / "testnet_data_reset_latest.json", MIRROR_RUNTIME_DIR / "testnet_data_reset_latest.json")
+    paper_exchange = read_live_runtime_json("paper_exchange_latest.json")
+    market = read_live_runtime_json("market_data_cache.json")
+    microstructure = read_live_runtime_json("market_microstructure_latest.json")
+    reset = read_live_runtime_json("testnet_data_reset_latest.json")
     q = queue_summary()
     ev = event_summary()
     att_summary, att_items = attention_items()

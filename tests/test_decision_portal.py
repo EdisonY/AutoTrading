@@ -213,6 +213,35 @@ class DecisionPortalTests(unittest.TestCase):
             self.tool.RUNTIME_DIR = old_runtime
             self.tool.MIRROR_RUNTIME_DIR = old_mirror
 
+    def test_live_runtime_prefers_tencent_mirror_for_paper_ledger(self):
+        old_runtime = self.tool.RUNTIME_DIR
+        old_mirror = self.tool.MIRROR_RUNTIME_DIR
+        try:
+            runtime = self.root / "runtime"
+            mirror = self.root / "server_logs_tencent" / "runtime"
+            runtime.mkdir(parents=True)
+            mirror.mkdir(parents=True)
+            self.tool.RUNTIME_DIR = runtime
+            self.tool.MIRROR_RUNTIME_DIR = mirror
+            local = runtime / "paper_exchange_latest.json"
+            mirrored = mirror / "paper_exchange_latest.json"
+            local.write_text(
+                json.dumps({"total_unrealized_pnl": 19.5351}, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            mirrored.write_text(
+                json.dumps({"total_unrealized_pnl": 34.266341}, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            os.utime(local, (time.time() + 10, time.time() + 10))
+
+            payload = self.tool.read_live_runtime_json("paper_exchange_latest.json")
+
+            self.assertEqual(payload["total_unrealized_pnl"], 34.266341)
+        finally:
+            self.tool.RUNTIME_DIR = old_runtime
+            self.tool.MIRROR_RUNTIME_DIR = old_mirror
+
     def test_plain_strategy_reason_separates_post_submit_confirmation(self):
         text = self.tool.plain_strategy_reason(
             "下单失败(open_confirm_account_state_unavailable): fresh central account state unavailable for confirmation",

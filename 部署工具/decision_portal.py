@@ -111,11 +111,27 @@ def number(value: Any, digits: int = 2) -> str:
         return "0.00"
 
 
+def amount(value: Any, digits: int = 2) -> str:
+    try:
+        return f"{float(value):.{digits}f}"
+    except Exception:
+        return "0.00"
+
+
 def fmt_plain(value: Any, digits: int = 6, default: str = "-") -> str:
     try:
-        return f"{float(value):.{digits}f}".rstrip("0").rstrip(".")
+        num = float(value)
     except Exception:
         return default
+    if num == 0:
+        return "0"
+    abs_num = abs(num)
+    if abs_num < 10 ** -digits:
+        return f"{num:.{digits}g}"
+    if abs_num < 1:
+        small_digits = min(12, max(digits, 2 - int(f"{abs_num:e}".split("e")[1])))
+        return f"{num:.{small_digits}f}".rstrip("0").rstrip(".")
+    return f"{num:.{digits}f}".rstrip("0").rstrip(".")
 
 
 def report_text(value: Any, default: str = "-") -> str:
@@ -1051,7 +1067,7 @@ def render_paper_exchange(state: dict[str, Any]) -> str:
 <button class="paper-card strategy-tab {'active' if idx == 0 else ''}" type="button" data-strategy="{h(name)}" onclick="showPaperStrategy('{h(name)}')">
   <span>{h(name)}</span>
   <b>{h(row.get('positions', 0))} 仓 / {h(number(row.get('unrealized_pnl'), 4))} USDT</b>
-  <p>权益 {h(number(row.get('equity'), 2))}，已实现 {h(number(row.get('realized_pnl'), 4))}，手续费 {h(number(row.get('fees_paid'), 4))}，资金费 {h(number(row.get('funding_paid'), 4))}</p>
+  <p>权益 {h(amount(row.get('equity'), 2))}，已实现 {h(number(row.get('realized_pnl'), 4))}，手续费 {h(amount(row.get('fees_paid'), 4))}，资金费 {h(number(row.get('funding_paid'), 4))}</p>
 </button>
 """.strip()
         )
@@ -1076,7 +1092,7 @@ def render_paper_exchange(state: dict[str, Any]) -> str:
   <td class="{position_upnl_class(upnl)}">{h(number(upnl, 4))}</td>
   <td>{h(fmt_plain(pos.get('notional'), 4))}</td>
   <td>{h(fmt_plain(pos.get('margin'), 4))}</td>
-  <td>{h(number(pos.get('fees_paid'), 4))}</td>
+  <td>{h(amount(pos.get('fees_paid'), 4))}</td>
   <td>{h(number(pos.get('funding_paid'), 4))}<small>{h(report_text(pos.get('funding_source') or '公开资金费'))}</small></td>
   <td>{h(report_text(pos.get('mark_source') or '外部行情'))}</td>
   <td><button class="mini-btn" type="button">展开</button></td>
@@ -1111,7 +1127,7 @@ def render_paper_exchange(state: dict[str, Any]) -> str:
         )
     return f"""
 <div class="paper-summary">
-  <div><span>总权益</span><b>{h(number(paper.get('total_equity'), 2))} USDT</b></div>
+  <div><span>总权益</span><b>{h(amount(paper.get('total_equity'), 2))} USDT</b></div>
   <div><span>总浮盈亏</span><b class="{position_upnl_class(paper.get('total_unrealized_pnl'))}">{h(number(paper.get('total_unrealized_pnl'), 4))} USDT</b></div>
   <div><span>开仓数</span><b>{h(paper.get('open_positions', 0))}</b></div>
   <div><span>盯市刷新</span><b>{h(age_text(paper_ts))}</b></div>

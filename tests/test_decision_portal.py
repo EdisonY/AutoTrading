@@ -172,6 +172,11 @@ class DecisionPortalTests(unittest.TestCase):
         text = self.tool.plain_strategy_reason("15m无确认信号", "skip")
         self.assertEqual(text, "有候选，但15分钟确认没有跟上，所以策略按规则没开仓。")
 
+    def test_fmt_plain_preserves_tiny_nonzero_values(self):
+        self.assertEqual(self.tool.fmt_plain(9.5e-09), "9.5e-09")
+        self.assertEqual(self.tool.fmt_plain(4.3655745685100555e-11), "4.36557e-11")
+        self.assertNotEqual(self.tool.fmt_plain(9.5e-09), "0")
+
     def test_plain_strategy_reason_explains_non_tradable_external_candidate(self):
         text = self.tool.plain_strategy_reason("合约不存在", "skip")
         self.assertEqual(
@@ -318,6 +323,10 @@ class DecisionPortalTests(unittest.TestCase):
         self.assertIn("BTCUSDT", html)
         self.assertIn("手续费", html)
         self.assertIn("资金费率", html)
+        self.assertIn("300000.00 USDT", html)
+        self.assertNotIn("+300000.00 USDT", html)
+        self.assertIn("手续费 0.1600", html)
+        self.assertNotIn("手续费 +0.1600", html)
         self.assertNotIn("Binance", html)
 
     def test_market_mover_followup_shows_entry_direction_and_pnl(self):

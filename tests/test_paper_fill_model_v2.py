@@ -208,6 +208,33 @@ class PaperFillModelV2Tests(unittest.TestCase):
         self.assertGreater(fill["executed_price"], 0.0)
         self.assertEqual(fill["fill_status"], "FILLED")
 
+    def test_tiny_residual_notional_is_removed_from_open_positions(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            exchange = PaperExchange(root)
+            os.environ["PAPER_FILL_MODEL_VERSION"] = "v1"
+            exchange.open_market(
+                strategy="B/v16",
+                symbol="DUSTUSDT",
+                side="short",
+                qty=100,
+                price=0.01,
+                leverage=4,
+                order_id="open-dust",
+            )
+            os.environ["PAPER_FILL_MODEL_VERSION"] = "v2"
+            summary = exchange.close_market(
+                strategy="B/v16",
+                symbol="DUSTUSDT",
+                side="short",
+                qty=99.99999999999,
+                price=0.01,
+                order_id="close-dust",
+            )
+
+        self.assertEqual(summary["open_positions"], 0)
+        self.assertEqual(summary["by_strategy"]["B/v16"]["positions"], 0)
+
 
 if __name__ == "__main__":
     unittest.main()

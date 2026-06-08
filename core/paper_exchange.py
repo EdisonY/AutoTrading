@@ -27,6 +27,7 @@ DEFAULT_FALLBACK_SLIPPAGE_BPS = 2.0
 DEFAULT_ORDER_BOOK_MAX_LEVELS = 20
 DEFAULT_ORDER_BOOK_LIQUIDITY_FACTOR = 1.0
 DEFAULT_ORDER_BOOK_QUEUE_AHEAD_QUANTITY = 0.0
+DEFAULT_DUST_NOTIONAL_USDT = 1e-6
 STRATEGIES = ("A/v11", "B/v16", "C/v14")
 
 
@@ -58,6 +59,13 @@ def load_json(path: Path) -> dict[str, Any]:
 
 def position_key(strategy: str, symbol: str, side: str) -> str:
     return f"{strategy}|{symbol.upper()}|{side.lower()}"
+
+
+def is_dust_position(pos: dict[str, Any], *, dust_notional_usdt: float = DEFAULT_DUST_NOTIONAL_USDT) -> bool:
+    qty = abs(safe_float(pos.get("qty")))
+    mark = safe_float(pos.get("mark_price"), safe_float(pos.get("entry_price")))
+    notional = abs(qty * mark)
+    return qty <= 1e-12 or notional <= dust_notional_usdt
 
 
 @dataclass(slots=True)
@@ -245,13 +253,13 @@ class PaperExchange:
         pos["fees_paid"] = safe_float(pos.get("fees_paid")) + fee
         pos["realized_pnl"] = safe_float(pos.get("realized_pnl")) + pnl - fee
         remaining = safe_float(pos.get("qty")) - close_qty
-        if remaining <= 1e-12:
+        pos["qty"] = remaining
+        pos["mark_price"] = price
+        pos["notional"] = remaining * price
+        pos["margin"] = pos["notional"] / max(1.0, safe_float(pos.get("leverage"), 1.0))
+        pos["latest_paper_fill"] = fill
+        if remaining <= 0 or is_dust_position(pos):
             del state["positions"][key]
-        else:
-            pos["qty"] = remaining
-            pos["notional"] = remaining * price
-            pos["margin"] = pos["notional"] / max(1.0, safe_float(pos.get("leverage"), 1.0))
-            pos["latest_paper_fill"] = fill
         self._record_fill(state, PaperFill("CLOSE", strategy, symbol.upper(), side.lower(), close_qty, price, safe_float(pos.get("leverage"), 1.0) if pos else 1.0, fee, order_id, reason, realized_pnl=pnl - fee, details=fill))
         return self.save(state)
 
@@ -263,6 +271,9 @@ class PaperExchange:
         state = self.load()
         now = time.time()
         for key, pos in list(state["positions"].items()):
+            if is_dust_position(pos):
+                del state["positions"][key]
+                continue
             symbol = str(pos.get("symbol") or "")
             price, source = price_resolver(symbol)
             if price and price > 0:
@@ -277,6 +288,9 @@ class PaperExchange:
             pos["unrealized_pnl"] = upnl
             pos["notional"] = qty * mark
             pos["margin"] = pos["notional"] / max(1.0, safe_float(pos.get("leverage"), 1.0))
+            if is_dust_position(pos):
+                del state["positions"][key]
+                continue
             last_funding = safe_float(pos.get("last_funding_ts"), now)
             elapsed_hours = max(0.0, (now - last_funding) / 3600.0)
             if funding_resolver and elapsed_hours >= 1.0:
@@ -302,7 +316,7 @@ class PaperExchange:
         by_strategy: dict[str, dict[str, Any]] = {}
         total_upnl = 0.0
         total_equity = 0.0
-        positions = list(state.get("positions", {}).values())
+        positions = [p for p in state.get("positions", {}).values() if not is_dust_position(p)]
         for strategy in STRATEGIES:
             account = state.get("accounts", {}).get(strategy, {})
             rows = [p for p in positions if p.get("strategy") == strategy]

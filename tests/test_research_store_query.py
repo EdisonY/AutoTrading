@@ -103,6 +103,19 @@ class ResearchStoreQueryTests(unittest.TestCase):
             self.assertEqual(by_interval["15m"]["coverage_days"], 30)
             self.assertTrue(by_interval["1h"]["target_met"])
 
+    def test_short_report_window_still_uses_30_day_kline_acceptance_window(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = Path(tmp) / "research_store"
+            write_kline_partition(store, kline_rows(["15m", "30m", "1h"], 30))
+
+            summary = self.build_summary(store, days=3)
+
+            self.assertEqual(summary["days"], 3)
+            self.assertEqual(summary["kline_window_days"], 30)
+            self.assertEqual(summary["kline_acceptance"]["status"], "ok")
+            by_interval = {row["interval"]: row for row in summary["kline_coverage"]}
+            self.assertEqual(by_interval["15m"]["coverage_days"], 30)
+
     def test_kline_acceptance_reports_short_coverage_gap(self):
         with tempfile.TemporaryDirectory() as tmp:
             store = Path(tmp) / "research_store"

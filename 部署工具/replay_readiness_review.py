@@ -37,6 +37,24 @@ class ReadinessThresholds:
     min_depth_snapshots: int = 50
 
 
+ROLLOUT_CONTEXT_GAP_STATUSES = {
+    "paper_missing_open_context",
+    "paper_context_timeframe_gap",
+    "missing_open",
+    "missing_atr",
+    "missing_time",
+    "missing_entry_price",
+    "missing_quantity",
+    "unsupported_timeframe",
+}
+ROLLOUT_DATA_GAP_STATUSES = {
+    "missing_kline_data",
+    "missing_bars",
+    "missing_depth_data",
+    "depth_snapshot_unavailable",
+}
+
+
 def now_cst() -> datetime:
     return datetime.now(CST)
 
@@ -166,6 +184,27 @@ def rollout_readiness(payload: Any, name: str, thresholds: ReadinessThresholds, 
             metrics,
         )
     if rate < thresholds.min_rollout_completion_rate:
+        incomplete_statuses = {
+            str(key): to_int(value)
+            for key, value in status_counts.items()
+            if str(key) != "complete" and to_int(value) > 0
+        }
+        incomplete_total = sum(incomplete_statuses.values())
+        context_gap_total = sum(
+            value for key, value in incomplete_statuses.items() if key in ROLLOUT_CONTEXT_GAP_STATUSES
+        )
+        data_gap_total = sum(
+            value for key, value in incomplete_statuses.items() if key in ROLLOUT_DATA_GAP_STATUSES
+        )
+        if incomplete_total > 0 and data_gap_total == 0 and context_gap_total == incomplete_total:
+            return component(
+                name,
+                "context_gap",
+                False,
+                "context_gap",
+                f"{window} replay context completion {rate:.1%} below {thresholds.min_rollout_completion_rate:.0%}; collect fresh contextual paired samples",
+                metrics,
+            )
         return component(
             name,
             "data_gap",
@@ -238,6 +277,8 @@ def overall_status(components: list[dict[str, Any]]) -> tuple[str, str, list[dic
         return "report_gap", "regenerate_missing_reports", blockers
     if "data_gap" in categories:
         return "data_gap", "run_staged_kline_depth_ingest_then_replay_review", blockers
+    if "context_gap" in categories:
+        return "context_gap", "collect_fresh_contextual_paired_samples", blockers
     if "sample_gap" in categories:
         return "waiting_for_samples", "collect_post_refresh_samples", blockers
     return "blocked", "inspect_replay_readiness_blockers", blockers
@@ -272,6 +313,7 @@ def build_payload(
             "total_components": len(components),
             "blockers": len(blockers),
             "data_gap_blockers": sum(1 for item in blockers if item.get("category") == "data_gap"),
+            "context_gap_blockers": sum(1 for item in blockers if item.get("category") == "context_gap"),
             "sample_gap_blockers": sum(1 for item in blockers if item.get("category") == "sample_gap"),
             "report_gap_blockers": sum(1 for item in blockers if item.get("category") == "report_gap"),
         },

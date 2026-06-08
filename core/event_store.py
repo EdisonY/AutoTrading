@@ -99,7 +99,8 @@ def json_dumps(value: Any) -> str:
 
 def init_db(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(path) as conn:
+    conn = sqlite3.connect(path)
+    try:
         for stmt in DDL:
             conn.execute(stmt)
         conn.execute(
@@ -107,6 +108,8 @@ def init_db(path: Path) -> None:
             ("schema_version", str(SCHEMA_VERSION)),
         )
         conn.commit()
+    finally:
+        conn.close()
 
 
 @contextmanager

@@ -389,6 +389,44 @@ class AV11RolloutReviewPacketTests(unittest.TestCase):
         self.assertEqual(packet["replay_fill_comparison_72h"]["completed"], 1)
         self.assertIn("72h replay/fill comparison 1/2 complete, delta -3.50 USDT", packet["risk"])
 
+    def test_query_rows_excludes_paper_exchange_maintenance_events(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "event_store.sqlite3"
+            con = sqlite3.connect(db)
+            con.execute(
+                """
+                create table events (
+                    id integer primary key,
+                    ts text,
+                    strategy text,
+                    symbol text,
+                    event_type text,
+                    category text,
+                    side text,
+                    reason text,
+                    source text,
+                    payload_json text
+                )
+                """
+            )
+            con.executemany(
+                """
+                insert into events (ts, strategy, symbol, event_type, category, side, reason, source, payload_json)
+                values (?, 'A/v11', ?, 'OPEN', '', 'long', '', ?, '{}')
+                """,
+                [
+                    ("2026-06-03T10:00:00+08:00", "RUNNERUSDT", "A/v11/paper_exchange"),
+                    ("2026-06-03T10:00:30+08:00", "LEGACYUSDT", None),
+                    ("2026-06-03T10:01:00+08:00", "SCANNERUSDT", "A/v11/events"),
+                ],
+            )
+            con.commit()
+            con.close()
+
+            rows = self.tool.query_rows(db, self.tool.parse_dt("2026-06-03T00:00:00+08:00"))
+
+        self.assertEqual([row["symbol"] for row in rows], ["LEGACYUSDT", "SCANNERUSDT"])
+
 
 if __name__ == "__main__":
     unittest.main()

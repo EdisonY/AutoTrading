@@ -148,6 +148,7 @@ def recent_candidates(root: Path, strategy: str, limit: int) -> list[dict[str, A
     since = (datetime.now(CST) - timedelta(hours=24)).isoformat()
     out: list[dict[str, Any]] = []
     seen: set[str] = set()
+    conn: sqlite3.Connection | None = None
     try:
         conn = sqlite3.connect(str(db_path))
         conn.row_factory = sqlite3.Row
@@ -162,9 +163,11 @@ def recent_candidates(root: Path, strategy: str, limit: int) -> list[dict[str, A
             """,
             (strategy, since),
         ).fetchall()
-        conn.close()
     except Exception:
         return []
+    finally:
+        if conn is not None:
+            conn.close()
     for row in rows:
         payload = event_payload(row)
         symbol = str(row["symbol"] or payload.get("symbol") or "").upper()
@@ -293,6 +296,8 @@ def open_bootstrap_positions(root: Path, exchange: PaperExchange, target_per_str
                     "take_profit": item.get("take_profit"),
                     "margin_usdt": margin_usdt,
                     "paper_exchange_bootstrap": True,
+                    "evidence_role": "paper_exchange_maintenance_bootstrap",
+                    "rollout_evidence_eligible": False,
                 },
             )
             after_fill = (summary.get("recent_fills") or [{}])[-1] if isinstance(summary, dict) else {}
@@ -329,6 +334,9 @@ def open_bootstrap_positions(root: Path, exchange: PaperExchange, target_per_str
                     "paper": True,
                     "mode": "paper_exchange",
                     "simulation_only": True,
+                    "paper_exchange_bootstrap": True,
+                    "evidence_role": "paper_exchange_maintenance_bootstrap",
+                    "rollout_evidence_eligible": False,
                     "expected_notional_usdt": round(event_qty * event_price, 6),
                     "target_margin_usdt": margin_usdt,
                     "price_source": item.get("price_source"),
@@ -403,6 +411,9 @@ def close_hit_positions(root: Path, exchange: PaperExchange, take_profit_pct: fl
                 "paper": True,
                 "mode": "paper_exchange",
                 "simulation_only": True,
+                "paper_exchange_bootstrap": bool(context.get("paper_exchange_bootstrap")),
+                "evidence_role": context.get("evidence_role") or "paper_exchange_maintenance_close",
+                "rollout_evidence_eligible": False if context.get("paper_exchange_bootstrap") else context.get("rollout_evidence_eligible"),
                 "paper_fill": after_fill,
                 "source_candidate": context.get("source"),
                 "source_event_type": context.get("source_event_type"),

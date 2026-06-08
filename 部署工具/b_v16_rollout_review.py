@@ -575,7 +575,8 @@ def load_approval() -> dict[str, Any]:
 
 
 def query_rows(db: Path, start: datetime) -> list[sqlite3.Row]:
-    with sqlite3.connect(db) as con:
+    con = sqlite3.connect(db)
+    try:
         con.row_factory = sqlite3.Row
         return list(
             con.execute(
@@ -585,11 +586,14 @@ def query_rows(db: Path, start: datetime) -> list[sqlite3.Row]:
                 where strategy = 'B/v16'
                   and ts >= ?
                   and event_type in ('OPEN','CLOSE','FORCED_CLOSE','OPEN_FAILED','OPEN_SKIPPED','CLOSE_FAILED','FORCED_CLOSE_FAILED','SIGNAL')
+                  and (source is null or source not like '%/paper_exchange')
                 order by ts asc, id asc
                 """,
                 (start.strftime("%Y-%m-%d"),),
             )
         )
+    finally:
+        con.close()
 
 
 def summarize_window(rows: list[sqlite3.Row], start: datetime, end: datetime) -> dict[str, Any]:

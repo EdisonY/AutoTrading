@@ -112,6 +112,46 @@ class ReplayReadinessReviewTests(unittest.TestCase):
         self.assertEqual(payload["status"], "waiting_for_samples")
         self.assertEqual(payload["blockers"][0]["category"], "sample_gap")
 
+    def test_context_gap_when_rollout_completion_blocked_by_paper_context(self):
+        rollout = rollout_payload(paired=12, completed=0)
+        rollout["replay_fill_comparison"]["72h"]["status_counts"] = {
+            "paper_missing_open_context": 7,
+            "paper_context_timeframe_gap": 5,
+        }
+
+        payload = self.tool.build_payload(
+            research_store=self.research_ok(),
+            a_v11_rollout=rollout,
+            b_v16_rollout=rollout_payload(),
+            truth=self.truth_ok(),
+            thresholds=self.thresholds(),
+        )
+
+        self.assertEqual(payload["status"], "context_gap")
+        self.assertEqual(payload["next_action"], "collect_fresh_contextual_paired_samples")
+        self.assertEqual(payload["blockers"][0]["category"], "context_gap")
+        self.assertEqual(payload["summary"]["context_gap_blockers"], 1)
+
+    def test_data_gap_when_rollout_has_kline_or_depth_status_even_with_context_gap(self):
+        rollout = rollout_payload(paired=12, completed=0)
+        rollout["replay_fill_comparison"]["72h"]["status_counts"] = {
+            "paper_missing_open_context": 8,
+            "missing_kline_data": 2,
+            "missing_depth_data": 2,
+        }
+
+        payload = self.tool.build_payload(
+            research_store=self.research_ok(),
+            a_v11_rollout=rollout,
+            b_v16_rollout=rollout_payload(),
+            truth=self.truth_ok(),
+            thresholds=self.thresholds(),
+        )
+
+        self.assertEqual(payload["status"], "data_gap")
+        self.assertEqual(payload["next_action"], "run_staged_kline_depth_ingest_then_replay_review")
+        self.assertEqual(payload["blockers"][0]["category"], "data_gap")
+
     def test_report_gap_when_recovery_replay_missing_for_existing_recovery_positions(self):
         payload = self.tool.build_payload(
             research_store=self.research_ok(),

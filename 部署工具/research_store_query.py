@@ -120,12 +120,17 @@ def build_summary(
     days: int,
     kline_target_days: int = DEFAULT_KLINE_TARGET_DAYS,
     kline_key_intervals: list[str] | None = None,
+    kline_window_days: int | None = None,
 ) -> dict[str, Any]:
     cutoff = (now_cst() - timedelta(days=days)).strftime("%Y-%m-%d")
+    kline_days = max(1, int(kline_window_days or max(days, kline_target_days)))
+    kline_cutoff = (now_cst() - timedelta(days=kline_days)).strftime("%Y-%m-%d")
     key_intervals = kline_key_intervals or list(DEFAULT_KLINE_KEY_INTERVALS)
     summary: dict[str, Any] = {
         "days": days,
         "cutoff": cutoff,
+        "kline_window_days": kline_days,
+        "kline_cutoff": kline_cutoff,
         "available_tables": [name for name, ok in available.items() if ok],
         "strategy_funnel": [],
         "skip_layers": [],
@@ -234,7 +239,7 @@ def build_summary(
             group by 1
             order by coverage_days desc, bars desc
             """,
-            [cutoff, kline_target_days, kline_target_days],
+            [kline_cutoff, kline_target_days, kline_target_days],
         )
         summary["kline_acceptance"] = build_kline_acceptance(
             summary["kline_coverage"],
@@ -383,6 +388,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--format", choices=["parquet", "jsonl"], default="parquet")
     parser.add_argument("--kline-target-days", type=int, default=DEFAULT_KLINE_TARGET_DAYS)
     parser.add_argument(
+        "--kline-window-days",
+        type=int,
+        default=0,
+        help="Days used only for Kline acceptance. Defaults to max(--days, --kline-target-days).",
+    )
+    parser.add_argument(
         "--kline-key-intervals",
         default=",".join(DEFAULT_KLINE_KEY_INTERVALS),
         help="Comma-separated intervals required for long-window kline acceptance",
@@ -402,7 +413,14 @@ def main(argv: list[str] | None = None) -> int:
     with duckdb.connect(database=":memory:") as con:
         available = {table: register_view(con, store, table, args.format) for table in TABLES}
         key_intervals = [item.strip() for item in str(args.kline_key_intervals or "").split(",") if item.strip()]
-        payload = build_summary(con, available, args.days, args.kline_target_days, key_intervals)
+        payload = build_summary(
+            con,
+            available,
+            args.days,
+            args.kline_target_days,
+            key_intervals,
+            args.kline_window_days or None,
+        )
     payload.update(
         {
             "generated_at": now_cst().isoformat(timespec="seconds"),

@@ -388,7 +388,7 @@ class DecisionPortalTests(unittest.TestCase):
             },
             "mover_diagnostics": {
                 "NOENTERUSDT": {
-                    "strategy_filter": "A/v11: 策略挡住(阈值/策略)；B/v16: 未见扫描；C/v14: 未通过(确认/确认)",
+                    "strategy_filter": "挡：A/v11、C/v14；未扫：B/v16",
                     "no_entry_reason": "还没达到策略阈值，属于正常筛选。 阶段：阈值；筛选层：策略。",
                     "raw_no_entry_reason": "threshold score below gate",
                 }
@@ -408,11 +408,34 @@ class DecisionPortalTests(unittest.TestCase):
         self.assertIn("逆势", html)
         self.assertIn("NOENTERUSDT", html)
         self.assertIn("起涨初段", html)
-        self.assertIn("A/v11: 策略挡住", html)
+        self.assertIn("挡：A/v11、C/v14", html)
+        self.assertNotIn("策略挡住(阈值/策略)", html)
         self.assertIn("还没达到策略阈值", html)
         self.assertIn("原始原因：threshold score below gate", html)
         self.assertIn("+3.2000", html)
         self.assertIn("-1.1000", html)
+
+    def test_mover_diagnostics_compacts_strategy_filter(self):
+        summary = self.tool.summarize_mover_diagnostics([
+            {
+                "strategy": "A/v11",
+                "event_type": "OPEN_SKIPPED",
+                "reason": "15m无确认信号",
+                "stage": "confirmation",
+                "layer": "strategy",
+            },
+            {
+                "strategy": "C/v14",
+                "event_type": "SENTINEL_SCANNED",
+                "scan_result": "reject_tail_guard",
+                "stage": "tail_guard",
+                "layer": "strategy",
+            },
+        ])
+
+        self.assertEqual("挡：A/v11、C/v14；未扫：B/v16", summary["strategy_filter"])
+        self.assertIn("15分钟确认没有跟上", summary["no_entry_reason"])
+        self.assertNotIn("A/v11:", summary["strategy_filter"])
 
     def test_market_mover_phase_classifier_labels_stage(self):
         self.assertEqual("起涨初段", self.tool.market_mover_phase(1.4, 0.8))

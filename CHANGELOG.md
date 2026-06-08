@@ -2,6 +2,14 @@
 
 This is the durable reason-and-outcome ledger for every material design, code, configuration, deployment, rollback, optimization, or live operational change.
 
+## 2026-06-08 16:47 CST - Compact mover strategy-filter wording
+- Trigger / reason: User requested that the strategy-filter text under the gainer/loser board be more concise.
+- Completed: Updated `decision_portal.py` so `今日涨跌榜跟踪` strategy filtering is summarized as short groups such as `挡：A/v11、C/v14；未扫：B/v16`, `已开：B/v16`, `执行失败：A/v11`, and `已扫：A/v11`. Detailed strategy stage/layer text remains in the no-entry reason/audit fields instead of crowding the compact filter column. Added regression coverage for the compact summary.
+- Not completed / remaining: This is display wording only. It does not change mover collection, A/B/C strategy gates, paper-ledger accounting, paper fills, replay evidence, automatic rollback, automatic tuning, or automatic upgrade.
+- Verification: Local compile/test/report generation and deployment verification follow in this work session.
+- Live impact / deployment: Source/report change only so far. No scanner restart, Binance request, queue submit, signed account call, user-stream start, account-snapshot start, real order, real close, cancel, leverage/margin change, strategy threshold/sizing/stop change, market-data restart, automatic rollback, automatic tuning, or automatic upgrade was performed by this source change.
+- Files / release / commit: `部署工具/decision_portal.py`, `tests/test_decision_portal.py`, `PROJECT_STATE.md`, `记忆文档/MEMORY.md`, `CHANGELOG.md`; deployment receipt follows.
+
 ## 2026-06-08 14:00 CST - Deploy paper funding removal and mover gate diagnostics
 - Trigger / reason: Complete the live rollout for commit `47ecc7a` after removing paper-ledger funding settlement and adding first-screen mover no-entry attribution.
 - Completed: Deployed source commit `47ecc7a` after dry-runs to Tencent research release `20260608-135815-research-47ecc7a`, Tencent portal release `20260608-135815-portal-47ecc7a`, and Aliyun shadow release `20260608-135815-shadow-47ecc7a`, all with `--no-restart`. The deployed report/accounting path no longer emits paper funding settlement fields, and the homepage code now explains mover phase, per-strategy filtering, and no-entry reason when mover rows are present.

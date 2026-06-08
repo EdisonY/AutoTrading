@@ -881,13 +881,6 @@ def _mover_record_status(record: dict[str, Any]) -> str:
     return "已扫描"
 
 
-def _mover_record_text(record: dict[str, Any]) -> str:
-    stage = str(record.get("stage") or "-")
-    layer = str(record.get("layer") or "-")
-    status = _mover_record_status(record)
-    return f"{status}({plain_status(stage)}/{plain_status(layer)})"
-
-
 def _mover_reason_record(records: list[dict[str, Any]]) -> dict[str, Any] | None:
     priority = {"OPEN_FAILED": 0, "OPEN_SKIPPED": 1, "SENTINEL_SCANNED": 2, "SIGNAL": 3, "SIGNAL_ONLY": 3, "OPEN": 4}
     ranked = sorted(records, key=lambda row: priority.get(str(row.get("event_type") or "").upper(), 9))
@@ -897,20 +890,40 @@ def _mover_reason_record(records: list[dict[str, Any]]) -> dict[str, Any] | None
     return ranked[0] if ranked else None
 
 
-def summarize_mover_diagnostics(records: list[dict[str, Any]]) -> dict[str, Any]:
+def _mover_strategy_filter_summary(records: list[dict[str, Any]]) -> str:
     if not records:
-        return {
-            "strategy_filter": "未见 A/B/C 策略扫描记录",
-            "no_entry_reason": "榜单进入观察池，但近24h没有对应策略事件；需等下一轮扫描或检查 symbol 覆盖。",
-            "raw_no_entry_reason": "",
-        }
-    bits: list[str] = []
+        return "未见策略扫描"
+    grouped: dict[str, list[str]] = {
+        "已开": [],
+        "挡": [],
+        "执行失败": [],
+        "已扫": [],
+        "未扫": [],
+    }
     for name in STRATEGY_NAMES:
         strategy_records = [row for row in records if row.get("strategy") == name]
         if not strategy_records:
-            bits.append(f"{name}: 未见扫描")
+            grouped["未扫"].append(name)
             continue
-        bits.append(f"{name}: {_mover_record_text(strategy_records[0])}")
+        status = _mover_record_status(strategy_records[0])
+        if status == "已开仓":
+            grouped["已开"].append(name)
+        elif status == "执行失败":
+            grouped["执行失败"].append(name)
+        elif status in {"策略挡住", "未通过"}:
+            grouped["挡"].append(name)
+        else:
+            grouped["已扫"].append(name)
+    return "；".join(f"{label}：{'、'.join(names)}" for label, names in grouped.items() if names)
+
+
+def summarize_mover_diagnostics(records: list[dict[str, Any]]) -> dict[str, Any]:
+    if not records:
+        return {
+            "strategy_filter": "未见策略扫描",
+            "no_entry_reason": "榜单进入观察池，但近24h没有对应策略事件；需等下一轮扫描或检查 symbol 覆盖。",
+            "raw_no_entry_reason": "",
+        }
     reason_record = _mover_reason_record(records)
     raw_reason = ""
     reason_text = "已有策略事件，但未记录明确阻塞原因。"
@@ -923,7 +936,7 @@ def summarize_mover_diagnostics(records: list[dict[str, Any]]) -> dict[str, Any]
         if stage != "缺少数据" or layer != "缺少数据":
             reason_text = f"{reason_text} 阶段：{stage}；筛选层：{layer}。"
     return {
-        "strategy_filter": "；".join(bits),
+        "strategy_filter": _mover_strategy_filter_summary(records),
         "no_entry_reason": reason_text,
         "raw_no_entry_reason": raw_reason,
     }

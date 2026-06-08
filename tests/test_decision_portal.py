@@ -262,7 +262,7 @@ class DecisionPortalTests(unittest.TestCase):
             "订单已提交到交易所，但还没有确认成交成仓；系统不会先建本地假仓，会等回执或下一轮核对。",
         )
 
-    def test_strategy_detail_shows_position_pnl_fee_and_funding_caveat(self):
+    def test_strategy_detail_shows_position_pnl_and_fee_without_funding(self):
         account = {
             "accounts": [
                 {
@@ -295,11 +295,12 @@ class DecisionPortalTests(unittest.TestCase):
         )
         html = self.tool.render_strategy_table(rows)
 
-        self.assertIn("查看持仓盈亏 / 手续费 / 资金费率", html)
+        self.assertIn("查看持仓盈亏 / 手续费", html)
         self.assertIn("ARBUSDT", html)
         self.assertIn("+1.4216", html)
         self.assertIn("估算：按 taker 0.04%", html)
-        self.assertIn("待补资金费率流水", html)
+        self.assertNotIn("资金费率", html)
+        self.assertNotIn("funding", html)
 
     def test_paper_exchange_summary_is_tabbed_report_section(self):
         html = self.tool.render_paper_exchange({
@@ -311,15 +312,14 @@ class DecisionPortalTests(unittest.TestCase):
                         "time": "updated when paper_exchange_runner runs, not exchange tick-by-tick",
                         "slippage": "not exchange-order-book exact; use conservative model before strategy promotion",
                         "fees": "ledger fee_rate=0.000400",
-                        "funding": "OKX public funding when available; missing/unavailable records 0 with source",
                     },
                     "total_equity": 300000,
                 "total_unrealized_pnl": 12.34,
                 "open_positions": 3,
                 "by_strategy": {
-                    "A/v11": {"positions": 1, "unrealized_pnl": 1.2, "equity": 100001, "realized_pnl": 0, "fees_paid": 0.16, "funding_paid": 0},
-                    "B/v16": {"positions": 1, "unrealized_pnl": 2.3, "equity": 100002, "realized_pnl": 0, "fees_paid": 0.16, "funding_paid": 0},
-                    "C/v14": {"positions": 1, "unrealized_pnl": 8.84, "equity": 100008, "realized_pnl": 0, "fees_paid": 0.16, "funding_paid": 0},
+                    "A/v11": {"positions": 1, "unrealized_pnl": 1.2, "equity": 100001, "realized_pnl": 0, "fees_paid": 0.16},
+                    "B/v16": {"positions": 1, "unrealized_pnl": 2.3, "equity": 100002, "realized_pnl": 0, "fees_paid": 0.16},
+                    "C/v14": {"positions": 1, "unrealized_pnl": 8.84, "equity": 100008, "realized_pnl": 0, "fees_paid": 0.16},
                 },
                 "positions": [
                     {
@@ -334,8 +334,6 @@ class DecisionPortalTests(unittest.TestCase):
                         "notional": 101,
                         "margin": 25.25,
                         "fees_paid": 0.04,
-                        "funding_paid": 0,
-                        "funding_source": "okx",
                         "mark_source": "okx_15m",
                     }
                 ],
@@ -351,7 +349,8 @@ class DecisionPortalTests(unittest.TestCase):
         self.assertIn("position-detail-row", html)
         self.assertIn("BTCUSDT", html)
         self.assertIn("手续费", html)
-        self.assertIn("资金费率", html)
+        self.assertNotIn("资金费率", html)
+        self.assertNotIn("funding", html)
         self.assertIn("300000.00 USDT", html)
         self.assertNotIn("+300000.00 USDT", html)
         self.assertIn("手续费 0.1600", html)
@@ -373,10 +372,26 @@ class DecisionPortalTests(unittest.TestCase):
                         "symbol": "MEUSDT",
                         "reason": "跌幅榜",
                         "change_pct": -8.0,
+                        "velocity_pct": -0.8,
                         "quote_volume": 1000,
                         "sources": ["bybit"],
                     },
+                    {
+                        "symbol": "NOENTERUSDT",
+                        "reason": "涨幅榜",
+                        "change_pct": 2.5,
+                        "velocity_pct": 0.9,
+                        "quote_volume": 5000,
+                        "sources": ["okx"],
+                    },
                 ]
+            },
+            "mover_diagnostics": {
+                "NOENTERUSDT": {
+                    "strategy_filter": "A/v11: 策略挡住(阈值/策略)；B/v16: 未见扫描；C/v14: 未通过(确认/确认)",
+                    "no_entry_reason": "还没达到策略阈值，属于正常筛选。 阶段：阈值；筛选层：策略。",
+                    "raw_no_entry_reason": "threshold score below gate",
+                }
             },
             "paper_exchange": {
                 "positions": [
@@ -391,8 +406,19 @@ class DecisionPortalTests(unittest.TestCase):
         self.assertIn("顺势", html)
         self.assertIn("MEUSDT", html)
         self.assertIn("逆势", html)
+        self.assertIn("NOENTERUSDT", html)
+        self.assertIn("起涨初段", html)
+        self.assertIn("A/v11: 策略挡住", html)
+        self.assertIn("还没达到策略阈值", html)
+        self.assertIn("原始原因：threshold score below gate", html)
         self.assertIn("+3.2000", html)
         self.assertIn("-1.1000", html)
+
+    def test_market_mover_phase_classifier_labels_stage(self):
+        self.assertEqual("起涨初段", self.tool.market_mover_phase(1.4, 0.8))
+        self.assertEqual("上涨中段加速", self.tool.market_mover_phase(7.5, 1.2))
+        self.assertEqual("上涨末段放缓", self.tool.market_mover_phase(16.0, 0.1))
+        self.assertEqual("起跌初段", self.tool.market_mover_phase(-2.0, -0.7))
 
     def test_render_html_has_countdown_and_no_legacy_report_sections(self):
         old_read_first_json = self.tool.read_first_json

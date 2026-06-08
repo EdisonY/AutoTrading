@@ -31,7 +31,7 @@ os.environ.setdefault("OKX_MARKET_DATA_ENABLED", "1")
 os.environ.setdefault("OKX_MARKET_DATA_MAX_PER_MIN", "60")
 
 from core.event_store import EventStoreWriter
-from core.external_market_data import fetch_okx_funding_rate, fetch_okx_klines, okx_symbol_supported
+from core.external_market_data import fetch_okx_klines, okx_symbol_supported
 from core.kline_cache import load_latest_cached_close, save_cached_klines
 from core.paper_exchange import PaperExchange, STRATEGIES, safe_float
 
@@ -95,18 +95,6 @@ def resolve_price(root: Path, symbol: str, *, live_first: bool = False) -> tuple
     except Exception as exc:
         return None, f"okx_error:{str(exc)[:80]}"
     return None, "price_unavailable"
-
-
-def resolve_funding(symbol: str) -> tuple[float, str]:
-    if not okx_symbol_supported(symbol):
-        return 0.0, "unsupported_symbol"
-    try:
-        rate_pct = fetch_okx_funding_rate(symbol)
-        if rate_pct is None:
-            return 0.0, "okx_unavailable"
-        return float(rate_pct) / 100.0, "okx"
-    except Exception as exc:
-        return 0.0, f"okx_error:{str(exc)[:80]}"
 
 
 def event_payload(row: sqlite3.Row) -> dict[str, Any]:
@@ -430,10 +418,10 @@ def close_hit_positions(root: Path, exchange: PaperExchange, take_profit_pct: fl
 
 def run(root: Path, target_per_strategy: int, margin_usdt: float, leverage: int, take_profit_pct: float, stop_loss_pct: float) -> dict[str, Any]:
     exchange = PaperExchange(root)
-    summary = exchange.mark_to_market(lambda symbol: resolve_price(root, symbol, live_first=True), resolve_funding)
+    summary = exchange.mark_to_market(lambda symbol: resolve_price(root, symbol, live_first=True))
     closed = close_hit_positions(root, exchange, take_profit_pct, stop_loss_pct)
     opened = open_bootstrap_positions(root, exchange, target_per_strategy, margin_usdt, leverage)
-    summary = exchange.mark_to_market(lambda symbol: resolve_price(root, symbol, live_first=True), resolve_funding)
+    summary = exchange.mark_to_market(lambda symbol: resolve_price(root, symbol, live_first=True))
     summary.update({
         "opened_this_run": opened,
         "closed_this_run": closed,

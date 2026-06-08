@@ -38,6 +38,7 @@ EVENT_DB = MIRROR_DB if MIRROR_DB.exists() else LOCAL_DB
 CST = timezone(timedelta(hours=8))
 DEFAULT_TAKER_FEE_RATE = 0.0004
 REPORT_REFRESH_SECONDS = 60
+STRATEGY_NAMES = ("A/v11", "B/v16", "C/v14")
 
 
 def h(value: Any) -> str:
@@ -149,7 +150,6 @@ def report_text(value: Any, default: str = "-") -> str:
         "updated when paper_exchange_runner runs, not exchange tick-by-tick": "按模拟账本刷新，不是逐笔 tick",
         "not exchange-order-book exact; use conservative model before strategy promotion": "不是逐笔盘口撮合；策略升级前要用保守滑点模型",
         "ledger fee_rate=0.000400": "账本费率 0.04%",
-        "OKX public funding when available; missing/unavailable records 0 with source": "能取到就用 OKX 公开资金费，缺失时按来源标记",
         "Binance": "交易所",
         "币安": "交易所",
         "paper sample": "模拟采样",
@@ -384,6 +384,14 @@ def plain_strategy_reason(reason: Any, kind: str = "skip") -> str:
     return f"候选被策略规则挡住：{raw}"
 
 
+def decode_payload(value: Any) -> dict[str, Any]:
+    try:
+        data = json.loads(value or "{}")
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
 def table_exists(conn: sqlite3.Connection, name: str) -> bool:
     row = conn.execute("select 1 from sqlite_master where type='table' and name=?", (name,)).fetchone()
     return bool(row)
@@ -574,7 +582,6 @@ def strategy_detail_html(strategy: str, account: dict[str, Any]) -> str:
   <td>{h(fmt_plain(notional, 4))}</td>
   <td>{h(fmt_plain(pos.get('margin'), 4))}</td>
   <td>{h(fee_text)}<small>{h(fee_note)}</small></td>
-  <td>待补资金费率流水<small>当前 report 还没有逐笔 funding income，不能硬写精确数。</small></td>
   <td>{h(quality)}</td>
 </tr>
 """.strip()
@@ -583,7 +590,7 @@ def strategy_detail_html(strategy: str, account: dict[str, Any]) -> str:
         rows.append(
             """
 <tr>
-  <td colspan="12">当前没有可展示持仓。若策略有信号但没开仓，先看“主要原因”和候选被挡住。</td>
+  <td colspan="11">当前没有可展示持仓。若策略有信号但没开仓，先看“主要原因”和候选被挡住。</td>
 </tr>
 """.strip()
         )
@@ -597,10 +604,10 @@ def strategy_detail_html(strategy: str, account: dict[str, Any]) -> str:
     )
     return f"""
 <details class="strategy-detail">
-  <summary>查看持仓盈亏 / 手续费 / 资金费率</summary>
-  <p class="detail-note">{summary}。浮盈亏优先用账户快照；手续费无成交流水时只估算；资金费率无流水时明确标缺口。</p>
+  <summary>查看持仓盈亏 / 手续费</summary>
+  <p class="detail-note">{summary}。浮盈亏优先用账户快照；手续费无成交流水时只估算。</p>
   <div class="table-scroll"><table class="position-table">
-    <thead><tr><th>类型</th><th>币种</th><th>方向</th><th>数量</th><th>开仓价</th><th>标记价</th><th>浮盈亏</th><th>名义价值</th><th>保证金</th><th>手续费</th><th>资金费率</th><th>可信度</th></tr></thead>
+    <thead><tr><th>类型</th><th>币种</th><th>方向</th><th>数量</th><th>开仓价</th><th>标记价</th><th>浮盈亏</th><th>名义价值</th><th>保证金</th><th>手续费</th><th>可信度</th></tr></thead>
     <tbody>{''.join(rows)}</tbody>
   </table></div>
 </details>
@@ -830,9 +837,171 @@ def attention_button_label(item: dict[str, Any]) -> str:
     return "确认"
 
 
+def market_mover_phase(change_pct: Any, velocity_pct: Any = None) -> str:
+    try:
+        change = float(change_pct or 0.0)
+    except Exception:
+        change = 0.0
+    try:
+        velocity = float(velocity_pct or 0.0)
+    except Exception:
+        velocity = 0.0
+    direction = "上涨" if change >= 0 else "下跌"
+    start = "起涨" if change >= 0 else "起跌"
+    abs_change = abs(change)
+    abs_velocity = abs(velocity)
+    aligned = (change >= 0 and velocity >= -0.05) or (change < 0 and velocity <= 0.05)
+    if abs_change < 3:
+        return f"{start}初段" if aligned or abs_velocity < 0.2 else f"{direction}初段反向波动"
+    if abs_change >= 12 and abs_velocity < 0.4:
+        return f"{direction}末段放缓"
+    if abs_change >= 12 and not aligned:
+        return f"{direction}末段回撤"
+    if abs_change >= 8 and abs_velocity < 0.3:
+        return f"{direction}末段放缓"
+    if abs_velocity >= 0.7 and aligned:
+        return f"{direction}中段加速"
+    return f"{direction}中段"
+
+
+def _mover_record_status(record: dict[str, Any]) -> str:
+    event_type = str(record.get("event_type") or "").upper()
+    scan_result = str(record.get("scan_result") or "").lower()
+    reason = str(record.get("reason") or "").lower()
+    if event_type == "OPEN":
+        return "已开仓"
+    if event_type == "OPEN_FAILED":
+        return "执行失败"
+    if event_type == "OPEN_SKIPPED":
+        return "策略挡住"
+    if event_type in {"SIGNAL", "SIGNAL_ONLY"}:
+        return "候选信号"
+    if any(key in scan_result or key in reason for key in ("reject", "skip", "fail", "blocked", "false")):
+        return "未通过"
+    return "已扫描"
+
+
+def _mover_record_text(record: dict[str, Any]) -> str:
+    stage = str(record.get("stage") or "-")
+    layer = str(record.get("layer") or "-")
+    status = _mover_record_status(record)
+    return f"{status}({plain_status(stage)}/{plain_status(layer)})"
+
+
+def _mover_reason_record(records: list[dict[str, Any]]) -> dict[str, Any] | None:
+    priority = {"OPEN_FAILED": 0, "OPEN_SKIPPED": 1, "SENTINEL_SCANNED": 2, "SIGNAL": 3, "SIGNAL_ONLY": 3, "OPEN": 4}
+    ranked = sorted(records, key=lambda row: priority.get(str(row.get("event_type") or "").upper(), 9))
+    for record in ranked:
+        if record.get("reason") or record.get("scan_result") or record.get("stage"):
+            return record
+    return ranked[0] if ranked else None
+
+
+def summarize_mover_diagnostics(records: list[dict[str, Any]]) -> dict[str, Any]:
+    if not records:
+        return {
+            "strategy_filter": "未见 A/B/C 策略扫描记录",
+            "no_entry_reason": "榜单进入观察池，但近24h没有对应策略事件；需等下一轮扫描或检查 symbol 覆盖。",
+            "raw_no_entry_reason": "",
+        }
+    bits: list[str] = []
+    for name in STRATEGY_NAMES:
+        strategy_records = [row for row in records if row.get("strategy") == name]
+        if not strategy_records:
+            bits.append(f"{name}: 未见扫描")
+            continue
+        bits.append(f"{name}: {_mover_record_text(strategy_records[0])}")
+    reason_record = _mover_reason_record(records)
+    raw_reason = ""
+    reason_text = "已有策略事件，但未记录明确阻塞原因。"
+    if reason_record:
+        raw_reason = str(reason_record.get("reason") or reason_record.get("scan_result") or reason_record.get("event_type") or "")
+        kind = "failed" if str(reason_record.get("event_type") or "").upper() == "OPEN_FAILED" else "skip"
+        reason_text = plain_strategy_reason(raw_reason, kind)
+        stage = plain_status(reason_record.get("stage"))
+        layer = plain_status(reason_record.get("layer"))
+        if stage != "缺少数据" or layer != "缺少数据":
+            reason_text = f"{reason_text} 阶段：{stage}；筛选层：{layer}。"
+    return {
+        "strategy_filter": "；".join(bits),
+        "no_entry_reason": reason_text,
+        "raw_no_entry_reason": raw_reason,
+    }
+
+
+def load_market_mover_diagnostics(market: dict[str, Any], db_path: Path = EVENT_DB, *, limit: int = 20) -> dict[str, dict[str, Any]]:
+    movers = market.get("market_mover_preview") if isinstance(market.get("market_mover_preview"), list) else []
+    symbols = [str(row.get("symbol") or "").upper() for row in movers[:limit] if isinstance(row, dict) and row.get("symbol")]
+    if not symbols or not db_path.exists():
+        return {}
+    out: dict[str, dict[str, Any]] = {}
+    since_date = (datetime.now(CST) - timedelta(hours=24)).strftime("%Y-%m-%d")
+    try:
+        conn = sqlite3.connect(str(db_path))
+        conn.row_factory = sqlite3.Row
+        for symbol in symbols:
+            records: list[dict[str, Any]] = []
+            if table_exists(conn, "events"):
+                for row in conn.execute(
+                    """
+                    select ts,strategy,symbol,event_type,reason,category,stage,layer,side,score,payload_json
+                    from events
+                    where upper(symbol)=? and event_type in ('SIGNAL','SIGNAL_ONLY','OPEN','OPEN_SKIPPED','OPEN_FAILED')
+                      and substr(ts,1,10) >= ?
+                    order by id desc
+                    limit 18
+                    """,
+                    (symbol, since_date),
+                ):
+                    payload = decode_payload(row["payload_json"])
+                    records.append({
+                        "ts": row["ts"],
+                        "strategy": row["strategy"],
+                        "symbol": row["symbol"],
+                        "event_type": row["event_type"],
+                        "reason": row["reason"] or payload.get("skip_reason") or payload.get("sentinel_reason") or payload.get("reason"),
+                        "stage": row["stage"] or payload.get("decision_stage") or payload.get("stage"),
+                        "layer": row["layer"] or payload.get("filter_layer") or payload.get("layer"),
+                        "scan_result": payload.get("sentinel_scan_result") or "",
+                    })
+            if table_exists(conn, "sentinel_scans"):
+                for row in conn.execute(
+                    """
+                    select ts,strategy,symbol,event_type,reason,category,decision_stage,filter_layer,
+                           change_pct,velocity_pct,quote_volume,scan_result,payload_json
+                    from sentinel_scans
+                    where upper(symbol)=?
+                      and substr(ts,1,10) >= ?
+                    order by id desc
+                    limit 18
+                    """,
+                    (symbol, since_date),
+                ):
+                    payload = decode_payload(row["payload_json"])
+                    records.append({
+                        "ts": row["ts"],
+                        "strategy": row["strategy"],
+                        "symbol": row["symbol"],
+                        "event_type": row["event_type"] or "SENTINEL_SCANNED",
+                        "reason": row["reason"] or payload.get("sentinel_reason") or payload.get("reason"),
+                        "stage": row["decision_stage"] or payload.get("decision_stage"),
+                        "layer": row["filter_layer"] or payload.get("filter_layer"),
+                        "scan_result": row["scan_result"] or payload.get("sentinel_scan_result") or "",
+                        "change_pct": row["change_pct"],
+                        "velocity_pct": row["velocity_pct"],
+                    })
+            records.sort(key=lambda item: str(item.get("ts") or ""), reverse=True)
+            out[symbol] = summarize_mover_diagnostics(records)
+        conn.close()
+    except Exception:
+        return {}
+    return out
+
+
 def market_mover_rows(state: dict[str, Any], limit: int = 20) -> list[dict[str, Any]]:
     market = state.get("market") if isinstance(state.get("market"), dict) else {}
     paper = state.get("paper_exchange") if isinstance(state.get("paper_exchange"), dict) else {}
+    diagnostics = state.get("mover_diagnostics") if isinstance(state.get("mover_diagnostics"), dict) else {}
     movers = market.get("market_mover_preview") if isinstance(market.get("market_mover_preview"), list) else []
     positions = paper.get("positions") if isinstance(paper.get("positions"), list) else []
     by_symbol: dict[str, list[dict[str, Any]]] = {}
@@ -852,6 +1021,11 @@ def market_mover_rows(state: dict[str, Any], limit: int = 20) -> list[dict[str, 
             change = float(mover.get("change_pct") or 0.0)
         except Exception:
             change = 0.0
+        try:
+            velocity = float(mover.get("velocity_pct") or 0.0)
+        except Exception:
+            velocity = 0.0
+        diag = diagnostics.get(symbol) if isinstance(diagnostics.get(symbol), dict) else {}
         desired = "long" if change >= 0 else "short"
         move_label = "上涨" if change >= 0 else "下跌"
         matched = by_symbol.get(symbol, [])
@@ -880,10 +1054,13 @@ def market_mover_rows(state: dict[str, Any], limit: int = 20) -> list[dict[str, 
             "symbol": symbol,
             "reason": mover.get("reason") or move_label,
             "change_pct": change,
-            "velocity_pct": mover.get("velocity_pct"),
+            "velocity_pct": velocity,
+            "phase": diag.get("phase") or market_mover_phase(change, velocity),
             "quote_volume": mover.get("quote_volume"),
             "source": ",".join(str(x) for x in (mover.get("sources") or [mover.get("source") or "-"])),
-            "scan": "已进扫描池",
+            "scan": diag.get("strategy_filter") or ("已进扫描池；未见 A/B/C 策略筛选记录" if not matched else "已进扫描池"),
+            "no_entry_reason": "已进入模拟账本" if matched else diag.get("no_entry_reason") or "榜单进入观察池，但 report 未读到对应策略事件；等下一轮扫描或查 symbol 覆盖。",
+            "raw_no_entry_reason": diag.get("raw_no_entry_reason") or "",
             "entry": "已进场" if matched else "未进场",
             "direction": correct,
             "positions": "；".join(side_bits) if side_bits else "-",
@@ -906,9 +1083,11 @@ def render_market_movers(state: dict[str, Any]) -> str:
   <td>{h(row['rank'])}</td>
   <td>{h(row['symbol'])}</td>
   <td>{h(row['reason'])}<small>{h('上涨' if row['change_pct'] >= 0 else '下跌')} {h(number(row['change_pct'], 2))}%</small></td>
+  <td>{h(row['phase'])}<small>速度 {h(number(row.get('velocity_pct'), 2))}%</small></td>
   <td>{h(row['scan'])}</td>
   <td>{h(row['entry'])}<small>{h(row['positions'])}</small></td>
   <td>{h(row['direction'])}</td>
+  <td>{h(row['no_entry_reason'])}{('<small>原始原因：' + h(row['raw_no_entry_reason']) + '</small>') if row.get('raw_no_entry_reason') else ''}</td>
   <td class="{position_upnl_class(row['pnl'])}">{h(row['result'])} {h(number(row['pnl'], 4))}</td>
   <td>{h(fmt_plain(row.get('quote_volume'), 2))}<small>{h(row['source'])}</small></td>
 </tr>
@@ -923,10 +1102,10 @@ def render_market_movers(state: dict[str, Any]) -> str:
   <div><span>榜单持仓浮盈亏</span><b class="{position_upnl_class(pnl)}">{h(number(pnl, 4))} USDT</b></div>
 </div>
 <div class="table-scroll"><table class="mover-table">
-  <thead><tr><th>#</th><th>币种</th><th>榜单原因</th><th>扫描</th><th>是否进场</th><th>方向关系</th><th>当前结果</th><th>成交额/来源</th></tr></thead>
+  <thead><tr><th>#</th><th>币种</th><th>榜单原因</th><th>阶段</th><th>策略筛选</th><th>是否进场</th><th>方向关系</th><th>未进场原因</th><th>当前结果</th><th>成交额/来源</th></tr></thead>
   <tbody>{body}</tbody>
 </table></div>
-<p class="empty">方向关系只说明是否顺着当天涨跌榜方向；当前结果看模拟账本浮盈亏。旧版完整市场复盘仍在“市场复盘日报”链接里。</p>
+<p class="empty">阶段按涨跌幅和速度粗分初段/中段/末段；策略筛选和未进场原因来自近24小时 events/sentinel_scans。当前结果看模拟账本浮盈亏。</p>
 """
 
 
@@ -968,6 +1147,7 @@ def build_state() -> dict[str, Any]:
     depth = read_first_json(RUNTIME_DIR / "research_depth_backfill_latest.json", MIRROR_RUNTIME_DIR / "research_depth_backfill_latest.json")
     paper_exchange = read_live_runtime_json("paper_exchange_latest.json")
     market = read_live_runtime_json("market_data_cache.json")
+    mover_diagnostics = load_market_mover_diagnostics(market if isinstance(market, dict) else {})
     microstructure = read_live_runtime_json("market_microstructure_latest.json")
     reset = read_live_runtime_json("testnet_data_reset_latest.json")
     q = queue_summary()
@@ -1009,6 +1189,7 @@ def build_state() -> dict[str, Any]:
         "depth": depth,
         "paper_exchange": paper_exchange,
         "market": market,
+        "mover_diagnostics": mover_diagnostics,
         "microstructure": microstructure,
         "reset": reset,
         "queue": q,
@@ -1069,26 +1250,25 @@ def render_badges(state: dict[str, Any]) -> str:
 def render_paper_exchange(state: dict[str, Any]) -> str:
     paper = state.get("paper_exchange") or {}
     if not paper:
-        return '<p class="empty">模拟账本还没生成。系统会先生成持仓、盯市盈亏、手续费和资金费率。</p>'
+        return '<p class="empty">模拟账本还没生成。系统会先生成持仓、盯市盈亏和手续费。</p>'
     by_strategy = paper.get("by_strategy") if isinstance(paper.get("by_strategy"), dict) else {}
     paper_ts = parse_dt(paper.get("ts"))
     fidelity = paper.get("fidelity") if isinstance(paper.get("fidelity"), dict) else {}
-    names = ("A/v11", "B/v16", "C/v14")
     cards = []
-    for idx, name in enumerate(names):
+    for idx, name in enumerate(STRATEGY_NAMES):
         row = by_strategy.get(name) if isinstance(by_strategy.get(name), dict) else {}
         cards.append(
             f"""
 <button class="paper-card strategy-tab {'active' if idx == 0 else ''}" type="button" data-strategy="{h(name)}" onclick="showPaperStrategy('{h(name)}')">
   <span>{h(name)}</span>
   <b>{h(row.get('positions', 0))} 仓 / {h(number(row.get('unrealized_pnl'), 4))} USDT</b>
-  <p>权益 {h(amount(row.get('equity'), 2))}，已实现 {h(number(row.get('realized_pnl'), 4))}，手续费 {h(amount(row.get('fees_paid'), 4))}，资金费 {h(number(row.get('funding_paid'), 4))}</p>
+  <p>权益 {h(amount(row.get('equity'), 2))}，已实现 {h(number(row.get('realized_pnl'), 4))}，手续费 {h(amount(row.get('fees_paid'), 4))}</p>
 </button>
 """.strip()
         )
     positions = paper.get("positions") if isinstance(paper.get("positions"), list) else []
     panels: list[str] = []
-    for idx, name in enumerate(names):
+    for idx, name in enumerate(STRATEGY_NAMES):
         strategy_positions = [pos for pos in positions if isinstance(pos, dict) and pos.get("strategy") == name]
         body_rows: list[str] = []
         for pos_idx, pos in enumerate(strategy_positions[:80]):
@@ -1108,12 +1288,11 @@ def render_paper_exchange(state: dict[str, Any]) -> str:
   <td>{h(fmt_plain(pos.get('notional'), 4))}</td>
   <td>{h(fmt_plain(pos.get('margin'), 4))}</td>
   <td>{h(amount(pos.get('fees_paid'), 4))}</td>
-  <td>{h(number(pos.get('funding_paid'), 4))}<small>{h(report_text(pos.get('funding_source') or '公开资金费'))}</small></td>
   <td>{h(report_text(pos.get('mark_source') or '外部行情'))}</td>
   <td><button class="mini-btn" type="button">展开</button></td>
 </tr>
 <tr id="{h(detail_id)}" class="position-detail-row">
-  <td colspan="12">
+  <td colspan="11">
     <div class="position-detail-grid">
       <div class="chart-wrap">{chart}</div>
       <div class="position-facts">
@@ -1129,12 +1308,12 @@ def render_paper_exchange(state: dict[str, Any]) -> str:
 """.strip()
             )
         if not body_rows:
-            body_rows.append('<tr><td colspan="12">当前策略暂无模拟持仓。</td></tr>')
+            body_rows.append('<tr><td colspan="11">当前策略暂无模拟持仓。</td></tr>')
         panels.append(
             f"""
 <div class="paper-panel {'active' if idx == 0 else ''}" data-strategy="{h(name)}">
   <div class="table-scroll"><table class="paper-table">
-    <thead><tr><th>币种</th><th>方向</th><th>数量</th><th>开仓价</th><th>盯市价</th><th>浮盈亏</th><th>名义价值</th><th>保证金</th><th>手续费</th><th>资金费率</th><th>价格源</th><th></th></tr></thead>
+    <thead><tr><th>币种</th><th>方向</th><th>数量</th><th>开仓价</th><th>盯市价</th><th>浮盈亏</th><th>名义价值</th><th>保证金</th><th>手续费</th><th>价格源</th><th></th></tr></thead>
     <tbody>{''.join(body_rows)}</tbody>
   </table></div>
 </div>
@@ -1149,7 +1328,7 @@ def render_paper_exchange(state: dict[str, Any]) -> str:
 </div>
 <div class="paper-cards">{''.join(cards)}</div>
 <div class="paper-panels">{''.join(panels)}</div>
-<p class="empty">这是自建模拟账本：不下真实单。价格：{h(report_text(fidelity.get('price') or 'OKX/本地K线'))}；时间：{h(report_text(fidelity.get('time') or '按 runner 刷新'))}；滑点：{h(report_text(fidelity.get('slippage') or '非真实撮合'))}；手续费：{h(report_text(fidelity.get('fees') or '按账本费率'))}；资金费率：{h(report_text(fidelity.get('funding') or '按可得公开 funding rate'))}。</p>
+<p class="empty">这是自建模拟账本：不下真实单。价格：{h(report_text(fidelity.get('price') or 'OKX/本地K线'))}；时间：{h(report_text(fidelity.get('time') or '按 runner 刷新'))}；滑点：{h(report_text(fidelity.get('slippage') or '非真实撮合'))}；手续费：{h(report_text(fidelity.get('fees') or '按账本费率'))}。</p>
 """
 
 

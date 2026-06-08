@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import json
 import os
-import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -80,7 +79,6 @@ class PaperFill:
     fee: float
     order_id: str
     reason: str = ""
-    funding: float = 0.0
     realized_pnl: float = 0.0
     details: dict[str, Any] = field(default_factory=dict)
 
@@ -113,7 +111,6 @@ class PaperExchange:
                     s: {
                         "cash": self.starting_equity,
                         "fees_paid": 0.0,
-                        "funding_paid": 0.0,
                         "realized_pnl": 0.0,
                     }
                     for s in STRATEGIES
@@ -123,13 +120,36 @@ class PaperExchange:
             }
         state.setdefault("accounts", {})
         for strategy in STRATEGIES:
-            state["accounts"].setdefault(
+            account = state["accounts"].setdefault(
                 strategy,
-                {"cash": self.starting_equity, "fees_paid": 0.0, "funding_paid": 0.0, "realized_pnl": 0.0},
+                {"cash": self.starting_equity, "fees_paid": 0.0, "realized_pnl": 0.0},
             )
+            account.setdefault("cash", self.starting_equity)
+            account.setdefault("fees_paid", 0.0)
+            account.setdefault("realized_pnl", 0.0)
+        self._strip_legacy_funding_fields(state)
         state.setdefault("positions", {})
         state.setdefault("fills", [])
         return state
+
+    def _strip_legacy_funding_fields(self, state: dict[str, Any]) -> None:
+        for account in (state.get("accounts") or {}).values():
+            if not isinstance(account, dict):
+                continue
+            legacy_funding_paid = safe_float(account.get("funding_paid"))
+            if legacy_funding_paid:
+                account["cash"] = safe_float(account.get("cash"), self.starting_equity) + legacy_funding_paid
+            account.pop("funding_paid", None)
+        for pos in (state.get("positions") or {}).values():
+            if not isinstance(pos, dict):
+                continue
+            for key in ("funding_paid", "funding_rate", "funding_source", "last_funding_ts"):
+                pos.pop(key, None)
+        fills = state.get("fills")
+        if isinstance(fills, list):
+            for fill in fills:
+                if isinstance(fill, dict):
+                    fill.pop("funding", None)
 
     def save(self, state: dict[str, Any]) -> dict[str, Any]:
         state["updated_at"] = utc_now()
@@ -168,7 +188,7 @@ class PaperExchange:
         if qty <= 0 or price <= 0:
             raise ValueError("paper open fill produced non-positive qty or price")
         state = self.load()
-        account = state["accounts"].setdefault(strategy, {"cash": self.starting_equity, "fees_paid": 0.0, "funding_paid": 0.0, "realized_pnl": 0.0})
+        account = state["accounts"].setdefault(strategy, {"cash": self.starting_equity, "fees_paid": 0.0, "realized_pnl": 0.0})
         key = position_key(strategy, symbol, side)
         notional = qty * price
         fee = notional * self.fee_rate
@@ -195,7 +215,6 @@ class PaperExchange:
                 "reason": reason,
                 "order_id": order_id,
                 "fees_paid": 0.0,
-                "funding_paid": 0.0,
                 "realized_pnl": 0.0,
                 "unrealized_pnl": 0.0,
                 "notional": notional,
@@ -246,7 +265,7 @@ class PaperExchange:
         entry = safe_float(pos.get("entry_price"))
         pnl = (price - entry) * close_qty if side.lower() == "long" else (entry - price) * close_qty
         fee = close_qty * price * self.fee_rate
-        account = state["accounts"].setdefault(strategy, {"cash": self.starting_equity, "fees_paid": 0.0, "funding_paid": 0.0, "realized_pnl": 0.0})
+        account = state["accounts"].setdefault(strategy, {"cash": self.starting_equity, "fees_paid": 0.0, "realized_pnl": 0.0})
         account["cash"] = safe_float(account.get("cash"), self.starting_equity) + pnl - fee
         account["fees_paid"] = safe_float(account.get("fees_paid")) + fee
         account["realized_pnl"] = safe_float(account.get("realized_pnl")) + pnl - fee
@@ -266,10 +285,8 @@ class PaperExchange:
     def mark_to_market(
         self,
         price_resolver: Callable[[str], tuple[float | None, str]],
-        funding_resolver: Callable[[str], tuple[float, str]] | None = None,
     ) -> dict[str, Any]:
         state = self.load()
-        now = time.time()
         for key, pos in list(state["positions"].items()):
             if is_dust_position(pos):
                 del state["positions"][key]
@@ -291,24 +308,6 @@ class PaperExchange:
             if is_dust_position(pos):
                 del state["positions"][key]
                 continue
-            last_funding = safe_float(pos.get("last_funding_ts"), now)
-            elapsed_hours = max(0.0, (now - last_funding) / 3600.0)
-            if funding_resolver and elapsed_hours >= 1.0:
-                rate, funding_source = funding_resolver(symbol)
-                funding = pos["notional"] * float(rate) * (elapsed_hours / 8.0)
-                if side == "long":
-                    funding = -funding
-                account = state["accounts"].setdefault(str(pos.get("strategy")), {"cash": self.starting_equity, "fees_paid": 0.0, "funding_paid": 0.0, "realized_pnl": 0.0})
-                account["cash"] = safe_float(account.get("cash"), self.starting_equity) + funding
-                account["funding_paid"] = safe_float(account.get("funding_paid")) - funding
-                pos["funding_paid"] = safe_float(pos.get("funding_paid")) - funding
-                pos["last_funding_ts"] = now
-                pos["funding_rate"] = rate
-                pos["funding_source"] = funding_source
-            else:
-                pos.setdefault("funding_rate", 0.0)
-                pos.setdefault("funding_source", "not_due_or_unavailable")
-                pos.setdefault("last_funding_ts", now)
         return self.save(state)
 
     def summarize(self, state: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -322,7 +321,6 @@ class PaperExchange:
             rows = [p for p in positions if p.get("strategy") == strategy]
             upnl = sum(safe_float(p.get("unrealized_pnl")) for p in rows)
             fees = safe_float(account.get("fees_paid"))
-            funding = safe_float(account.get("funding_paid"))
             realized = safe_float(account.get("realized_pnl"))
             cash = safe_float(account.get("cash"), self.starting_equity)
             equity = cash + upnl
@@ -335,7 +333,6 @@ class PaperExchange:
                 "unrealized_pnl": round(upnl, 6),
                 "realized_pnl": round(realized, 6),
                 "fees_paid": round(fees, 6),
-                "funding_paid": round(funding, 6),
                 "open_notional": round(sum(safe_float(p.get("notional")) for p in rows), 6),
             }
         return {
@@ -348,7 +345,6 @@ class PaperExchange:
                 "time": "updated when paper_exchange_runner runs, not exchange tick-by-tick",
                 "slippage": "paper_fill_model_v2 consumes local depth bids/asks when fresh; otherwise side-aware synthetic spread/slippage fallback; not live queue parity",
                 "fees": f"ledger fee_rate={safe_float(state.get('fee_rate'), self.fee_rate):.6f}",
-                "funding": "OKX public funding when available; missing/unavailable records 0 with source",
             },
             "fee_rate": safe_float(state.get("fee_rate"), self.fee_rate),
             "total_equity": round(total_equity, 6),
@@ -584,7 +580,6 @@ class PaperExchange:
             "leverage": fill.leverage,
             "notional": fill.qty * fill.price,
             "fee": fill.fee,
-            "funding": fill.funding,
             "realized_pnl": fill.realized_pnl,
             "order_id": fill.order_id,
             "reason": fill.reason,

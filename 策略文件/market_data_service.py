@@ -215,14 +215,24 @@ def build_market_mover_watchlist(
     velocity_threshold: float,
     min_quote_volume: float,
     volume_spike_mult: float,
+    early_enabled: bool = True,
+    early_price_tick_threshold: float = 0.45,
+    early_max_change_pct: float = 5.0,
+    early_min_quote_volume: float = 1_000_000,
 ) -> dict:
     pairs = []
+    lowest_min_volume = min_quote_volume
+    if early_enabled:
+        lowest_min_volume = min(min_quote_volume, early_min_quote_volume)
     for sym, quote_volume, change_pct, item in rows:
-        if quote_volume < min_quote_volume:
+        if quote_volume < lowest_min_volume:
             continue
         prev_change = previous_metric(previous_state, sym, "change_pct", change_pct)
         prev_volume = previous_metric(previous_state, sym, "quote_volume", quote_volume)
+        last_price = to_float(item.get("last"))
+        prev_price = previous_metric(previous_state, sym, "last_price", last_price)
         velocity_pct = change_pct - prev_change
+        price_tick_pct = ((last_price - prev_price) / prev_price * 100.0) if prev_price > 0 and last_price > 0 else 0.0
         volume_delta = max(0.0, quote_volume - prev_volume)
         volume_mult = quote_volume / prev_volume if prev_volume > 0 else 1.0
         pairs.append(
@@ -232,23 +242,52 @@ def build_market_mover_watchlist(
                 "abs_change_pct": abs(change_pct),
                 "velocity_pct": velocity_pct,
                 "abs_velocity_pct": abs(velocity_pct),
+                "price_tick_pct": price_tick_pct,
+                "abs_price_tick_pct": abs(price_tick_pct),
                 "quote_volume": quote_volume,
                 "volume_delta": volume_delta,
                 "volume_mult": volume_mult,
-                "last_price": to_float(item.get("last")),
+                "last_price": last_price,
                 "source": item.get("source") or "external",
                 "sources": item.get("sources") or [item.get("source") or "external"],
             }
         )
 
-    gainers = [p for p in sorted(pairs, key=lambda x: x["change_pct"], reverse=True) if p["change_pct"] > 0][:top_n]
-    losers = [p for p in sorted(pairs, key=lambda x: x["change_pct"]) if p["change_pct"] < 0][:top_n]
-    fast = [p for p in sorted(pairs, key=lambda x: x["abs_velocity_pct"], reverse=True) if p["abs_velocity_pct"] >= velocity_threshold][:top_n]
-    volume = [p for p in sorted(pairs, key=lambda x: x["volume_mult"], reverse=True) if p["volume_mult"] >= volume_spike_mult][:top_n]
+    normal_pairs = [p for p in pairs if p["quote_volume"] >= min_quote_volume]
+    gainers = [p for p in sorted(normal_pairs, key=lambda x: x["change_pct"], reverse=True) if p["change_pct"] > 0][:top_n]
+    losers = [p for p in sorted(normal_pairs, key=lambda x: x["change_pct"]) if p["change_pct"] < 0][:top_n]
+    fast = [p for p in sorted(normal_pairs, key=lambda x: x["abs_velocity_pct"], reverse=True) if p["abs_velocity_pct"] >= velocity_threshold][:top_n]
+    volume = [p for p in sorted(normal_pairs, key=lambda x: x["volume_mult"], reverse=True) if p["volume_mult"] >= volume_spike_mult][:top_n]
+    early_up: list[dict] = []
+    early_down: list[dict] = []
+    if early_enabled:
+        early_candidates = [
+            p for p in pairs
+            if p["quote_volume"] >= early_min_quote_volume
+            and abs(p["change_pct"]) <= early_max_change_pct
+            and p["abs_price_tick_pct"] >= early_price_tick_threshold
+        ]
+        early_up = [
+            {**p, "phase": "起涨初段"}
+            for p in sorted(early_candidates, key=lambda x: x["price_tick_pct"], reverse=True)
+            if p["price_tick_pct"] > 0
+        ][:top_n]
+        early_down = [
+            {**p, "phase": "起跌初段"}
+            for p in sorted(early_candidates, key=lambda x: x["price_tick_pct"])
+            if p["price_tick_pct"] < 0
+        ][:top_n]
 
     merged = []
     seen = set()
-    for reason, group in (("突然加速", fast), ("成交额突增", volume), ("涨幅榜", gainers), ("跌幅榜", losers)):
+    for reason, group in (
+        ("起涨捕捉", early_up),
+        ("起跌捕捉", early_down),
+        ("突然加速", fast),
+        ("成交额突增", volume),
+        ("涨幅榜", gainers),
+        ("跌幅榜", losers),
+    ):
         for item in group:
             symbol = item["symbol"]
             if symbol in seen:
@@ -266,7 +305,11 @@ def build_market_mover_watchlist(
             "velocity_pct": velocity_threshold,
             "min_quote_volume": min_quote_volume,
             "volume_spike_mult": volume_spike_mult,
+            "early_price_tick_pct": early_price_tick_threshold,
+            "early_max_24h_change_pct": early_max_change_pct,
+            "early_min_quote_volume": early_min_quote_volume,
         },
+        "early_mover_count": len(early_up) + len(early_down),
         "symbols": merged[: top_n * 3],
     }
 
@@ -384,7 +427,7 @@ def build_payload(
     for sym, item in merged.items():
         quote_volume = float(item.get("quote_volume") or 0.0)
         change_pct = float(item.get("change_pct") or 0.0)
-        current_state[sym] = {"quote_volume": quote_volume, "change_pct": change_pct}
+        current_state[sym] = {"quote_volume": quote_volume, "change_pct": change_pct, "last_price": float(item.get("last") or 0.0)}
         rows.append((sym, quote_volume, change_pct, item))
     rows.sort(key=lambda x: (x[1], -market_cap_rank.get(x[0], 999999)), reverse=True)
     spikes = []
@@ -402,6 +445,10 @@ def build_payload(
         velocity_threshold=env_float("MARKET_MOVER_VELOCITY_THRESHOLD_PCT", 0.8),
         min_quote_volume=env_float("MARKET_MOVER_MIN_QUOTE_VOLUME", 3_000_000),
         volume_spike_mult=env_float("MARKET_MOVER_VOLUME_SPIKE_MULT", 5.0),
+        early_enabled=env_bool("MARKET_MOVER_EARLY_ENABLED", True),
+        early_price_tick_threshold=env_float("MARKET_MOVER_EARLY_PRICE_TICK_PCT", 0.45),
+        early_max_change_pct=env_float("MARKET_MOVER_EARLY_MAX_24H_CHANGE_PCT", 5.0),
+        early_min_quote_volume=env_float("MARKET_MOVER_EARLY_MIN_QUOTE_VOLUME", 1_000_000),
     )
     payload = {
         "ts": datetime.now(timezone.utc).isoformat(),
@@ -415,6 +462,7 @@ def build_payload(
         "spike_symbols": [sym for sym, _, _ in spikes[:top_limit]],
         "market_mover_symbols": [str(item.get("symbol") or "").upper() for item in watchlist.get("symbols") or []],
         "market_mover_count": len(watchlist.get("symbols") or []),
+        "early_mover_count": int(watchlist.get("early_mover_count") or 0),
         "coingecko_top_symbols": [str(item.get("symbol") or "").upper() for item in coingecko_top],
         "top_preview": [
             {
@@ -504,6 +552,7 @@ def main() -> int:
                 "top": len(payload["top_symbols"]),
                 "spikes": len(payload["spike_symbols"]),
                 "movers": len(watchlist.get("symbols") or []),
+                "early_movers": int(watchlist.get("early_mover_count") or 0),
                 "events": len(emitted),
                 "kline_prefetch": {
                     "enabled": kline_prefetch_status.get("enabled"),

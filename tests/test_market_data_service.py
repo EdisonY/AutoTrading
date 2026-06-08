@@ -60,6 +60,42 @@ class MarketDataServiceTests(unittest.TestCase):
         self.assertAlmostEqual(btc["volume_mult"], 7.0)
         self.assertEqual(payload["spike_symbols"], ["BTCUSDT"])
 
+    def test_early_movers_use_existing_ticker_snapshots_without_normal_volume_gate(self):
+        previous_state = {
+            "EARLYUPUSDT": {"quote_volume": 1_200_000, "change_pct": 1.2, "last_price": 100.0},
+            "EARLYDOWNUSDT": {"quote_volume": 1_100_000, "change_pct": 1.5, "last_price": 100.0},
+            "LATEUSDT": {"quote_volume": 50_000_000, "change_pct": 18.0, "last_price": 50.0},
+        }
+        rows = [
+            ("EARLYUPUSDT", 1_250_000, 1.8, {"last": 100.8, "source": "okx"}),
+            ("EARLYDOWNUSDT", 1_300_000, 1.1, {"last": 99.2, "source": "bybit"}),
+            ("LATEUSDT", 51_000_000, 19.0, {"last": 51.0, "source": "okx"}),
+        ]
+
+        watchlist = self.tool.build_market_mover_watchlist(
+            rows,
+            previous_state,
+            top_n=5,
+            interval_sec=60,
+            velocity_threshold=0.8,
+            min_quote_volume=3_000_000,
+            volume_spike_mult=5.0,
+            early_enabled=True,
+            early_price_tick_threshold=0.45,
+            early_max_change_pct=5.0,
+            early_min_quote_volume=1_000_000,
+        )
+
+        by_symbol = {row["symbol"]: row for row in watchlist["symbols"]}
+        self.assertEqual(by_symbol["EARLYUPUSDT"]["reason"], "起涨捕捉")
+        self.assertEqual(by_symbol["EARLYUPUSDT"]["phase"], "起涨初段")
+        self.assertAlmostEqual(by_symbol["EARLYUPUSDT"]["price_tick_pct"], 0.8)
+        self.assertEqual(by_symbol["EARLYDOWNUSDT"]["reason"], "起跌捕捉")
+        self.assertEqual(by_symbol["EARLYDOWNUSDT"]["phase"], "起跌初段")
+        self.assertAlmostEqual(by_symbol["EARLYDOWNUSDT"]["price_tick_pct"], -0.8)
+        self.assertEqual(watchlist["early_mover_count"], 2)
+        self.assertEqual(watchlist["thresholds"]["early_min_quote_volume"], 1_000_000)
+
     def test_kline_prefetch_saves_rotating_batch(self):
         payload = {
             "top_symbols": ["BTCUSDT", "ETHUSDT"],

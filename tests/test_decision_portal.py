@@ -415,6 +415,37 @@ class DecisionPortalTests(unittest.TestCase):
         self.assertIn("+3.2000", html)
         self.assertIn("-1.1000", html)
 
+    def test_early_down_mover_uses_tick_direction_not_positive_24h_change(self):
+        html = self.tool.render_market_movers({
+            "market": {
+                "market_mover_preview": [
+                    {
+                        "symbol": "EARLYDROPUSDT",
+                        "reason": "起跌捕捉",
+                        "phase": "起跌初段",
+                        "change_pct": 1.2,
+                        "velocity_pct": -0.2,
+                        "price_tick_pct": -0.7,
+                        "quote_volume": 1_500_000,
+                        "sources": ["okx"],
+                    }
+                ]
+            },
+            "paper_exchange": {
+                "positions": [
+                    {"strategy": "C/v14", "symbol": "EARLYDROPUSDT", "side": "short", "unrealized_pnl": 2.4},
+                ]
+            },
+        })
+
+        self.assertIn("EARLYDROPUSDT", html)
+        self.assertIn("起跌捕捉", html)
+        self.assertIn("起跌初段", html)
+        self.assertIn("起跌 24h +1.20%", html)
+        self.assertIn("tick -0.70%", html)
+        self.assertIn("C/v14 short", html)
+        self.assertIn("顺势", html)
+
     def test_mover_diagnostics_compacts_strategy_filter(self):
         summary = self.tool.summarize_mover_diagnostics([
             {

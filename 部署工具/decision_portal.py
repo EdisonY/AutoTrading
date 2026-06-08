@@ -1039,8 +1039,21 @@ def market_mover_rows(state: dict[str, Any], limit: int = 20) -> list[dict[str, 
         except Exception:
             velocity = 0.0
         diag = diagnostics.get(symbol) if isinstance(diagnostics.get(symbol), dict) else {}
-        desired = "long" if change >= 0 else "short"
-        move_label = "上涨" if change >= 0 else "下跌"
+        try:
+            price_tick = float(mover.get("price_tick_pct"))
+        except Exception:
+            price_tick = None
+        reason = str(mover.get("reason") or "")
+        phase = str(diag.get("phase") or mover.get("phase") or market_mover_phase(change, velocity))
+        if reason == "起涨捕捉" or phase.startswith("起涨"):
+            desired = "long"
+            move_label = "起涨"
+        elif reason == "起跌捕捉" or phase.startswith("起跌"):
+            desired = "short"
+            move_label = "起跌"
+        else:
+            desired = "long" if change >= 0 else "short"
+            move_label = "上涨" if change >= 0 else "下跌"
         matched = by_symbol.get(symbol, [])
         pnl = sum(float(pos.get("unrealized_pnl") or 0.0) for pos in matched)
         side_bits: list[str] = []
@@ -1065,10 +1078,12 @@ def market_mover_rows(state: dict[str, Any], limit: int = 20) -> list[dict[str, 
         rows.append({
             "rank": idx,
             "symbol": symbol,
-            "reason": mover.get("reason") or move_label,
+            "reason": reason or move_label,
+            "move_label": move_label,
             "change_pct": change,
             "velocity_pct": velocity,
-            "phase": diag.get("phase") or market_mover_phase(change, velocity),
+            "price_tick_pct": price_tick,
+            "phase": phase,
             "quote_volume": mover.get("quote_volume"),
             "source": ",".join(str(x) for x in (mover.get("sources") or [mover.get("source") or "-"])),
             "scan": diag.get("strategy_filter") or ("已进扫描池；未见 A/B/C 策略筛选记录" if not matched else "已进扫描池"),
@@ -1095,8 +1110,8 @@ def render_market_movers(state: dict[str, Any]) -> str:
 <tr>
   <td>{h(row['rank'])}</td>
   <td>{h(row['symbol'])}</td>
-  <td>{h(row['reason'])}<small>{h('上涨' if row['change_pct'] >= 0 else '下跌')} {h(number(row['change_pct'], 2))}%</small></td>
-  <td>{h(row['phase'])}<small>速度 {h(number(row.get('velocity_pct'), 2))}%</small></td>
+  <td>{h(row['reason'])}<small>{h(row.get('move_label') or ('上涨' if row['change_pct'] >= 0 else '下跌'))} 24h {h(number(row['change_pct'], 2))}%</small></td>
+  <td>{h(row['phase'])}<small>速度 {h(number(row.get('velocity_pct'), 2))}%{(' / tick ' + h(number(row.get('price_tick_pct'), 2)) + '%') if row.get('price_tick_pct') not in (None, '') else ''}</small></td>
   <td>{h(row['scan'])}</td>
   <td>{h(row['entry'])}<small>{h(row['positions'])}</small></td>
   <td>{h(row['direction'])}</td>

@@ -1105,18 +1105,22 @@ def render_market_movers(state: dict[str, Any]) -> str:
     entered = sum(1 for row in rows if row["entry"] == "已进场")
     aligned = sum(1 for row in rows if row["direction"] == "顺势")
     pnl = sum(float(row.get("pnl") or 0.0) for row in rows)
+    def entry_result(row: dict[str, Any]) -> str:
+        if row.get("entry") != "已进场":
+            raw = f"<small>原始原因：{h(row['raw_no_entry_reason'])}</small>" if row.get("raw_no_entry_reason") else ""
+            return f'<b class="muted">未进场</b><small>{h(row["no_entry_reason"])}</small>{raw}'
+        return (
+            f'<b class="{position_upnl_class(row["pnl"])}">{h(row["result"])} {h(number(row["pnl"], 4))}</b>'
+            f'<small>{h(row["direction"])}；{h(row["positions"])}</small>'
+        )
     body = "".join(
         f"""
 <tr>
   <td>{h(row['rank'])}</td>
   <td>{h(row['symbol'])}</td>
-  <td>{h(row['reason'])}<small>{h(row.get('move_label') or ('上涨' if row['change_pct'] >= 0 else '下跌'))} 24h {h(number(row['change_pct'], 2))}%</small></td>
-  <td>{h(row['phase'])}<small>速度 {h(number(row.get('velocity_pct'), 2))}%{(' / tick ' + h(number(row.get('price_tick_pct'), 2)) + '%') if row.get('price_tick_pct') not in (None, '') else ''}</small></td>
+  <td>{h(row['reason'])}<small>{h(row['phase'])}；{h(row.get('move_label') or ('上涨' if row['change_pct'] >= 0 else '下跌'))} 24h {h(number(row['change_pct'], 2))}%；速度 {h(number(row.get('velocity_pct'), 2))}%{('；tick ' + h(number(row.get('price_tick_pct'), 2)) + '%') if row.get('price_tick_pct') not in (None, '') else ''}</small></td>
   <td>{h(row['scan'])}</td>
-  <td>{h(row['entry'])}<small>{h(row['positions'])}</small></td>
-  <td>{h(row['direction'])}</td>
-  <td>{h(row['no_entry_reason'])}{('<small>原始原因：' + h(row['raw_no_entry_reason']) + '</small>') if row.get('raw_no_entry_reason') else ''}</td>
-  <td class="{position_upnl_class(row['pnl'])}">{h(row['result'])} {h(number(row['pnl'], 4))}</td>
+  <td>{entry_result(row)}</td>
   <td>{h(fmt_plain(row.get('quote_volume'), 2))}<small>{h(row['source'])}</small></td>
 </tr>
 """.strip()
@@ -1130,10 +1134,10 @@ def render_market_movers(state: dict[str, Any]) -> str:
   <div><span>榜单持仓浮盈亏</span><b class="{position_upnl_class(pnl)}">{h(number(pnl, 4))} USDT</b></div>
 </div>
 <div class="table-scroll"><table class="mover-table">
-  <thead><tr><th>#</th><th>币种</th><th>榜单原因</th><th>阶段</th><th>策略筛选</th><th>是否进场</th><th>方向关系</th><th>未进场原因</th><th>当前结果</th><th>成交额/来源</th></tr></thead>
+  <thead><tr><th>#</th><th>币种</th><th>信号阶段</th><th>策略判断</th><th>进场结果</th><th>成交额来源</th></tr></thead>
   <tbody>{body}</tbody>
 </table></div>
-<p class="empty">阶段按涨跌幅和速度粗分初段/中段/末段；策略筛选和未进场原因来自近24小时 events/sentinel_scans。当前结果看模拟账本浮盈亏。</p>
+<p class="empty">未进场只展示原因；方向和浮盈亏只在已有模拟持仓时展示。</p>
 """
 
 

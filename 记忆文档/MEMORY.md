@@ -489,6 +489,7 @@
 - 2026-06-08：起涨/起跌捕捉按 API 安全路线推进。只复用 `crypto-market-data-cache.service` 每 60 秒已有 OKX/Bybit ticker 快照，计算 60 秒 last-price tick、24h change delta、volume delta，把 `起涨捕捉` / `起跌捕捉` 提前放入 market mover watchlist 供 A/B/C 优先扫描；不新增 Binance、不新增 Kline/depth、不提高服务频率、不放宽策略门控、不改仓位/止损/阈值。report 对早段起跌必须按 tick/phase 判方向，即使 24h change 仍为正，也不能误判成 long 上涨顺势。
 - 2026-06-08：策略自动进化第一阶段继续推进为“候选治理 registry”，不是自动升级开关。`strategy_candidate_governance.py` 输出候选 registry、参数 registry、样本接受契约、champion/challenger 生命周期和 pruning/promotion hints；B/v16 两个 rollback-watch（ATR止损带、score cap 85）必须显示为 `pause_expansion_review_quality`，不能当升级候选；A/v11 trailing 两个 full-live monitoring 候选显示为 maturing/continue-sampling；样本契约当前仍卡 A/v11 paired trade 不足和 B/v16 missing ATR/open context。该链路永远 `automatic_upgrade_allowed=false`、`apply_enabled=false`，不改配置、不部署、不重启、不下单、不启用自动回滚/调参/升级。
 - 2026-06-08：等待样本期间的“剩余能做事项”已收口成 `waiting_period_progress.py` 总账。它覆盖样本质检、B/v16 context gap、disabled auto-upgrade policy、rollback dry-run 预览、paper-vs-small-real 校准计划、report 主屏收敛、API/磁盘守护、防误开安全测试；首页和 full portal 都要展示。`research_memory/approvals/auto_upgrade_policy.json` 是 disabled 模板，只消除缺文件歧义，不代表批准自动升级。该总账必须持续保持 `automatic_upgrade_allowed=false`、`automatic_rollback_allowed=false`、`automatic_tuning_allowed=false`、`apply_enabled=false`、`binance_requests_enabled=false`，直到另一个明确人工审批流程改变规则。
+- 2026-06-09：`今日涨跌榜跟踪` 首页展示规则继续收敛。未进场的币种只显示“未进场”和未进场原因，不显示方向关系，也不显示 `+0.0000` 这类无意义盈亏；方向关系和浮盈亏只属于已有模拟持仓的币种。涨跌信号、阶段、24h 变化、速度、tick 合并进 `信号阶段`，避免表格过宽过乱。
 
 ---
 ## 2026-05-29 全局运行自检与账户方向口径修复

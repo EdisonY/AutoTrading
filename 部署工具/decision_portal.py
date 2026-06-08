@@ -316,6 +316,12 @@ def plain_status(value: Any) -> str:
         "coverage_gap": "覆盖不足",
         "ready_for_plan_only_data_work": "只做离线数据工作",
         "run_staged_kline_depth_ingest_then_replay_review": "先补K线/深度，再复盘",
+        "blocked_non_sample_gaps": "还有非样本阻塞",
+        "waiting_for_samples_report_only": "只读等待样本",
+        "preconditions_met_report_only": "只读条件已齐",
+        "clear_non_sample_blockers_then_wait_for_samples": "先清非样本阻塞，再等样本",
+        "collect_fresh_contextual_paired_samples": "继续收新上下文闭环样本",
+        "manual_operator_review_before_any_upgrade": "人工复核后再升级",
         "stale_mirror_unknown": "镜像过期，暂不判断",
         "blocked": "被挡住",
         "watch": "观察中",
@@ -953,6 +959,7 @@ def build_state() -> dict[str, Any]:
     account = read_first_json(RUNTIME_DIR / "account_snapshot_latest.json", MIRROR_RUNTIME_DIR / "account_snapshot_latest.json")
     evolution = read_first_json(RUNTIME_DIR / "strategy_evolution_latest.json", MIRROR_RUNTIME_DIR / "strategy_evolution_latest.json")
     replay = read_first_json(RUNTIME_DIR / "replay_readiness_latest.json", MIRROR_RUNTIME_DIR / "replay_readiness_latest.json")
+    auto_upgrade = read_first_json(RUNTIME_DIR / "auto_upgrade_readiness_latest.json", MIRROR_RUNTIME_DIR / "auto_upgrade_readiness_latest.json")
     waiting = read_first_json(RUNTIME_DIR / "waiting_period_optimization_latest.json", MIRROR_RUNTIME_DIR / "waiting_period_optimization_latest.json")
     parity = read_first_json(RUNTIME_DIR / "replay_live_parity_latest.json", MIRROR_RUNTIME_DIR / "replay_live_parity_latest.json")
     skeleton = read_first_json(RUNTIME_DIR / "long_term_skeleton_latest.json", MIRROR_RUNTIME_DIR / "long_term_skeleton_latest.json")
@@ -993,6 +1000,7 @@ def build_state() -> dict[str, Any]:
         "account_summary": account_summary,
         "evolution": evolution,
         "replay": replay,
+        "auto_upgrade": auto_upgrade,
         "waiting": waiting,
         "parity": parity,
         "skeleton": skeleton,
@@ -1168,6 +1176,8 @@ def render_fresh_start(state: dict[str, Any]) -> str:
 
 def render_evolution_readiness(state: dict[str, Any]) -> str:
     paper = state.get("paper_exchange") if isinstance(state.get("paper_exchange"), dict) else {}
+    auto_upgrade = state.get("auto_upgrade") if isinstance(state.get("auto_upgrade"), dict) else {}
+    auto_summary = auto_upgrade.get("summary") if isinstance(auto_upgrade.get("summary"), dict) else {}
     fills = paper.get("recent_fills") if isinstance(paper.get("recent_fills"), list) else []
     opens = sum(1 for row in fills if isinstance(row, dict) and row.get("action") == "OPEN")
     closes = sum(1 for row in fills if isinstance(row, dict) and row.get("action") == "CLOSE")
@@ -1179,9 +1189,14 @@ def render_evolution_readiness(state: dict[str, Any]) -> str:
         verdict = "正在收持仓样本，等平仓闭环"
     rows = [
         ("当前判断", verdict, "不是只等持仓数量；要等开仓、持仓、平仓、费用、行情上下文成套闭环。"),
+        (
+            "自动升级闸门",
+            plain_status(auto_upgrade.get("status") or "missing"),
+            f"只读报告；Auto/Apply 都是 no。非样本阻塞 {int(auto_summary.get('non_sample_blockers') or 0)}，样本阻塞 {int(auto_summary.get('sample_blockers') or 0)}。",
+        ),
         ("开仓样本", str(opens), "足够看执行和持仓展示，但还不足以证明策略优劣。"),
         ("平仓样本", str(closes), "进化需要 CLOSED 样本。只有浮盈亏还不能算胜率、PF、回撤。"),
-        ("下一步", "继续收完整交易", "优先自然产生 CLOSE；满 30 笔闭环后再看参数升级，满 100 笔更可靠。"),
+        ("下一步", plain_status(auto_upgrade.get("next_action") or "继续收完整交易"), "优先自然产生 CLOSE；满 30 笔闭环后再看参数升级，满 100 笔更可靠。"),
     ]
     return "".join(
         f'<article class="info"><span>{h(title)}</span><b>{h(value)}</b><p>{h(body)}</p></article>'
@@ -1511,6 +1526,7 @@ tr:hover td {{ background:#101827; }}
         <div class="links">
           <a href="/reports/portal_latest.html">完整旧版详情</a>
           <a href="/reports/replay_readiness_latest.md">Replay 验收</a>
+          <a href="/reports/auto_upgrade_readiness_latest.md">自动升级闸门</a>
           <a href="/reports/waiting_period_optimization_latest.html">等待期优化</a>
           <a href="/reports/market_review_latest.html">市场复盘日报</a>
           <a href="/reports/long_term_skeleton_latest.md">长期目标骨架</a>

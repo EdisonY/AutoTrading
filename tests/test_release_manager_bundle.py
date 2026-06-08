@@ -23,13 +23,20 @@ class ReleaseManagerBundleTests(unittest.TestCase):
         cls.tool = load_tool()
 
     def test_tencent_research_bundle_includes_skeleton_report_sources(self):
-        expected = {"strategy_truth_ledger.py", "sentinel_quality_review.py"}
+        expected = {"strategy_truth_ledger.py", "sentinel_quality_review.py", "auto_upgrade_readiness.py"}
 
         for component in ("research", "all"):
             with self.subTest(component=component):
                 remotes = {remote for _local, remote in self.tool.TENCENT_COMPONENTS[component]["files"]}
 
                 self.assertTrue(expected.issubset(remotes))
+
+    def test_aliyun_shadow_bundle_includes_auto_upgrade_readiness(self):
+        for component in ("shadow", "all"):
+            with self.subTest(component=component):
+                remotes = {remote for _local, remote in self.tool.ALIYUN_COMPONENTS[component]["files"]}
+
+                self.assertIn("auto_upgrade_readiness.py", remotes)
 
     def test_tencent_binance_components_include_start_guard(self):
         for component in ("sentinel", "account", "account-state", "api-queue", "user-stream", "all"):

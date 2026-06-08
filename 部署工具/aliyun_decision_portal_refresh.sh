@@ -24,6 +24,7 @@ $PYTHON long_term_skeleton_review.py --runtime-dir $REMOTE_DIR/runtime --reports
 $PYTHON waiting_period_optimization.py --root $REMOTE_DIR --runtime-dir $REMOTE_DIR/runtime --reports-dir $REMOTE_DIR/reports || echo "[WARN] waiting-period optimization failed"
 $PYTHON rollback_execution_plan.py --runtime-dir $REMOTE_DIR/runtime --reports-dir $REMOTE_DIR/reports --attention-json $REMOTE_DIR/research_memory/attention/open_items.json || echo "[WARN] rollback execution plan failed"
 $PYTHON rollback_automation_guard.py --runtime-dir $REMOTE_DIR/runtime --reports-dir $REMOTE_DIR/reports || echo "[WARN] rollback automation guard failed"
+$PYTHON auto_upgrade_readiness.py --runtime-dir $REMOTE_DIR/runtime --reports-dir $REMOTE_DIR/reports || echo "[WARN] auto upgrade readiness failed"
 $PYTHON portal_dashboard.py --out-dir $REMOTE_DIR/reports || echo "[WARN] portal generation failed"
 $PYTHON decision_portal.py --out-dir $REMOTE_DIR/reports || echo "[WARN] decision portal generation failed"
 

@@ -59,6 +59,7 @@ REPORT_FILES = [
     "rollback_watch_review_latest.md",
     "rollback_execution_plan_latest.md",
     "rollback_automation_guard_latest.md",
+    "auto_upgrade_readiness_latest.md",
     "a_v11_rollout_review_latest.md",
     "b_v16_rollout_review_latest.md",
     "portal_latest.html",
@@ -98,6 +99,7 @@ RUNTIME_FILES = [
     "rollback_watch_review_latest.json",
     "rollback_execution_plan_latest.json",
     "rollback_automation_guard_latest.json",
+    "auto_upgrade_readiness_latest.json",
     "a_v11_rollout_review_latest.json",
     "b_v16_rollout_review_latest.json",
 ]
@@ -119,6 +121,7 @@ PRIORITY_REPORT_FILES = [
     "waiting_period_optimization_latest.html",
     "rollback_execution_plan_latest.md",
     "rollback_automation_guard_latest.md",
+    "auto_upgrade_readiness_latest.md",
     "a_v11_rollout_review_latest.md",
     "b_v16_rollout_review_latest.md",
     "alerts_latest.md",
@@ -133,6 +136,7 @@ PRIORITY_RUNTIME_FILES = [
     "b_v16_rollout_review_latest.json",
     "rollback_execution_plan_latest.json",
     "rollback_automation_guard_latest.json",
+    "auto_upgrade_readiness_latest.json",
     "waiting_period_optimization_latest.json",
 ]
 

@@ -67,6 +67,8 @@ ROLLBACK_EXECUTION_JSON = ROOT / "runtime" / "rollback_execution_plan_latest.jso
 ROLLBACK_EXECUTION_MD = REPORTS_DIR / "rollback_execution_plan_latest.md"
 ROLLBACK_AUTOMATION_JSON = ROOT / "runtime" / "rollback_automation_guard_latest.json"
 ROLLBACK_AUTOMATION_MD = REPORTS_DIR / "rollback_automation_guard_latest.md"
+AUTO_UPGRADE_READINESS_JSON = ROOT / "runtime" / "auto_upgrade_readiness_latest.json"
+AUTO_UPGRADE_READINESS_MD = REPORTS_DIR / "auto_upgrade_readiness_latest.md"
 LONG_TERM_SKELETON_JSON = ROOT / "runtime" / "long_term_skeleton_latest.json"
 LONG_TERM_SKELETON_MD = REPORTS_DIR / "long_term_skeleton_latest.md"
 A_V11_ROLLOUT_JSON = ROOT / "runtime" / "a_v11_rollout_review_latest.json"
@@ -1065,6 +1067,47 @@ def rollback_automation_summary(path: Path | None) -> dict[str, Any]:
     }
 
 
+def auto_upgrade_readiness_summary(path: Path | None) -> dict[str, Any]:
+    empty = {
+        "available": False,
+        "path": AUTO_UPGRADE_READINESS_MD,
+        "age": "No auto upgrade readiness guard",
+        "fresh": False,
+        "status": "missing",
+        "next_action": "regenerate_missing_reports",
+        "summary": {"conditions": 0, "ready_conditions": 0, "blockers": 0, "sample_blockers": 0, "non_sample_blockers": 0, "candidates": 0},
+        "conditions": [],
+        "candidates": [],
+        "sample_blockers": [],
+        "non_sample_blockers": [],
+        "blockers": [],
+        "automatic_upgrade_allowed": False,
+        "apply_enabled": False,
+        "waiting_samples_only": False,
+    }
+    payload = read_json(path) if path else None
+    if not isinstance(payload, dict):
+        return empty
+    generated_at = parse_dt(payload.get("generated_at"))
+    return {
+        "available": True,
+        "path": AUTO_UPGRADE_READINESS_MD,
+        "age": age_text(generated_at),
+        "fresh": bool(generated_at and (datetime.now(CST) - generated_at).total_seconds() < 4 * 3600),
+        "status": payload.get("status") or "missing",
+        "next_action": payload.get("next_action") or "",
+        "summary": payload.get("summary") if isinstance(payload.get("summary"), dict) else empty["summary"],
+        "conditions": payload.get("conditions") if isinstance(payload.get("conditions"), list) else [],
+        "candidates": payload.get("candidates") if isinstance(payload.get("candidates"), list) else [],
+        "sample_blockers": payload.get("sample_blockers") if isinstance(payload.get("sample_blockers"), list) else [],
+        "non_sample_blockers": payload.get("non_sample_blockers") if isinstance(payload.get("non_sample_blockers"), list) else [],
+        "blockers": payload.get("blockers") if isinstance(payload.get("blockers"), list) else [],
+        "automatic_upgrade_allowed": bool(payload.get("automatic_upgrade_allowed")),
+        "apply_enabled": bool(payload.get("apply_enabled")),
+        "waiting_samples_only": bool(payload.get("waiting_samples_only")),
+    }
+
+
 def long_term_skeleton_summary(path: Path | None) -> dict[str, Any]:
     empty = {
         "available": False,
@@ -1922,6 +1965,8 @@ def function_status_cards(data: dict[str, Any]) -> list[dict[str, str]]:
     rollback_execution_summary_data = rollback_execution.get("summary") or {}
     rollback_automation = data.get("rollback_automation") or {}
     rollback_automation_summary_data = rollback_automation.get("summary") or {}
+    auto_upgrade = data.get("auto_upgrade_readiness") or {}
+    auto_upgrade_summary_data = auto_upgrade.get("summary") or {}
     long_term_skeleton = data.get("long_term_skeleton") or {}
     long_term_skeleton_summary_data = long_term_skeleton.get("summary") or {}
     a_v11_rollout = data.get("a_v11_rollout") or {}
@@ -2359,6 +2404,33 @@ def function_status_cards(data: dict[str, Any]) -> list[dict[str, str]]:
                 f"auto allowed no; apply enabled no; updated {rollback_automation.get('age')}."
                 if rollback_automation.get("available")
                 else "Automatic rollback guard missing. Automation policy cannot be audited from the portal."
+            ),
+        },
+        {
+            "level": (
+                "bad"
+                if auto_upgrade.get("automatic_upgrade_allowed") or auto_upgrade.get("apply_enabled")
+                else "ok"
+                if auto_upgrade.get("waiting_samples_only") and auto_upgrade.get("fresh")
+                else "warn"
+                if auto_upgrade.get("available")
+                else "warn"
+            ),
+            "name": "自动升级readiness",
+            "value": (
+                str(auto_upgrade.get("status") or "missing")
+                if auto_upgrade.get("available")
+                else "not built"
+            ),
+            "body": (
+                f"conditions {int(auto_upgrade_summary_data.get('ready_conditions') or 0)}/"
+                f"{int(auto_upgrade_summary_data.get('conditions') or 0)}; "
+                f"non-sample blockers {int(auto_upgrade_summary_data.get('non_sample_blockers') or 0)}; "
+                f"sample blockers {int(auto_upgrade_summary_data.get('sample_blockers') or 0)}; "
+                f"candidates {int(auto_upgrade_summary_data.get('candidates') or 0)}; "
+                f"auto allowed no; apply enabled no; updated {auto_upgrade.get('age')}."
+                if auto_upgrade.get("available")
+                else "Automatic upgrade readiness guard missing. Upgrade blockers cannot be audited from the portal."
             ),
         },
         {
@@ -2922,6 +2994,8 @@ def build_data() -> dict[str, Any]:
     data["rollback_execution_html"] = ROLLBACK_EXECUTION_MD
     data["rollback_automation"] = rollback_automation_summary(ROLLBACK_AUTOMATION_JSON)
     data["rollback_automation_html"] = ROLLBACK_AUTOMATION_MD
+    data["auto_upgrade_readiness"] = auto_upgrade_readiness_summary(AUTO_UPGRADE_READINESS_JSON)
+    data["auto_upgrade_readiness_html"] = AUTO_UPGRADE_READINESS_MD
     data["long_term_skeleton"] = long_term_skeleton_summary(LONG_TERM_SKELETON_JSON)
     data["long_term_skeleton_html"] = LONG_TERM_SKELETON_MD
     data["a_v11_rollout"] = a_v11_rollout_summary(A_V11_ROLLOUT_JSON)
@@ -3674,6 +3748,45 @@ def render_html(out_dir: Path) -> str:
         for r in (rollback_automation.get("candidates") or [])
     ) or '<tr><td colspan="8">暂无 automation guard candidate</td></tr>'
 
+    auto_upgrade = data.get("auto_upgrade_readiness") or {}
+    auto_upgrade_summary_data = auto_upgrade.get("summary") or {}
+    auto_upgrade_condition_rows = "".join(
+        f"""
+<tr>
+  <td>{h(r.get('name'))}</td>
+  <td>{'yes' if r.get('ready') else 'no'}</td>
+  <td>{h(r.get('blocker_type'))}</td>
+  <td>{h(r.get('status'))}</td>
+  <td>{h(compact_text(r.get('detail') or '-', 150))}</td>
+  <td>{h(compact_text('; '.join(str(item) for item in (r.get('blockers') or [])) or '-', 200))}</td>
+</tr>
+""".strip()
+        for r in (auto_upgrade.get("conditions") or [])
+    ) or '<tr><td colspan="6">暂无 automatic upgrade readiness guard</td></tr>'
+    auto_upgrade_blocker_rows = "".join(
+        f"<tr><td>{h(kind)}</td><td>{h(blocker)}</td></tr>"
+        for kind, rows in (
+            ("non-sample", auto_upgrade.get("non_sample_blockers") or []),
+            ("sample", auto_upgrade.get("sample_blockers") or []),
+        )
+        for blocker in rows
+    ) or '<tr><td colspan="2">暂无 blocker</td></tr>'
+    auto_upgrade_candidate_rows = "".join(
+        f"""
+<tr>
+  <td>{h(r.get('priority'))}</td>
+  <td>{h(r.get('strategy'))}</td>
+  <td>{h(r.get('candidate_id'))}</td>
+  <td>{h(r.get('status'))}</td>
+  <td>{h(r.get('automation_status'))}</td>
+  <td>{'no' if not r.get('automatic_upgrade_allowed') else 'yes'}</td>
+  <td>{'no' if not r.get('apply_enabled') else 'yes'}</td>
+  <td>{h(compact_text('; '.join(str(item) for item in (r.get('blockers') or [])) or '-', 220))}</td>
+</tr>
+""".strip()
+        for r in (auto_upgrade.get("candidates") or [])
+    ) or '<tr><td colspan="8">暂无 verified P0/P1 upgrade candidate</td></tr>'
+
     a_v11_rollout = data.get("a_v11_rollout") or {}
     a_v11_rollout_decision = a_v11_rollout.get("decision") or {}
     a_v11_rollout_windows = a_v11_rollout.get("windows") or {}
@@ -3887,6 +4000,14 @@ def render_html(out_dir: Path) -> str:
             data["rollback_automation_html"],
             "看自动化闸门",
             "red",
+        ),
+        route_card(
+            "自动升级还差什么",
+            "只读readiness",
+            "分开看非样本阻塞和样本阻塞；auto allowed 与 apply 永远显示 no，直到另有人工批准流程。",
+            data["auto_upgrade_readiness_html"],
+            "看升级readiness",
+            "amber",
         ),
         route_card(
             "是否有更优方案",
@@ -4267,6 +4388,23 @@ th {{ background:#f1f5f9; color:#334155; }}
     <table class="subtable">
       <thead><tr><th>优先级</th><th>策略</th><th>候选</th><th>执行状态</th><th>自动化状态</th><th>Auto</th><th>Apply</th><th>阻塞</th></tr></thead>
       <tbody>{rollback_automation_candidate_rows}</tbody>
+    </table>
+  </section>
+
+  <section class="section panel">
+    <h2>Automatic Upgrade Readiness</h2>
+    <p class="note">只读检查未来自动升级前置条件。状态 {h(auto_upgrade.get('status', '-'))}；conditions {int(auto_upgrade_summary_data.get('ready_conditions') or 0)}/{int(auto_upgrade_summary_data.get('conditions') or 0)}；non-sample blockers {int(auto_upgrade_summary_data.get('non_sample_blockers') or 0)}；sample blockers {int(auto_upgrade_summary_data.get('sample_blockers') or 0)}；auto allowed no；apply enabled no；next {h(auto_upgrade.get('next_action') or '-')}；更新 {h(auto_upgrade.get('age'))}。</p>
+    <table>
+      <thead><tr><th>条件</th><th>Ready</th><th>类型</th><th>状态</th><th>说明</th><th>阻塞</th></tr></thead>
+      <tbody>{auto_upgrade_condition_rows}</tbody>
+    </table>
+    <table class="subtable">
+      <thead><tr><th>阻塞类型</th><th>阻塞项</th></tr></thead>
+      <tbody>{auto_upgrade_blocker_rows}</tbody>
+    </table>
+    <table class="subtable">
+      <thead><tr><th>优先级</th><th>策略</th><th>候选</th><th>状态</th><th>自动化状态</th><th>Auto</th><th>Apply</th><th>阻塞</th></tr></thead>
+      <tbody>{auto_upgrade_candidate_rows}</tbody>
     </table>
   </section>
 

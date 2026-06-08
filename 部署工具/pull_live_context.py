@@ -62,6 +62,7 @@ MAIN_FILES = [
     ("reports/rollback_watch_review_latest.md", "reports/rollback_watch_review_latest.md", False),
     ("reports/rollback_execution_plan_latest.md", "reports/rollback_execution_plan_latest.md", False),
     ("reports/rollback_automation_guard_latest.md", "reports/rollback_automation_guard_latest.md", False),
+    ("reports/auto_upgrade_readiness_latest.md", "reports/auto_upgrade_readiness_latest.md", False),
     ("reports/a_v11_rollout_review_latest.md", "reports/a_v11_rollout_review_latest.md", False),
     ("reports/b_v16_rollout_review_latest.md", "reports/b_v16_rollout_review_latest.md", False),
     ("reports/alerts_latest.md", "reports/alerts_latest.md", False),
@@ -93,6 +94,7 @@ MAIN_FILES = [
     ("runtime/rollback_watch_review_latest.json", "runtime/rollback_watch_review_latest.json", False),
     ("runtime/rollback_execution_plan_latest.json", "runtime/rollback_execution_plan_latest.json", False),
     ("runtime/rollback_automation_guard_latest.json", "runtime/rollback_automation_guard_latest.json", False),
+    ("runtime/auto_upgrade_readiness_latest.json", "runtime/auto_upgrade_readiness_latest.json", False),
     ("runtime/a_v11_rollout_review_latest.json", "runtime/a_v11_rollout_review_latest.json", False),
     ("runtime/b_v16_rollout_review_latest.json", "runtime/b_v16_rollout_review_latest.json", False),
     ("research_memory/attention/open_items.json", "runtime/live_attention_latest.json", True),
@@ -192,6 +194,7 @@ paper = read_json(root / "runtime" / "paper_exchange_latest.json")
 alerts = read_json(root / "runtime" / "alerts_latest.json")
 attention = read_json(root / "research_memory" / "attention" / "open_items.json")
 evolution = read_json(root / "runtime" / "strategy_evolution_latest.json")
+auto_upgrade = read_json(root / "runtime" / "auto_upgrade_readiness_latest.json")
 services = {
     name: unit_state(name)
     for name in (
@@ -245,6 +248,15 @@ print(json.dumps({
     "attention_summary": attention.get("summary", {}),
     "attention_items": attention.get("items", [])[:8],
     "evolution_summary": evolution.get("summary", {}),
+    "auto_upgrade_readiness_summary": {
+        "status": auto_upgrade.get("status"),
+        "next_action": auto_upgrade.get("next_action"),
+        "automatic_upgrade_allowed": auto_upgrade.get("automatic_upgrade_allowed"),
+        "apply_enabled": auto_upgrade.get("apply_enabled"),
+        "summary": auto_upgrade.get("summary", {}),
+        "sample_blockers": auto_upgrade.get("sample_blockers", [])[:8],
+        "non_sample_blockers": auto_upgrade.get("non_sample_blockers", [])[:8],
+    },
 }, ensure_ascii=False))
 """
 
@@ -529,6 +541,7 @@ def main(argv: list[str] | None = None) -> int:
                 "microstructure": live.get("microstructure_summary"),
                 "paper_exchange": live.get("paper_exchange_summary"),
                 "attention": live.get("attention_summary"),
+                "auto_upgrade_readiness": live.get("auto_upgrade_readiness_summary"),
                 "output": str(ROOT / "runtime" / "live_context_summary_latest.json"),
             },
             ensure_ascii=False,

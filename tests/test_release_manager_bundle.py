@@ -28,6 +28,8 @@ class ReleaseManagerBundleTests(unittest.TestCase):
             "sentinel_quality_review.py",
             "auto_upgrade_readiness.py",
             "strategy_candidate_governance.py",
+            "waiting_period_progress.py",
+            "research_memory/approvals/auto_upgrade_policy.json",
         }
 
         for component in ("research", "all"):
@@ -43,6 +45,8 @@ class ReleaseManagerBundleTests(unittest.TestCase):
 
                 self.assertIn("auto_upgrade_readiness.py", remotes)
                 self.assertIn("strategy_candidate_governance.py", remotes)
+                self.assertIn("waiting_period_progress.py", remotes)
+                self.assertIn("research_memory/approvals/auto_upgrade_policy.json", remotes)
 
     def test_tencent_binance_components_include_start_guard(self):
         for component in ("sentinel", "account", "account-state", "api-queue", "user-stream", "all"):

@@ -145,16 +145,16 @@ def policy_condition(policy: Any, policy_path: Path) -> dict[str, Any]:
             detail=f"missing {policy_path}",
             blockers=["explicit_auto_upgrade_policy_missing"],
         )
-    missing = [field for field in REQUIRED_POLICY_FIELDS if policy.get(field) in (None, "", [], {})]
     enabled = bool(policy.get("approved") is True and policy.get("automatic_upgrade_enabled") is True)
+    missing = [field for field in REQUIRED_POLICY_FIELDS if policy.get(field) in (None, "", [], {})] if enabled else []
     blockers = [f"missing_policy_field:{field}" for field in missing]
     if not enabled:
         blockers.append("policy_not_approved_or_not_enabled")
     return condition(
         "explicit_auto_upgrade_policy",
         ready=enabled and not missing,
-        status="approved" if enabled and not missing else "incomplete",
-        detail="explicit automatic upgrade policy present" if enabled and not missing else "policy exists but is incomplete or disabled",
+        status="approved" if enabled and not missing else "disabled_or_not_approved",
+        detail="explicit automatic upgrade policy present" if enabled and not missing else "policy exists but automatic upgrade is disabled or not approved",
         blockers=blockers,
         extra={
             "policy": {

@@ -1,0 +1,25 @@
+{
+  "approved": false,
+  "automatic_upgrade_enabled": false,
+  "approved_by": "",
+  "approved_at": "",
+  "scope": "strategy_upgrade_candidates",
+  "procedure_version": "v1-disabled-template",
+  "mode": "report_only_template",
+  "requirements": {
+    "min_closed_pairs_per_strategy": 30,
+    "preferred_closed_pairs_per_strategy": 100,
+    "min_replay_completion_rate": 0.8,
+    "paper_real_calibration_required": true,
+    "active_p0_p1_rollback_pressure_allowed": false,
+    "manual_operator_review_required": true
+  },
+  "hard_stops": [
+    "automatic_upgrade_must_remain_disabled_until_separate_approval",
+    "apply_enabled_must_remain_false",
+    "no_strategy_config_mutation_from_report",
+    "no_scanner_restart_from_report",
+    "no_order_or_exchange_action_from_report"
+  ],
+  "notes": "Disabled policy template only. Presence removes missing-file ambiguity but does not approve or enable automatic upgrades."
+}

@@ -1167,6 +1167,8 @@ def build_state() -> dict[str, Any]:
     evolution = read_first_json(RUNTIME_DIR / "strategy_evolution_latest.json", MIRROR_RUNTIME_DIR / "strategy_evolution_latest.json")
     replay = read_first_json(RUNTIME_DIR / "replay_readiness_latest.json", MIRROR_RUNTIME_DIR / "replay_readiness_latest.json")
     auto_upgrade = read_first_json(RUNTIME_DIR / "auto_upgrade_readiness_latest.json", MIRROR_RUNTIME_DIR / "auto_upgrade_readiness_latest.json")
+    waiting_progress = read_first_json(RUNTIME_DIR / "waiting_period_progress_latest.json", MIRROR_RUNTIME_DIR / "waiting_period_progress_latest.json")
+    paper_real_calibration_plan = read_first_json(RUNTIME_DIR / "paper_real_calibration_plan_latest.json", MIRROR_RUNTIME_DIR / "paper_real_calibration_plan_latest.json")
     waiting = read_first_json(RUNTIME_DIR / "waiting_period_optimization_latest.json", MIRROR_RUNTIME_DIR / "waiting_period_optimization_latest.json")
     parity = read_first_json(RUNTIME_DIR / "replay_live_parity_latest.json", MIRROR_RUNTIME_DIR / "replay_live_parity_latest.json")
     skeleton = read_first_json(RUNTIME_DIR / "long_term_skeleton_latest.json", MIRROR_RUNTIME_DIR / "long_term_skeleton_latest.json")
@@ -1209,6 +1211,8 @@ def build_state() -> dict[str, Any]:
         "evolution": evolution,
         "replay": replay,
         "auto_upgrade": auto_upgrade,
+        "waiting_progress": waiting_progress,
+        "paper_real_calibration_plan": paper_real_calibration_plan,
         "waiting": waiting,
         "parity": parity,
         "skeleton": skeleton,
@@ -1481,6 +1485,10 @@ def render_cards(state: dict[str, Any]) -> str:
     parity_summary = state["parity"].get("summary") if isinstance(state["parity"].get("summary"), dict) else {}
     research = state["research"]
     kline_acceptance = research.get("kline_acceptance") if isinstance(research.get("kline_acceptance"), dict) else {}
+    waiting_progress = state.get("waiting_progress") if isinstance(state.get("waiting_progress"), dict) else {}
+    waiting_summary = waiting_progress.get("summary") if isinstance(waiting_progress.get("summary"), dict) else {}
+    b_gap = waiting_progress.get("b_v16_context_gap") if isinstance(waiting_progress.get("b_v16_context_gap"), dict) else {}
+    calibration = state.get("paper_real_calibration_plan") if isinstance(state.get("paper_real_calibration_plan"), dict) else {}
     paper = state.get("paper_exchange") if isinstance(state.get("paper_exchange"), dict) else {}
     market = state.get("market") if isinstance(state.get("market"), dict) else {}
     micro = state.get("microstructure") if isinstance(state.get("microstructure"), dict) else {}
@@ -1489,6 +1497,21 @@ def render_cards(state: dict[str, Any]) -> str:
         ("行情覆盖", f"{len(market.get('available_symbols') or [])} 币 / Top {len(market.get('top_symbols') or [])}", f"来源：{report_text(','.join(market.get('sources') or []) or '外部公开行情')}。"),
         ("盘口/CVD", f"{micro.get('fresh_symbols_240s', 0)} 新鲜", "给 B/v16 和后续复盘用。只存紧凑特征，不存全量原始 tick。"),
         ("策略升级样本", f"可考虑 {expansion.get('ready_count', 0)} / 继续收样 {expansion.get('maturing_count', 0)}", f"过去24小时还缺 {expansion.get('missing_samples_24h', 0)} 个样本。先让系统自然交易，不靠拍脑袋放大。"),
+        (
+            "等待期推进",
+            f"{waiting_summary.get('ready_or_active', 0)}/{waiting_summary.get('tasks', 0)} 项",
+            f"watch {waiting_summary.get('watch', 0)}，bad {waiting_summary.get('bad', 0)}；自动升级、自动回滚、自动调参仍是关闭。",
+        ),
+        (
+            "B/v16上下文",
+            f"open缺 {waiting_summary.get('b_v16_missing_open', b_gap.get('missing_open', 0))} / ATR缺 {waiting_summary.get('b_v16_missing_atr', b_gap.get('missing_atr', 0))}",
+            "只等新 OPEN/CLOSE 带源周期、ATR、paper fill；旧样本不硬补成可升级证据。",
+        ),
+        (
+            "纸实校准",
+            f"{calibration.get('pairs', 0)}/{calibration.get('min_pairs', 20)} 对",
+            "这里只是 plan-only 校准门槛；未批准、不启动真实小单、不解除自动升级 blocker。",
+        ),
         ("回放验收", plain_status(replay.get("status")), f"已准备 {replay_summary.get('ready_components', 0)}/{replay_summary.get('total_components', 0)} 块；下一步：{plain_status(replay.get('next_action'))}。"),
         ("同输入审计", f"{float(parity_summary.get('pass_rate_pct') or 0):.1f}% 通过", f"同一批输入下，已验 {parity_summary.get('gate_cases', 0)} 个策略判断，不一致 {parity_summary.get('mismatched', 0)} 个。"),
         ("K线/深度", plain_status(kline_acceptance.get("status")), "这是以后回测和升级策略的燃料。第一版先看是否在稳定积累，不急着一次补满。"),
@@ -1735,6 +1758,8 @@ tr:hover td {{ background:#101827; }}
           <a href="/reports/replay_readiness_latest.md">Replay 验收</a>
           <a href="/reports/auto_upgrade_readiness_latest.md">自动升级闸门</a>
           <a href="/reports/strategy_candidate_governance_latest.md">候选治理</a>
+          <a href="/reports/waiting_period_progress_latest.md">等待期推进</a>
+          <a href="/reports/paper_real_calibration_plan_latest.md">纸实校准计划</a>
           <a href="/reports/waiting_period_optimization_latest.html">等待期优化</a>
           <a href="/reports/market_review_latest.html">市场复盘日报</a>
           <a href="/reports/long_term_skeleton_latest.md">长期目标骨架</a>

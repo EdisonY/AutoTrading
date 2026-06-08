@@ -71,6 +71,10 @@ AUTO_UPGRADE_READINESS_JSON = ROOT / "runtime" / "auto_upgrade_readiness_latest.
 AUTO_UPGRADE_READINESS_MD = REPORTS_DIR / "auto_upgrade_readiness_latest.md"
 STRATEGY_CANDIDATE_GOVERNANCE_JSON = ROOT / "runtime" / "strategy_candidate_governance_latest.json"
 STRATEGY_CANDIDATE_GOVERNANCE_MD = REPORTS_DIR / "strategy_candidate_governance_latest.md"
+WAITING_PROGRESS_JSON = ROOT / "runtime" / "waiting_period_progress_latest.json"
+WAITING_PROGRESS_MD = REPORTS_DIR / "waiting_period_progress_latest.md"
+PAPER_REAL_CALIBRATION_PLAN_JSON = ROOT / "runtime" / "paper_real_calibration_plan_latest.json"
+PAPER_REAL_CALIBRATION_PLAN_MD = REPORTS_DIR / "paper_real_calibration_plan_latest.md"
 LONG_TERM_SKELETON_JSON = ROOT / "runtime" / "long_term_skeleton_latest.json"
 LONG_TERM_SKELETON_MD = REPORTS_DIR / "long_term_skeleton_latest.md"
 A_V11_ROLLOUT_JSON = ROOT / "runtime" / "a_v11_rollout_review_latest.json"
@@ -1153,6 +1157,92 @@ def strategy_candidate_governance_summary(path: Path | None) -> dict[str, Any]:
     }
 
 
+def waiting_period_progress_summary(path: Path | None) -> dict[str, Any]:
+    empty = {
+        "available": False,
+        "path": WAITING_PROGRESS_MD,
+        "age": "No waiting-period progress report",
+        "fresh": False,
+        "status": "missing",
+        "summary": {"tasks": 0, "ready_or_active": 0, "watch": 0, "bad": 0, "missing": 0},
+        "tasks": [],
+        "sample_quality": {},
+        "b_v16_context_gap": {},
+        "policy": {},
+        "paper_real_calibration_plan": {},
+        "api_disk_guard": {},
+        "safety": {},
+        "automatic_upgrade_allowed": False,
+        "automatic_rollback_allowed": False,
+        "automatic_tuning_allowed": False,
+        "apply_enabled": False,
+        "binance_requests_enabled": False,
+    }
+    payload = read_json(path) if path else None
+    if not isinstance(payload, dict):
+        return empty
+    generated_at = parse_dt(payload.get("generated_at"))
+    return {
+        "available": True,
+        "path": WAITING_PROGRESS_MD,
+        "age": age_text(generated_at),
+        "fresh": bool(generated_at and (datetime.now(CST) - generated_at).total_seconds() < 4 * 3600),
+        "status": payload.get("status") or "missing",
+        "summary": payload.get("summary") if isinstance(payload.get("summary"), dict) else empty["summary"],
+        "tasks": payload.get("tasks") if isinstance(payload.get("tasks"), list) else [],
+        "sample_quality": payload.get("sample_quality") if isinstance(payload.get("sample_quality"), dict) else {},
+        "b_v16_context_gap": payload.get("b_v16_context_gap") if isinstance(payload.get("b_v16_context_gap"), dict) else {},
+        "policy": payload.get("policy") if isinstance(payload.get("policy"), dict) else {},
+        "paper_real_calibration_plan": (
+            payload.get("paper_real_calibration_plan")
+            if isinstance(payload.get("paper_real_calibration_plan"), dict)
+            else {}
+        ),
+        "api_disk_guard": payload.get("api_disk_guard") if isinstance(payload.get("api_disk_guard"), dict) else {},
+        "safety": payload.get("safety") if isinstance(payload.get("safety"), dict) else {},
+        "automatic_upgrade_allowed": bool(payload.get("automatic_upgrade_allowed")),
+        "automatic_rollback_allowed": bool(payload.get("automatic_rollback_allowed")),
+        "automatic_tuning_allowed": bool(payload.get("automatic_tuning_allowed")),
+        "apply_enabled": bool(payload.get("apply_enabled")),
+        "binance_requests_enabled": bool(payload.get("binance_requests_enabled")),
+    }
+
+
+def paper_real_calibration_plan_summary(path: Path | None) -> dict[str, Any]:
+    empty = {
+        "available": False,
+        "path": PAPER_REAL_CALIBRATION_PLAN_MD,
+        "age": "No paper-real calibration plan",
+        "fresh": False,
+        "status": "missing",
+        "approved": False,
+        "apply_enabled": False,
+        "pairs": 0,
+        "min_pairs": 20,
+        "thresholds": {},
+        "evidence_schema": [],
+        "rule": "",
+    }
+    payload = read_json(path) if path else None
+    if not isinstance(payload, dict):
+        return empty
+    generated_at = parse_dt(payload.get("generated_at"))
+    return {
+        "available": True,
+        "path": PAPER_REAL_CALIBRATION_PLAN_MD,
+        "age": age_text(generated_at),
+        "fresh": bool(generated_at and (datetime.now(CST) - generated_at).total_seconds() < 4 * 3600),
+        "status": payload.get("status") or "missing",
+        "approved": bool(payload.get("approved")),
+        "apply_enabled": bool(payload.get("apply_enabled")),
+        "pairs": int(payload.get("pairs") or 0),
+        "min_pairs": int(payload.get("min_pairs") or 20),
+        "thresholds": payload.get("thresholds") if isinstance(payload.get("thresholds"), dict) else {},
+        "evidence_schema": payload.get("evidence_schema") if isinstance(payload.get("evidence_schema"), list) else [],
+        "rule": payload.get("rule") or "",
+    }
+
+
 def long_term_skeleton_summary(path: Path | None) -> dict[str, Any]:
     empty = {
         "available": False,
@@ -2014,6 +2104,9 @@ def function_status_cards(data: dict[str, Any]) -> list[dict[str, str]]:
     auto_upgrade_summary_data = auto_upgrade.get("summary") or {}
     candidate_governance = data.get("strategy_candidate_governance") or {}
     candidate_governance_summary_data = candidate_governance.get("summary") or {}
+    waiting_progress = data.get("waiting_period_progress") or {}
+    waiting_progress_summary_data = waiting_progress.get("summary") or {}
+    paper_real_calibration = data.get("paper_real_calibration_plan") or {}
     long_term_skeleton = data.get("long_term_skeleton") or {}
     long_term_skeleton_summary_data = long_term_skeleton.get("summary") or {}
     a_v11_rollout = data.get("a_v11_rollout") or {}
@@ -2504,6 +2597,63 @@ def function_status_cards(data: dict[str, Any]) -> list[dict[str, str]]:
                 f"auto allowed no; apply enabled no; updated {candidate_governance.get('age')}."
                 if candidate_governance.get("available")
                 else "Candidate governance registry missing. Parameter/sample lifecycle is not visible."
+            ),
+        },
+        {
+            "level": (
+                "bad"
+                if (
+                    waiting_progress.get("automatic_upgrade_allowed")
+                    or waiting_progress.get("automatic_rollback_allowed")
+                    or waiting_progress.get("automatic_tuning_allowed")
+                    or waiting_progress.get("apply_enabled")
+                    or waiting_progress.get("binance_requests_enabled")
+                    or int(waiting_progress_summary_data.get("bad") or 0) > 0
+                )
+                else "warn"
+                if int(waiting_progress_summary_data.get("watch") or 0)
+                else "ok"
+                if waiting_progress.get("fresh")
+                else "warn"
+            ),
+            "name": "等待期推进总账",
+            "value": (
+                f"{int(waiting_progress_summary_data.get('ready_or_active') or 0)}/"
+                f"{int(waiting_progress_summary_data.get('tasks') or 0)} tasks"
+                if waiting_progress.get("available")
+                else "not built"
+            ),
+            "body": (
+                f"watch {int(waiting_progress_summary_data.get('watch') or 0)}; "
+                f"bad {int(waiting_progress_summary_data.get('bad') or 0)}; "
+                f"missing {int(waiting_progress_summary_data.get('missing') or 0)}; "
+                f"B/v16 missing_open {int(waiting_progress_summary_data.get('b_v16_missing_open') or 0)}, "
+                f"missing_atr {int(waiting_progress_summary_data.get('b_v16_missing_atr') or 0)}; "
+                f"auto/rollback/tuning/apply/binance all no; updated {waiting_progress.get('age')}."
+                if waiting_progress.get("available")
+                else "Waiting-period progress ledger missing. Remaining report-only work is not visible."
+            ),
+        },
+        {
+            "level": (
+                "bad"
+                if paper_real_calibration.get("approved") or paper_real_calibration.get("apply_enabled")
+                else "ok"
+                if paper_real_calibration.get("fresh") and int(paper_real_calibration.get("pairs") or 0) >= int(paper_real_calibration.get("min_pairs") or 20)
+                else "warn"
+            ),
+            "name": "paper-vs-small-real校准",
+            "value": (
+                f"{int(paper_real_calibration.get('pairs') or 0)}/"
+                f"{int(paper_real_calibration.get('min_pairs') or 20)} pairs"
+                if paper_real_calibration.get("available")
+                else "not built"
+            ),
+            "body": (
+                f"status {paper_real_calibration.get('status') or '-'}; "
+                f"approved no; apply enabled no; updated {paper_real_calibration.get('age')}."
+                if paper_real_calibration.get("available")
+                else "Paper-real calibration plan missing. It must remain plan-only until separate approval."
             ),
         },
         {
@@ -3071,6 +3221,10 @@ def build_data() -> dict[str, Any]:
     data["auto_upgrade_readiness_html"] = AUTO_UPGRADE_READINESS_MD
     data["strategy_candidate_governance"] = strategy_candidate_governance_summary(STRATEGY_CANDIDATE_GOVERNANCE_JSON)
     data["strategy_candidate_governance_html"] = STRATEGY_CANDIDATE_GOVERNANCE_MD
+    data["waiting_period_progress"] = waiting_period_progress_summary(WAITING_PROGRESS_JSON)
+    data["waiting_period_progress_html"] = WAITING_PROGRESS_MD
+    data["paper_real_calibration_plan"] = paper_real_calibration_plan_summary(PAPER_REAL_CALIBRATION_PLAN_JSON)
+    data["paper_real_calibration_plan_html"] = PAPER_REAL_CALIBRATION_PLAN_MD
     data["long_term_skeleton"] = long_term_skeleton_summary(LONG_TERM_SKELETON_JSON)
     data["long_term_skeleton_html"] = LONG_TERM_SKELETON_MD
     data["a_v11_rollout"] = a_v11_rollout_summary(A_V11_ROLLOUT_JSON)
@@ -3750,6 +3904,50 @@ def render_html(out_dir: Path) -> str:
         f"<tr><td>{h(item)}</td></tr>"
         for item in (waiting_opt.get("actions") or [])
     ) or '<tr><td>暂无等待期动作</td></tr>'
+    waiting_progress = data.get("waiting_period_progress") or {}
+    waiting_progress_summary_data = waiting_progress.get("summary") or {}
+    waiting_progress_task_rows = "".join(
+        f"""
+<tr>
+  <td>{h(r.get('title'))}</td>
+  <td>{h(r.get('status'))}</td>
+  <td>{h(r.get('level'))}</td>
+  <td>{h(compact_text(r.get('evidence') or '-', 180))}</td>
+  <td>{h(compact_text(r.get('next_action') or '-', 180))}</td>
+  <td>{'no' if not r.get('apply_enabled') else 'yes'}</td>
+</tr>
+""".strip()
+        for r in (waiting_progress.get("tasks") or [])
+    ) or '<tr><td colspan="6">暂无 waiting-period progress ledger</td></tr>'
+    waiting_b_gap = waiting_progress.get("b_v16_context_gap") or {}
+    waiting_policy = waiting_progress.get("policy") or {}
+    waiting_sample_quality = waiting_progress.get("sample_quality") or {}
+    waiting_api_disk = waiting_progress.get("api_disk_guard") or {}
+    waiting_api = waiting_api_disk.get("api") or {}
+    waiting_disk = waiting_api_disk.get("disk") or {}
+    waiting_market = waiting_api_disk.get("market") or {}
+    waiting_micro = waiting_api_disk.get("microstructure") or {}
+    waiting_progress_safety = waiting_progress.get("safety") or {}
+    waiting_safety_rows = "".join(
+        f"<tr><td>{h(name)}</td><td>{h(value)}</td></tr>"
+        for name, value in (
+            ("automatic_upgrade_allowed", waiting_progress.get("automatic_upgrade_allowed")),
+            ("automatic_rollback_allowed", waiting_progress.get("automatic_rollback_allowed")),
+            ("automatic_tuning_allowed", waiting_progress.get("automatic_tuning_allowed")),
+            ("apply_enabled", waiting_progress.get("apply_enabled")),
+            ("binance_requests_enabled", waiting_progress.get("binance_requests_enabled")),
+            ("forbidden_actions", len(waiting_progress_safety.get("forbidden_actions") or [])),
+        )
+    )
+    paper_real_calibration = data.get("paper_real_calibration_plan") or {}
+    calibration_threshold_rows = "".join(
+        f"<tr><td>{h(key)}</td><td>{h(value)}</td></tr>"
+        for key, value in (paper_real_calibration.get("thresholds") or {}).items()
+    ) or '<tr><td colspan="2">暂无校准门槛</td></tr>'
+    calibration_schema_rows = "".join(
+        f"<tr><td>{h(field)}</td></tr>"
+        for field in (paper_real_calibration.get("evidence_schema") or [])[:24]
+    ) or '<tr><td>暂无校准字段</td></tr>'
     long_term_skeleton = data.get("long_term_skeleton") or {}
     long_term_skeleton_summary_data = long_term_skeleton.get("summary") or {}
     long_term_skeleton_rows = "".join(
@@ -4101,6 +4299,22 @@ def render_html(out_dir: Path) -> str:
             data["waiting_optimization_html"],
             "看等待期优化",
             "green",
+        ),
+        route_card(
+            "等待期推进总账",
+            "只读收口",
+            "看样本质检、B/v16上下文缺口、policy模板、dry-run预览、API/磁盘和防误开安全项。",
+            data["waiting_period_progress_html"],
+            "看推进总账",
+            "green",
+        ),
+        route_card(
+            "纸实校准计划",
+            "自动化前置",
+            "看 paper-vs-small-real 未来怎么比对滑点、成交比例和确认延迟；当前只出计划，不启动真实小单。",
+            data["paper_real_calibration_plan_html"],
+            "看校准计划",
+            "slate",
         ),
         route_card(
             "回滚能不能决策",
@@ -4499,6 +4713,41 @@ th {{ background:#f1f5f9; color:#334155; }}
     <table class="subtable">
       <thead><tr><th>等待期动作</th></tr></thead>
       <tbody>{waiting_action_rows}</tbody>
+    </table>
+  </section>
+
+  <section class="section panel">
+    <h2>Waiting Period Progress</h2>
+    <p class="note">等待样本期间的可推进事项总账。状态 {h(waiting_progress.get('status', '-'))}；tasks {int(waiting_progress_summary_data.get('ready_or_active') or 0)}/{int(waiting_progress_summary_data.get('tasks') or 0)}；watch {int(waiting_progress_summary_data.get('watch') or 0)}；bad {int(waiting_progress_summary_data.get('bad') or 0)}；missing {int(waiting_progress_summary_data.get('missing') or 0)}；auto/rollback/tuning/apply/binance 全部 no；更新 {h(waiting_progress.get('age'))}。</p>
+    <table>
+      <thead><tr><th>事项</th><th>状态</th><th>级别</th><th>证据</th><th>下一步</th><th>Apply</th></tr></thead>
+      <tbody>{waiting_progress_task_rows}</tbody>
+    </table>
+    <table class="subtable">
+      <thead><tr><th>模块</th><th>状态/数值</th><th>说明</th></tr></thead>
+      <tbody>
+        <tr><td>样本质检</td><td>{h(waiting_sample_quality.get('status') or '-')}</td><td>required_fields {len(waiting_sample_quality.get('required_fields') or [])}；blockers {len(waiting_sample_quality.get('blockers') or [])}</td></tr>
+        <tr><td>B/v16 context gap</td><td>missing_open {int(waiting_b_gap.get('missing_open') or 0)} / missing_atr {int(waiting_b_gap.get('missing_atr') or 0)}</td><td>{h(compact_text(waiting_b_gap.get('root_cause') or '-', 220))}</td></tr>
+        <tr><td>policy模板</td><td>{h(waiting_policy.get('status') or '-')}</td><td>approved {str(bool(waiting_policy.get('approved'))).lower()}；automatic_upgrade_enabled {str(bool(waiting_policy.get('automatic_upgrade_enabled'))).lower()}</td></tr>
+        <tr><td>API/磁盘</td><td>disk {float(waiting_disk.get('used_pct') or 0):.1f}% / API {int(waiting_api.get('rate_limit_total') or 0)}</td><td>market_age {h(waiting_market.get('age_sec'))}；micro fresh {int(waiting_micro.get('fresh_symbols_240s') or 0)}/{int(waiting_micro.get('coverage_symbols') or 0)}</td></tr>
+      </tbody>
+    </table>
+    <table class="subtable">
+      <thead><tr><th>安全旗标</th><th>值</th></tr></thead>
+      <tbody>{waiting_safety_rows}</tbody>
+    </table>
+  </section>
+
+  <section class="section panel">
+    <h2>Paper Vs Small Real Calibration Plan</h2>
+    <p class="note">纸面账本和未来小额真实成交的校准计划。状态 {h(paper_real_calibration.get('status', '-'))}；pairs {int(paper_real_calibration.get('pairs') or 0)}/{int(paper_real_calibration.get('min_pairs') or 20)}；approved no；apply enabled no；更新 {h(paper_real_calibration.get('age'))}。这不是开实盘，也不解除自动升级 blocker。</p>
+    <table>
+      <thead><tr><th>门槛</th><th>值</th></tr></thead>
+      <tbody>{calibration_threshold_rows}</tbody>
+    </table>
+    <table class="subtable">
+      <thead><tr><th>证据字段</th></tr></thead>
+      <tbody>{calibration_schema_rows}</tbody>
     </table>
   </section>
 

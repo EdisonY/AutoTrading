@@ -79,6 +79,7 @@ $PYTHON rollback_execution_plan.py --runtime-dir $REMOTE_DIR/runtime --reports-d
 $PYTHON rollback_automation_guard.py --runtime-dir $REMOTE_DIR/runtime --reports-dir $REMOTE_DIR/reports || true
 $PYTHON auto_upgrade_readiness.py --runtime-dir $REMOTE_DIR/runtime --reports-dir $REMOTE_DIR/reports || true
 $PYTHON strategy_candidate_governance.py --runtime-dir $REMOTE_DIR/runtime --reports-dir $REMOTE_DIR/reports || true
+$PYTHON waiting_period_progress.py --runtime-dir $REMOTE_DIR/runtime --reports-dir $REMOTE_DIR/reports --policy-json $REMOTE_DIR/research_memory/approvals/auto_upgrade_policy.json || true
 
 echo "--- Step 8: Decision attention ledger ---"
 $PYTHON decision_attention.py || true

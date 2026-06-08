@@ -64,6 +64,8 @@ MAIN_FILES = [
     ("reports/rollback_automation_guard_latest.md", "reports/rollback_automation_guard_latest.md", False),
     ("reports/auto_upgrade_readiness_latest.md", "reports/auto_upgrade_readiness_latest.md", False),
     ("reports/strategy_candidate_governance_latest.md", "reports/strategy_candidate_governance_latest.md", False),
+    ("reports/waiting_period_progress_latest.md", "reports/waiting_period_progress_latest.md", False),
+    ("reports/paper_real_calibration_plan_latest.md", "reports/paper_real_calibration_plan_latest.md", False),
     ("reports/a_v11_rollout_review_latest.md", "reports/a_v11_rollout_review_latest.md", False),
     ("reports/b_v16_rollout_review_latest.md", "reports/b_v16_rollout_review_latest.md", False),
     ("reports/alerts_latest.md", "reports/alerts_latest.md", False),
@@ -97,6 +99,8 @@ MAIN_FILES = [
     ("runtime/rollback_automation_guard_latest.json", "runtime/rollback_automation_guard_latest.json", False),
     ("runtime/auto_upgrade_readiness_latest.json", "runtime/auto_upgrade_readiness_latest.json", False),
     ("runtime/strategy_candidate_governance_latest.json", "runtime/strategy_candidate_governance_latest.json", False),
+    ("runtime/waiting_period_progress_latest.json", "runtime/waiting_period_progress_latest.json", False),
+    ("runtime/paper_real_calibration_plan_latest.json", "runtime/paper_real_calibration_plan_latest.json", False),
     ("runtime/a_v11_rollout_review_latest.json", "runtime/a_v11_rollout_review_latest.json", False),
     ("runtime/b_v16_rollout_review_latest.json", "runtime/b_v16_rollout_review_latest.json", False),
     ("research_memory/attention/open_items.json", "runtime/live_attention_latest.json", True),
@@ -198,6 +202,7 @@ attention = read_json(root / "research_memory" / "attention" / "open_items.json"
 evolution = read_json(root / "runtime" / "strategy_evolution_latest.json")
 auto_upgrade = read_json(root / "runtime" / "auto_upgrade_readiness_latest.json")
 candidate_governance = read_json(root / "runtime" / "strategy_candidate_governance_latest.json")
+waiting_progress = read_json(root / "runtime" / "waiting_period_progress_latest.json")
 services = {
     name: unit_state(name)
     for name in (
@@ -266,6 +271,15 @@ print(json.dumps({
         "apply_enabled": candidate_governance.get("apply_enabled"),
         "summary": candidate_governance.get("summary", {}),
         "lifecycle_summary": candidate_governance.get("lifecycle_summary", {}),
+    },
+    "waiting_period_progress_summary": {
+        "status": waiting_progress.get("status"),
+        "automatic_upgrade_allowed": waiting_progress.get("automatic_upgrade_allowed"),
+        "automatic_rollback_allowed": waiting_progress.get("automatic_rollback_allowed"),
+        "automatic_tuning_allowed": waiting_progress.get("automatic_tuning_allowed"),
+        "apply_enabled": waiting_progress.get("apply_enabled"),
+        "binance_requests_enabled": waiting_progress.get("binance_requests_enabled"),
+        "summary": waiting_progress.get("summary", {}),
     },
 }, ensure_ascii=False))
 """
@@ -553,6 +567,7 @@ def main(argv: list[str] | None = None) -> int:
                 "attention": live.get("attention_summary"),
                 "auto_upgrade_readiness": live.get("auto_upgrade_readiness_summary"),
                 "strategy_candidate_governance": live.get("strategy_candidate_governance_summary"),
+                "waiting_period_progress": live.get("waiting_period_progress_summary"),
                 "output": str(ROOT / "runtime" / "live_context_summary_latest.json"),
             },
             ensure_ascii=False,

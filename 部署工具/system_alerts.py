@@ -74,6 +74,17 @@ WATCH_SHARDS = [
     ROOT / "scanner_data_v16" / "events",
 ]
 
+
+def construction_pause_body(unit: str, state: str, *, is_timer: bool) -> str:
+    if unit == "crypto-data-maintenance.timer":
+        return (
+            f"systemd 状态为 {state}；数据维护定时器仍按 staged validation 暂停。"
+            "这是维护/长期任务提示，不影响当前 A/B/C 自建模拟账本运行；"
+            "自动回滚/自动调参仍等 replay/data 与样本门控。"
+        )
+    unit_label = "timer" if is_timer else "服务"
+    return f"systemd 状态为 {state}；长期任务 staged validation 未完成，{unit_label}按计划保持暂停。"
+
 WATCH_TEXT_LOGS = [
     ROOT / "logs" / "scanner_stderr.log",
     ROOT / "logs" / "scanner_stdout.log",
@@ -446,7 +457,7 @@ def collect_alerts() -> dict[str, Any]:
                 alerts.append({
                     "level": "warn",
                     "title": f"施工暂停：{service}",
-                    "body": f"systemd 状态为 {state}；长期任务 staged validation 未完成，服务按计划保持暂停。",
+                    "body": construction_pause_body(service, state, is_timer=False),
                 })
             elif service == REAL_ACCOUNT_SNAPSHOT_SERVICE and account_in_cooldown:
                 resume_text = account_retry.isoformat() if account_retry else "resume timer active"
@@ -465,7 +476,7 @@ def collect_alerts() -> dict[str, Any]:
                 alerts.append({
                     "level": "warn",
                     "title": f"施工暂停：{timer}",
-                    "body": f"systemd 状态为 {state}；长期任务 staged validation 未完成，timer 按计划保持暂停。",
+                    "body": construction_pause_body(timer, state, is_timer=True),
                 })
             else:
                 alerts.append({"level": "bad", "title": f"定时任务未运行：{timer}", "body": f"systemd 状态为 {state}"})

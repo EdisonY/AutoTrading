@@ -85,6 +85,8 @@ class SystemAlertsConstructionModeTests(unittest.TestCase):
         self.assertTrue(payload["construction_mode"]["enabled"])
         bad_titles = [item["title"] for item in payload["alerts"] if item["level"] == "bad"]
         self.assertFalse([title for title in bad_titles if "服务异常" in title or "定时任务未运行" in title])
+        maintenance = next(item for item in payload["alerts"] if item["title"] == "施工暂停：crypto-data-maintenance.timer")
+        self.assertIn("不影响当前 A/B/C 自建模拟账本运行", maintenance["body"])
 
     def test_paper_mainline_suppresses_real_account_snapshot_alerts(self):
         self.tool.CONSTRUCTION_MODE_MARKER.write_text(

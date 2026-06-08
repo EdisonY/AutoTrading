@@ -172,6 +172,13 @@ class DecisionPortalTests(unittest.TestCase):
         text = self.tool.plain_strategy_reason("15m无确认信号", "skip")
         self.assertEqual(text, "有候选，但15分钟确认没有跟上，所以策略按规则没开仓。")
 
+    def test_plain_strategy_reason_explains_non_tradable_external_candidate(self):
+        text = self.tool.plain_strategy_reason("合约不存在", "skip")
+        self.assertEqual(
+            text,
+            "候选来自外部行情，但不在当前策略可交易/可模拟合约清单里；系统没有让它进入自建模拟账本，不是账本下单失败。",
+        )
+
     def test_plain_strategy_reason_separates_post_submit_confirmation(self):
         text = self.tool.plain_strategy_reason(
             "下单失败(open_confirm_account_state_unavailable): fresh central account state unavailable for confirmation",

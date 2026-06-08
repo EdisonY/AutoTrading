@@ -179,6 +179,35 @@ class DecisionPortalTests(unittest.TestCase):
             "候选来自外部行情，但不在当前策略可交易/可模拟合约清单里；系统没有让它进入自建模拟账本，不是账本下单失败。",
         )
 
+    def test_alerts_prefer_tencent_live_mirror_over_newer_shadow_local(self):
+        old_runtime = self.tool.RUNTIME_DIR
+        old_mirror = self.tool.MIRROR_RUNTIME_DIR
+        try:
+            runtime = self.root / "runtime"
+            mirror = self.root / "server_logs_tencent" / "runtime"
+            runtime.mkdir(parents=True)
+            mirror.mkdir(parents=True)
+            self.tool.RUNTIME_DIR = runtime
+            self.tool.MIRROR_RUNTIME_DIR = mirror
+            local = runtime / "alerts_latest.json"
+            mirrored = mirror / "alerts_latest.json"
+            local.write_text(
+                json.dumps({"alerts": [{"title": "施工暂停：crypto-data-maintenance.timer", "body": "old shadow wording"}]}, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            mirrored.write_text(
+                json.dumps({"alerts": [{"title": "施工暂停：crypto-data-maintenance.timer", "body": "new Tencent live wording"}]}, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            os.utime(local, (time.time() + 10, time.time() + 10))
+
+            payload = self.tool.read_alerts_json()
+
+            self.assertEqual(payload["alerts"][0]["body"], "new Tencent live wording")
+        finally:
+            self.tool.RUNTIME_DIR = old_runtime
+            self.tool.MIRROR_RUNTIME_DIR = old_mirror
+
     def test_plain_strategy_reason_separates_post_submit_confirmation(self):
         text = self.tool.plain_strategy_reason(
             "下单失败(open_confirm_account_state_unavailable): fresh central account state unavailable for confirmation",

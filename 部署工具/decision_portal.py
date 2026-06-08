@@ -69,6 +69,13 @@ def read_first_json(*paths: Path) -> dict[str, Any]:
     return {}
 
 
+def read_alerts_json() -> dict[str, Any]:
+    mirror = read_json(MIRROR_RUNTIME_DIR / "alerts_latest.json")
+    if mirror:
+        return mirror
+    return read_json(RUNTIME_DIR / "alerts_latest.json")
+
+
 def parse_dt(value: Any) -> datetime | None:
     if not value:
         return None
@@ -919,7 +926,7 @@ def cleanup_summary() -> dict[str, Any]:
 
 def build_state() -> dict[str, Any]:
     live_context = read_first_json(RUNTIME_DIR / "live_context_summary_latest.json", MIRROR_RUNTIME_DIR / "live_context_summary_latest.json")
-    alerts = read_first_json(RUNTIME_DIR / "alerts_latest.json", MIRROR_RUNTIME_DIR / "alerts_latest.json")
+    alerts = read_alerts_json()
     account = read_first_json(RUNTIME_DIR / "account_snapshot_latest.json", MIRROR_RUNTIME_DIR / "account_snapshot_latest.json")
     evolution = read_first_json(RUNTIME_DIR / "strategy_evolution_latest.json", MIRROR_RUNTIME_DIR / "strategy_evolution_latest.json")
     replay = read_first_json(RUNTIME_DIR / "replay_readiness_latest.json", MIRROR_RUNTIME_DIR / "replay_readiness_latest.json")

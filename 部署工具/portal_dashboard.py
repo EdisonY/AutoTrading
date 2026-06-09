@@ -45,6 +45,8 @@ RESEARCH_STORE_JSON = ROOT / "runtime" / "research_store_summary_latest.json"
 RESEARCH_STORE_MD = REPORTS_DIR / "research_store_summary_latest.md"
 KLINE_BACKFILL_JSON = ROOT / "runtime" / "research_kline_backfill_latest.json"
 KLINE_BACKFILL_MD = REPORTS_DIR / "research_kline_backfill_latest.md"
+HISTORICAL_KLINE_JSON = ROOT / "runtime" / "historical_kline_backfill_latest.json"
+HISTORICAL_KLINE_MD = REPORTS_DIR / "historical_kline_backfill_latest.md"
 DEPTH_BACKFILL_JSON = ROOT / "runtime" / "research_depth_backfill_latest.json"
 DEPTH_BACKFILL_MD = REPORTS_DIR / "research_depth_backfill_latest.md"
 RESEARCH_RETENTION_JSON = ROOT / "runtime" / "research_store_retention_latest.json"
@@ -697,6 +699,54 @@ def kline_backfill_summary(path: Path | None) -> dict[str, Any]:
         "plan": plan,
         "submit": submit,
         "ingest": ingest,
+    }
+
+
+def historical_kline_backfill_summary(path: Path | None) -> dict[str, Any]:
+    empty = {
+        "available": False,
+        "path": HISTORICAL_KLINE_MD,
+        "age": "无历史K线进度",
+        "fresh": False,
+        "status": "missing",
+        "mode": "plan_only",
+        "apply_enabled": False,
+        "binance_requests_enabled": False,
+        "strategy_frequency_change": False,
+        "live_scanner_impact": "none",
+        "config": {},
+        "universe": {"symbols": []},
+        "progress": {
+            "total_tasks": 0,
+            "completed_requests": 0,
+            "failed_requests": 0,
+            "skipped_existing": 0,
+            "percent": 0.0,
+            "fetched_rows": 0,
+            "written_rows": 0,
+            "planned_bars_estimate": 0,
+        },
+    }
+    payload = read_json(path) if path else None
+    if not isinstance(payload, dict):
+        return empty
+    generated_at = parse_dt(payload.get("generated_at"))
+    return {
+        "available": True,
+        "path": HISTORICAL_KLINE_MD,
+        "age": age_text(generated_at),
+        "fresh": bool(generated_at and (datetime.now(CST) - generated_at).total_seconds() < 4 * 3600),
+        "status": payload.get("status") or "unknown",
+        "mode": payload.get("mode") or "plan_only",
+        "apply_enabled": bool(payload.get("apply_enabled")),
+        "binance_requests_enabled": bool(payload.get("binance_requests_enabled")),
+        "strategy_frequency_change": bool(payload.get("strategy_frequency_change")),
+        "live_scanner_impact": payload.get("live_scanner_impact") or "none",
+        "config": payload.get("config") if isinstance(payload.get("config"), dict) else {},
+        "universe": payload.get("universe") if isinstance(payload.get("universe"), dict) else {"symbols": []},
+        "progress": payload.get("progress") if isinstance(payload.get("progress"), dict) else empty["progress"],
+        "last_task": payload.get("last_task") if isinstance(payload.get("last_task"), dict) else {},
+        "errors": payload.get("errors") if isinstance(payload.get("errors"), list) else [],
     }
 
 
@@ -2075,6 +2125,9 @@ def function_status_cards(data: dict[str, Any]) -> list[dict[str, str]]:
     kline_backfill_plan = (kline_backfill.get("plan") or {}).get("summary") or {}
     kline_backfill_submit = kline_backfill.get("submit") or {}
     kline_backfill_ingest = kline_backfill.get("ingest") or {}
+    historical_kline = data.get("historical_kline_backfill") or {}
+    historical_progress = historical_kline.get("progress") or {}
+    historical_config = historical_kline.get("config") or {}
     depth_backfill = data.get("depth_backfill") or {}
     depth_backfill_plan = (depth_backfill.get("plan") or {}).get("summary") or {}
     depth_backfill_submit = depth_backfill.get("submit") or {}
@@ -2299,6 +2352,31 @@ def function_status_cards(data: dict[str, Any]) -> list[dict[str, str]]:
                 f"ingested rows {int(kline_backfill_ingest.get('backfill_rows') or 0)}; 更新 {kline_backfill.get('age')}。默认只生成计划，不直接请求 Binance。"
                 if kline_backfill.get("available")
                 else "K线长历史补数计划尚未生成；30日覆盖缺口只能先从现有 research_store 判断。"
+            ),
+        },
+        {
+            "level": (
+                "ok"
+                if historical_kline.get("fresh") and historical_kline.get("status") in {"complete", "planned"}
+                else "warn"
+                if historical_kline.get("available")
+                else "warn"
+            ),
+            "name": "Top30一年历史K线",
+            "value": (
+                f"{float(historical_progress.get('percent') or 0):.1f}%"
+                if historical_kline.get("available")
+                else "未生成"
+            ),
+            "body": (
+                f"状态 {historical_kline.get('status', '-')}; "
+                f"{int(historical_progress.get('completed_requests') or 0)}/{int(historical_progress.get('total_tasks') or 0)} 请求；"
+                f"已写 {int(historical_progress.get('written_rows') or 0)} 行；"
+                f"限速 {historical_config.get('max_rps', '-')} req/s；"
+                f"live影响 {historical_kline.get('live_scanner_impact', 'none')}；"
+                f"Binance请求 {historical_kline.get('binance_requests_enabled')}。"
+                if historical_kline.get("available")
+                else "Top30一年历史K线进度尚未生成；首页刷新只读进度文件，不打历史API。"
             ),
         },
         {
@@ -3195,6 +3273,8 @@ def build_data() -> dict[str, Any]:
     data["research_store_html"] = RESEARCH_STORE_MD
     data["kline_backfill"] = kline_backfill_summary(KLINE_BACKFILL_JSON)
     data["kline_backfill_html"] = KLINE_BACKFILL_MD
+    data["historical_kline_backfill"] = historical_kline_backfill_summary(HISTORICAL_KLINE_JSON)
+    data["historical_kline_backfill_html"] = HISTORICAL_KLINE_MD
     data["depth_backfill"] = depth_backfill_summary(DEPTH_BACKFILL_JSON)
     data["depth_backfill_html"] = DEPTH_BACKFILL_MD
     data["research_retention"] = research_retention_summary(RESEARCH_RETENTION_JSON)
@@ -4259,6 +4339,14 @@ def render_html(out_dir: Path) -> str:
             data["kline_backfill_html"],
             "看补数计划",
             "slate",
+        ),
+        route_card(
+            "Top30一年历史K线",
+            "离线拉取进度",
+            "看市值Top30一年期K线回填进度、限速、已写行数和最近任务。首页刷新只读进度文件，不会打历史API或影响三策略扫描。",
+            data["historical_kline_backfill_html"],
+            "看历史K线进度",
+            "blue",
         ),
         route_card(
             "盘口深度怎么采",

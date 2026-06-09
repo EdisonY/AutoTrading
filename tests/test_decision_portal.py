@@ -262,6 +262,44 @@ class DecisionPortalTests(unittest.TestCase):
             "订单已提交到交易所，但还没有确认成交成仓；系统不会先建本地假仓，会等回执或下一轮核对。",
         )
 
+    def test_historical_kline_progress_shows_safe_report_only_status(self):
+        payload = {
+            "generated_at": "2026-06-09T12:00:00+08:00",
+            "status": "planned",
+            "mode": "plan_only",
+            "apply_enabled": False,
+            "live_scanner_impact": "none",
+            "binance_requests_enabled": False,
+            "strategy_frequency_change": False,
+            "config": {"max_rps": 0.5, "intervals": ["15m", "1h"]},
+            "universe": {"symbols": ["BTCUSDT", "ETHUSDT"]},
+            "progress": {
+                "total_tasks": 100,
+                "completed_requests": 12,
+                "failed_requests": 0,
+                "skipped_existing": 3,
+                "percent": 15.0,
+                "written_rows": 2400,
+                "planned_bars_estimate": 120000,
+            },
+            "last_task": {
+                "symbol": "BTCUSDT",
+                "interval": "1h",
+                "start": "2026-06-08T00:00:00+08:00",
+                "end": "2026-06-09T00:00:00+08:00",
+                "provider": "bybit",
+                "rows": 24,
+            },
+        }
+
+        html = self.tool.render_historical_kline_progress({"historical_kline": payload})
+
+        self.assertIn("15.00%", html)
+        self.assertIn("BTCUSDT, ETHUSDT", html)
+        self.assertIn("Binance 请求 False", html)
+        self.assertIn("扫描频率改动 False", html)
+        self.assertIn("不影响三策略扫描频率", html)
+
     def test_strategy_detail_shows_position_pnl_and_fee_without_funding(self):
         account = {
             "accounts": [

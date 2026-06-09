@@ -48,6 +48,31 @@ class ReleaseManagerBundleTests(unittest.TestCase):
                 self.assertIn("waiting_period_progress.py", remotes)
                 self.assertIn("research_memory/approvals/auto_upgrade_policy.json", remotes)
 
+    def test_historical_kline_backfill_is_research_shadow_only(self):
+        for component in ("research", "all"):
+            with self.subTest(target="tencent", component=component):
+                remotes = {remote for _local, remote in self.tool.TENCENT_COMPONENTS[component]["files"]}
+                self.assertIn("historical_kline_backfill.py", remotes)
+
+        for component in ("shadow", "all"):
+            with self.subTest(target="aliyun", component=component):
+                remotes = {remote for _local, remote in self.tool.ALIYUN_COMPONENTS[component]["files"]}
+                self.assertIn("historical_kline_backfill.py", remotes)
+
+        for component in ("portal", "strategy-a", "strategy-b", "strategy-c", "sentinel", "market-data"):
+            with self.subTest(component=component):
+                remotes = {remote for _local, remote in self.tool.TENCENT_COMPONENTS[component]["files"]}
+                self.assertNotIn("historical_kline_backfill.py", remotes)
+
+        for target_name, components in (
+            ("tencent", self.tool.TENCENT_COMPONENTS),
+            ("aliyun", self.tool.ALIYUN_COMPONENTS),
+        ):
+            for component, spec in components.items():
+                with self.subTest(target=target_name, component=component):
+                    posts = "\n".join(spec.get("post") or [])
+                    self.assertNotIn("historical_kline_backfill.py", posts)
+
     def test_tencent_binance_components_include_start_guard(self):
         for component in ("sentinel", "account", "account-state", "api-queue", "user-stream", "all"):
             with self.subTest(component=component):

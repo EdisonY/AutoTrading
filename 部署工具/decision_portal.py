@@ -1178,6 +1178,7 @@ def build_state() -> dict[str, Any]:
     skeleton = read_first_json(RUNTIME_DIR / "long_term_skeleton_latest.json", MIRROR_RUNTIME_DIR / "long_term_skeleton_latest.json")
     research = read_first_json(RUNTIME_DIR / "research_store_summary_latest.json", MIRROR_RUNTIME_DIR / "research_store_summary_latest.json")
     kline = read_first_json(RUNTIME_DIR / "research_kline_backfill_latest.json", MIRROR_RUNTIME_DIR / "research_kline_backfill_latest.json")
+    historical_kline = read_first_json(RUNTIME_DIR / "historical_kline_backfill_latest.json", MIRROR_RUNTIME_DIR / "historical_kline_backfill_latest.json")
     depth = read_first_json(RUNTIME_DIR / "research_depth_backfill_latest.json", MIRROR_RUNTIME_DIR / "research_depth_backfill_latest.json")
     paper_exchange = read_live_runtime_json("paper_exchange_latest.json")
     market = read_live_runtime_json("market_data_cache.json")
@@ -1222,6 +1223,7 @@ def build_state() -> dict[str, Any]:
         "skeleton": skeleton,
         "research": research,
         "kline": kline,
+        "historical_kline": historical_kline,
         "depth": depth,
         "paper_exchange": paper_exchange,
         "market": market,
@@ -1490,6 +1492,8 @@ def render_cards(state: dict[str, Any]) -> str:
     research = state["research"]
     kline_acceptance = research.get("kline_acceptance") if isinstance(research.get("kline_acceptance"), dict) else {}
     waiting_progress = state.get("waiting_progress") if isinstance(state.get("waiting_progress"), dict) else {}
+    historical = state.get("historical_kline") if isinstance(state.get("historical_kline"), dict) else {}
+    historical_progress = historical.get("progress") if isinstance(historical.get("progress"), dict) else {}
     waiting_summary = waiting_progress.get("summary") if isinstance(waiting_progress.get("summary"), dict) else {}
     b_gap = waiting_progress.get("b_v16_context_gap") if isinstance(waiting_progress.get("b_v16_context_gap"), dict) else {}
     calibration = state.get("paper_real_calibration_plan") if isinstance(state.get("paper_real_calibration_plan"), dict) else {}
@@ -1519,11 +1523,58 @@ def render_cards(state: dict[str, Any]) -> str:
         ("回放验收", plain_status(replay.get("status")), f"已准备 {replay_summary.get('ready_components', 0)}/{replay_summary.get('total_components', 0)} 块；下一步：{plain_status(replay.get('next_action'))}。"),
         ("同输入审计", f"{float(parity_summary.get('pass_rate_pct') or 0):.1f}% 通过", f"同一批输入下，已验 {parity_summary.get('gate_cases', 0)} 个策略判断，不一致 {parity_summary.get('mismatched', 0)} 个。"),
         ("K线/深度", plain_status(kline_acceptance.get("status")), "这是以后回测和升级策略的燃料。第一版先看是否在稳定积累，不急着一次补满。"),
+        (
+            "一年历史K线",
+            f"{float(historical_progress.get('percent') or 0):.1f}% / {plain_status(historical.get('status') or 'missing')}",
+            "Top30 离线拉取进度。只读进度文件，不随首页刷新打 API，不影响三策略扫描频率。",
+        ),
     ]
     return "".join(
         f'<article class="info"><span>{h(title)}</span><b>{h(value)}</b><p>{h(body)}</p></article>'
         for title, value, body in rows
     )
+
+
+def render_historical_kline_progress(state: dict[str, Any]) -> str:
+    payload = state.get("historical_kline") if isinstance(state.get("historical_kline"), dict) else {}
+    if not payload:
+        return """
+<div class="history-progress">
+  <div class="history-bar"><span style="width:0%"></span></div>
+  <div class="history-grid">
+    <div><span>状态</span><b>未启动</b><small>还没有历史K线进度文件。</small></div>
+    <div><span>安全边界</span><b>不影响扫描</b><small>报表刷新只读文件，不打历史API。</small></div>
+    <div><span>API</span><b>未使用</b><small>启动离线命令后才会低速拉取。</small></div>
+    <div><span>范围</span><b>Top30 / 一年</b><small>15m、30m、1h、4h。</small></div>
+  </div>
+</div>
+""".strip()
+    progress = payload.get("progress") if isinstance(payload.get("progress"), dict) else {}
+    cfg = payload.get("config") if isinstance(payload.get("config"), dict) else {}
+    universe = payload.get("universe") if isinstance(payload.get("universe"), dict) else {}
+    last = payload.get("last_task") if isinstance(payload.get("last_task"), dict) else {}
+    pct = max(0.0, min(100.0, float(progress.get("percent") or 0.0)))
+    symbols = universe.get("symbols") if isinstance(universe.get("symbols"), list) else []
+    body = f"""
+<div class="history-progress">
+  <div class="history-bar"><span style="width:{pct:.2f}%"></span></div>
+  <div class="history-grid">
+    <div><span>状态</span><b>{h(plain_status(payload.get('status')))}</b><small>{h(payload.get('mode') or 'plan_only')}；更新 {h(age_text(parse_dt(payload.get('generated_at'))))}</small></div>
+    <div><span>进度</span><b>{pct:.2f}%</b><small>{int(progress.get('completed_requests') or 0)} 完成 / {int(progress.get('total_tasks') or 0)} 任务，已跳过 {int(progress.get('skipped_existing') or 0)}</small></div>
+    <div><span>数据量</span><b>{int(progress.get('written_rows') or 0)} 行</b><small>预计 {int(progress.get('planned_bars_estimate') or 0)} 根；失败 {int(progress.get('failed_requests') or 0)}</small></div>
+    <div><span>限速</span><b>{h(cfg.get('max_rps', '-'))} req/s</b><small>Binance 请求 {h(str(payload.get('binance_requests_enabled')))}；扫描频率改动 {h(str(payload.get('strategy_frequency_change')))}（不影响三策略扫描频率）</small></div>
+  </div>
+  <div class="history-detail">
+    <b>Universe</b>
+    <span>{h(', '.join(symbols[:30]) or '-')}</span>
+  </div>
+  <div class="history-detail">
+    <b>最近任务</b>
+    <span>{h(last.get('symbol') or '-')} {h(last.get('interval') or '-')} {h(last.get('start') or '-')} → {h(last.get('end') or '-')}；provider {h(last.get('provider') or '-')}；rows {h(last.get('rows') or 0)}</span>
+  </div>
+</div>
+""".strip()
+    return body
 
 
 def render_cleanup(state: dict[str, Any]) -> str:
@@ -1683,6 +1734,13 @@ tr:hover td {{ background:#101827; }}
 .mover-summary span {{ display:block; color:var(--muted); font-size:12px; }}
 .mover-summary b {{ display:block; font-size:20px; margin-top:4px; }}
 .mover-table {{ min-width:1080px; }}
+.history-progress {{ display:grid; gap:12px; }}
+.history-bar {{ height:10px; border-radius:999px; background:#07111c; border:1px solid var(--line); overflow:hidden; }}
+.history-bar span {{ display:block; height:100%; background:linear-gradient(90deg,var(--cyan),var(--blue)); }}
+.history-grid {{ display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px; }}
+.history-grid div,.history-detail {{ border:1px solid var(--line); border-radius:8px; background:#0b1320; padding:12px; }}
+.history-grid span,.history-grid small,.history-detail span {{ display:block; color:var(--muted); }}
+.history-grid b,.history-detail b {{ display:block; color:#f7fbff; margin:3px 0; }}
 .gate-grid {{ display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px; }}
 .gate-grid div {{ border:1px solid var(--line); border-radius:8px; background:#0b1320; padding:12px; min-height:76px; }}
 .gate-grid b {{ display:block; margin:2px 0 4px; }}
@@ -1693,7 +1751,7 @@ tr:hover td {{ background:#101827; }}
 .refresh-status {{ color:var(--muted); font-size:12px; }}
 .refresh-countdown {{ display:inline-flex; align-items:center; gap:6px; border:1px solid var(--line); border-radius:8px; padding:7px 10px; color:#dbe7f6; background:#0b1320; font-weight:800; }}
 @media (max-width: 1320px) {{ .metrics,.cards {{ grid-template-columns:repeat(2, minmax(0, 1fr)); }} .app-shell {{ grid-template-columns:1fr; }} .side-rail {{ position:relative; height:auto; display:none; }} }}
-@media (max-width: 980px) {{ .metrics,.cards,.grid,.paper-summary,.paper-cards,.gate-grid,.position-detail-grid {{ grid-template-columns:1fr; }} header {{ grid-template-columns:1fr; }} .wrap {{ padding:18px; }} }}
+@media (max-width: 980px) {{ .metrics,.cards,.grid,.paper-summary,.paper-cards,.gate-grid,.history-grid,.position-detail-grid {{ grid-template-columns:1fr; }} header {{ grid-template-columns:1fr; }} .wrap {{ padding:18px; }} }}
 </style>
 </head>
 <body>
@@ -1704,6 +1762,7 @@ tr:hover td {{ background:#101827; }}
     <a class="active" href="#overview">总览</a>
     <a href="#paper">模拟账本</a>
     <a href="#movers">涨跌榜</a>
+    <a href="#history">历史数据</a>
     <a href="#strategies">三策略</a>
     <a href="#actions">确认事项</a>
   </nav>
@@ -1726,6 +1785,10 @@ tr:hover td {{ background:#101827; }}
   <section class="panel">
     <h2>今日重点</h2>
     <div class="cards">{render_cards(state)}</div>
+  </section>
+  <section class="panel" id="history">
+    <h2>历史数据拉取进度</h2>
+    {render_historical_kline_progress(state)}
   </section>
   <section class="panel" id="paper">
     <h2>三策略模拟账本运行总览</h2>
@@ -1769,6 +1832,7 @@ tr:hover td {{ background:#101827; }}
           <a href="/reports/long_term_skeleton_latest.md">长期目标骨架</a>
           <a href="/reports/strategy_evolution_latest.html">策略进化</a>
           <a href="/reports/research_store_summary_latest.md">研究仓</a>
+          <a href="/reports/historical_kline_backfill_latest.md">历史K线进度</a>
           <a href="/api/attention">确认事项 API</a>
         </div>
       </section>

@@ -2,6 +2,13 @@
 
 This is the durable reason-and-outcome ledger for every material design, code, configuration, deployment, rollback, optimization, or live operational change.
 
+## 2026-06-09 21:50 CST - Keep historical Kline pull running until complete
+- Trigger / reason: User instructed the historical Kline pull must not stop and should continue until the one-year Top30 download completes.
+- Completed: Started a Tencent-side supervisor script at `runtime/historical_kline_backfill_supervisor.sh` with PID file `runtime/historical_kline_backfill_supervisor.pid`. The supervisor loops until `pending_tasks=0`, runs the same low-rate public Bybit/OKX batches, refreshes Tencent reports after each batch, and waits instead of double-starting when an existing apply process is active. Startup verification showed supervisor PID `1583290`, active plan/report refresh, and progress around `478684` rows / `25.12%` with `failed_requests=0`.
+- Not completed / remaining: Full completion still depends on the remaining public-provider batches. Aliyun sync remains deferred; the authoritative progress is Tencent `runtime/historical_kline_backfill_latest.json` and Tencent report output.
+- Verification: Remote `bash -n runtime/historical_kline_backfill_supervisor.sh` passed; process list showed `bash runtime/historical_kline_backfill_supervisor.sh` active; supervisor log showed `checkpoint` and `apply already running; sleep` while the existing operator/apply process was active.
+- Live impact / deployment: Tencent historical data pull supervision only. No Aliyun historical apply, no Aliyun reverse sync, no Binance request, no Binance queue submit, no signed account call, no scanner restart, no market-data restart, no strategy config change, no scan-frequency change, no order path, no automatic rollback, no automatic tuning, and no automatic upgrade.
+- Files / release / commit: `CHANGELOG.md`; operational receipt only.
 ## 2026-06-09 20:00 CST - Start Tencent background historical Kline pull
 - Trigger / reason: User corrected that watching and running one historical batch at a time wastes chat tokens; historical Kline pulling should continue on Tencent while report progress remains visible.
 - Completed: Continued Tencent-only public Bybit/OKX historical Kline pulls from `93526` rows to `334599` rows (`17.56%`) through bounded `--max-rps 0.2 --max-requests 20 --max-runtime-sec 180 --format jsonl` batches with `failed_requests=0`. Started a Tencent background operator process (`runtime/historical_kline_backfill_operator.pid`, PID `1535884`) that loops bounded batches and refreshes Tencent `decision_portal.py` / `portal_dashboard.py` after each batch so the report progress block updates without Codex watching every batch.

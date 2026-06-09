@@ -2,6 +2,13 @@
 
 This is the durable reason-and-outcome ledger for every material design, code, configuration, deployment, rollback, optimization, or live operational change.
 
+## 2026-06-09 20:00 CST - Start Tencent background historical Kline pull
+- Trigger / reason: User corrected that watching and running one historical batch at a time wastes chat tokens; historical Kline pulling should continue on Tencent while report progress remains visible.
+- Completed: Continued Tencent-only public Bybit/OKX historical Kline pulls from `93526` rows to `334599` rows (`17.56%`) through bounded `--max-rps 0.2 --max-requests 20 --max-runtime-sec 180 --format jsonl` batches with `failed_requests=0`. Started a Tencent background operator process (`runtime/historical_kline_backfill_operator.pid`, PID `1535884`) that loops bounded batches and refreshes Tencent `decision_portal.py` / `portal_dashboard.py` after each batch so the report progress block updates without Codex watching every batch.
+- Not completed / remaining: Full Top30 one-year backfill remains incomplete (`1633` task windows still pending at the last refreshed checkpoint). Aliyun sync remains intentionally deferred; public Aliyun page may lag until a later narrow report-only update.
+- Verification: Tencent `runtime/historical_kline_backfill_latest.json` showed `written_rows=334599`, `percent=17.56`, `failed_requests=0`; `reports/index.html` contained `历史数据拉取进度`; the background operator was running as PID `1535884` at startup verification.
+- Live impact / deployment: Tencent historical data apply only, using public Bybit/OKX and local Tencent report regeneration. No Aliyun historical apply, no Aliyun reverse sync, no Binance request, no Binance queue submit, no signed account call, no scanner restart, no market-data restart, no strategy config change, no scan-frequency change, no order path, no automatic rollback, no automatic tuning, and no automatic upgrade.
+- Files / release / commit: `CHANGELOG.md`; operational receipt only.
 ## 2026-06-09 18:18 CST - Continue Tencent-only historical Kline batch
 - Trigger / reason: Continue the Top30 one-year historical Kline pull after the Tencent-only path and public report progress were verified stable at `38053` rows.
 - Completed: Ran one additional bounded Tencent-only public Bybit/OKX historical Kline batch with `--format jsonl --max-rps 0.2 --max-requests 20 --max-runtime-sec 180 --apply`. It completed `20` requests with `failed_requests=0`, then rebuilt Tencent plan-only progress and regenerated reports without additional API requests. The Tencent historical store now has `366` daily JSONL partitions and `55575` actual rows. Progress is `2.92%` of `1905300` estimated bars, with `skipped_existing=57`.

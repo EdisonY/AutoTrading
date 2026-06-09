@@ -52,6 +52,29 @@ class HistoricalKlineBackfillTests(unittest.TestCase):
             self.assertIn("USDTUSDT", meta["rejected_preview"])
             self.assertIn("USDCUSDT", meta["rejected_preview"])
 
+    def test_choose_top_symbols_falls_back_to_tencent_mirror_cache(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            runtime = base / "runtime"
+            mirror = base / "server_logs_tencent" / "runtime"
+            runtime.mkdir()
+            mirror.mkdir(parents=True)
+            (mirror / "market_data_cache.json").write_text(
+                json.dumps(
+                    {
+                        "coingecko_top_symbols": ["BTCUSDT", "ETHUSDT"],
+                        "available_symbols": ["BTCUSDT", "ETHUSDT"],
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+
+            symbols, meta = self.tool.choose_top_symbols(runtime, [], 2)
+
+            self.assertEqual(symbols, ["BTCUSDT", "ETHUSDT"])
+            self.assertIn("server_logs_tencent", meta["cache_path"])
+
     def test_plan_only_writes_progress_without_provider_calls(self):
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)

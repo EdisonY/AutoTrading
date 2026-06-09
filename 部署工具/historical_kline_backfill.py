@@ -136,8 +136,23 @@ def read_json(path: Path) -> dict[str, Any]:
     return payload if isinstance(payload, dict) else {}
 
 
+def market_cache_candidates(runtime_dir: Path) -> list[Path]:
+    return [
+        runtime_dir / "market_data_cache.json",
+        runtime_dir.parent / "server_logs_tencent" / "runtime" / "market_data_cache.json",
+    ]
+
+
+def load_market_cache(runtime_dir: Path) -> tuple[dict[str, Any], Path | None]:
+    for path in market_cache_candidates(runtime_dir):
+        cache = read_json(path)
+        if cache.get("coingecko_top_symbols") or cache.get("top_symbols") or cache.get("available_symbols"):
+            return cache, path
+    return {}, None
+
+
 def choose_top_symbols(runtime_dir: Path, explicit: list[str], top_n: int) -> tuple[list[str], dict[str, Any]]:
-    cache = read_json(runtime_dir / "market_data_cache.json")
+    cache, cache_path = load_market_cache(runtime_dir)
     available_values = cache.get("available_symbols") if isinstance(cache.get("available_symbols"), list) else []
     available = {normalize_symbol(item) for item in available_values if normalize_symbol(item)}
     candidates = explicit
@@ -164,6 +179,7 @@ def choose_top_symbols(runtime_dir: Path, explicit: list[str], top_n: int) -> tu
         "available_symbols": len(available),
         "rejected_preview": rejected[:20],
         "cache_ts": cache.get("ts"),
+        "cache_path": str(cache_path) if cache_path else "",
     }
 
 

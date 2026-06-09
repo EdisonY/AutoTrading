@@ -2,6 +2,13 @@
 
 This is the durable reason-and-outcome ledger for every material design, code, configuration, deployment, rollback, optimization, or live operational change.
 
+## 2026-06-09 22:05 CST - Increase historical Kline batch size without raising RPS
+- Trigger / reason: User asked what `skipped existing` means, when the historical Kline pull will finish, and whether it can be accelerated without causing API risk.
+- Completed: Kept Tencent-only public Bybit/OKX pulls at `--max-rps 0.2`, but updated the Tencent supervisor to use `--max-requests 60 --max-runtime-sec 420` for future batches instead of `20/180`. This reduces per-batch report/plan overhead while preserving the same request-per-second pressure. The currently running old `20`-request batch was not interrupted; the larger batch applies from the next supervisor cycle.
+- Not completed / remaining: Do not raise RPS further unless accepting higher public-provider rate-limit risk. Full backfill remains in progress under the supervisor until `pending_tasks=0`.
+- Verification: Remote `bash -n runtime/historical_kline_backfill_supervisor.sh` passed; grep confirmed both plan and apply commands use `--max-rps 0.2 --max-requests 60 --max-runtime-sec 420`; process list showed the supervisor active and the existing old apply batch still running.
+- Live impact / deployment: Tencent historical pull supervision only. No scanner restart, no market-data restart, no Aliyun sync, no Binance request, no queue submit, no signed account call, no strategy config change, no scan-frequency change, no order path, no automatic rollback, no automatic tuning, and no automatic upgrade.
+- Files / release / commit: `CHANGELOG.md`; remote runtime supervisor parameter receipt only.
 ## 2026-06-09 21:50 CST - Keep historical Kline pull running until complete
 - Trigger / reason: User instructed the historical Kline pull must not stop and should continue until the one-year Top30 download completes.
 - Completed: Started a Tencent-side supervisor script at `runtime/historical_kline_backfill_supervisor.sh` with PID file `runtime/historical_kline_backfill_supervisor.pid`. The supervisor loops until `pending_tasks=0`, runs the same low-rate public Bybit/OKX batches, refreshes Tencent reports after each batch, and waits instead of double-starting when an existing apply process is active. Startup verification showed supervisor PID `1583290`, active plan/report refresh, and progress around `478684` rows / `25.12%` with `failed_requests=0`.

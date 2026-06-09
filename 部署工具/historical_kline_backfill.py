@@ -376,11 +376,13 @@ def progress_payload(
     started_at: datetime,
     last_task: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    percent = (completed_requests + skipped_existing) / total_tasks * 100 if total_tasks else 0.0
     planned_bars = sum(
         int(INTERVAL_MS.get(interval, 0) and math.ceil((max(1, args.days) * 86_400_000) / INTERVAL_MS[interval]))
         for interval in csv_values(args.intervals)
     ) * len(symbols)
+    task_percent = (completed_requests + skipped_existing) / total_tasks * 100 if total_tasks else 0.0
+    row_percent = written_rows / planned_bars * 100 if planned_bars else 0.0
+    percent = max(task_percent, row_percent)
     return {
         "generated_at": now_cst().isoformat(timespec="seconds"),
         "started_at": started_at.isoformat(timespec="seconds"),
@@ -488,6 +490,7 @@ def run_backfill(args: argparse.Namespace) -> dict[str, Any]:
     intervals = [item for item in csv_values(args.intervals) if item in INTERVAL_MS]
     tasks = chunk_tasks(symbols, intervals, dt_to_ms(start_dt), dt_to_ms(end_dt) - 1, int(args.limit))
     existing = read_existing_keys(store, args.format)
+    stored_rows = len(existing)
     pending = []
     skipped_existing = 0
     for task in tasks:
@@ -506,7 +509,7 @@ def run_backfill(args: argparse.Namespace) -> dict[str, Any]:
         failed_requests=0,
         skipped_existing=skipped_existing,
         fetched_rows=0,
-        written_rows=0,
+        written_rows=stored_rows,
         errors=[],
         started_at=started_at,
     )
@@ -522,7 +525,6 @@ def run_backfill(args: argparse.Namespace) -> dict[str, Any]:
     completed = 0
     failed = 0
     fetched_rows = 0
-    written_rows = 0
     errors: list[str] = []
     buffer: list[dict[str, Any]] = []
     last_task: dict[str, Any] | None = None
@@ -562,7 +564,7 @@ def run_backfill(args: argparse.Namespace) -> dict[str, Any]:
             }
         if buffer and (completed % flush_requests == 0):
             write_result = merge_write_rows(store, "historical_klines", buffer, args.format)
-            written_rows += int(write_result.get("rows") or 0)
+            stored_rows = int(write_result.get("merged_rows") or stored_rows)
             buffer = []
         payload = progress_payload(
             args=args,
@@ -575,7 +577,7 @@ def run_backfill(args: argparse.Namespace) -> dict[str, Any]:
             failed_requests=failed,
             skipped_existing=skipped_existing,
             fetched_rows=fetched_rows,
-            written_rows=written_rows + len(buffer),
+            written_rows=stored_rows + len(buffer),
             errors=errors,
             started_at=started_at,
             last_task=last_task,
@@ -585,7 +587,7 @@ def run_backfill(args: argparse.Namespace) -> dict[str, Any]:
             time.sleep(request_gap)
     if buffer:
         write_result = merge_write_rows(store, "historical_klines", buffer, args.format)
-        written_rows += int(write_result.get("rows") or 0)
+        stored_rows = int(write_result.get("merged_rows") or stored_rows)
         buffer = []
     if status == "running":
         status = "complete" if completed + failed >= len(pending) else "paused"
@@ -600,7 +602,7 @@ def run_backfill(args: argparse.Namespace) -> dict[str, Any]:
         failed_requests=failed,
         skipped_existing=skipped_existing,
         fetched_rows=fetched_rows,
-        written_rows=written_rows,
+        written_rows=stored_rows,
         errors=errors,
         started_at=started_at,
         last_task=last_task,

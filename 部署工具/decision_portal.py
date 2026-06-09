@@ -70,6 +70,38 @@ def read_first_json(*paths: Path) -> dict[str, Any]:
     return {}
 
 
+def num(value: Any) -> float:
+    try:
+        return float(value)
+    except Exception:
+        return 0.0
+
+
+def read_best_historical_kline_json(*paths: Path) -> dict[str, Any]:
+    candidates: list[tuple[tuple[float, float, float, str, float], dict[str, Any]]] = []
+    for path in paths:
+        payload = read_json(path)
+        if not payload:
+            continue
+        progress = payload.get("progress") if isinstance(payload.get("progress"), dict) else {}
+        try:
+            mtime = path.stat().st_mtime
+        except Exception:
+            mtime = 0.0
+        rank = (
+            num(progress.get("completed_requests")) + num(progress.get("skipped_existing")),
+            num(progress.get("written_rows")),
+            -num(progress.get("failed_requests")),
+            str(payload.get("generated_at") or ""),
+            mtime,
+        )
+        candidates.append((rank, payload))
+    if not candidates:
+        return {}
+    candidates.sort(key=lambda item: item[0], reverse=True)
+    return candidates[0][1]
+
+
 def read_alerts_json() -> dict[str, Any]:
     mirror = read_json(MIRROR_RUNTIME_DIR / "alerts_latest.json")
     if mirror:
@@ -1178,7 +1210,7 @@ def build_state() -> dict[str, Any]:
     skeleton = read_first_json(RUNTIME_DIR / "long_term_skeleton_latest.json", MIRROR_RUNTIME_DIR / "long_term_skeleton_latest.json")
     research = read_first_json(RUNTIME_DIR / "research_store_summary_latest.json", MIRROR_RUNTIME_DIR / "research_store_summary_latest.json")
     kline = read_first_json(RUNTIME_DIR / "research_kline_backfill_latest.json", MIRROR_RUNTIME_DIR / "research_kline_backfill_latest.json")
-    historical_kline = read_first_json(RUNTIME_DIR / "historical_kline_backfill_latest.json", MIRROR_RUNTIME_DIR / "historical_kline_backfill_latest.json")
+    historical_kline = read_best_historical_kline_json(RUNTIME_DIR / "historical_kline_backfill_latest.json", MIRROR_RUNTIME_DIR / "historical_kline_backfill_latest.json")
     depth = read_first_json(RUNTIME_DIR / "research_depth_backfill_latest.json", MIRROR_RUNTIME_DIR / "research_depth_backfill_latest.json")
     paper_exchange = read_live_runtime_json("paper_exchange_latest.json")
     market = read_live_runtime_json("market_data_cache.json")
@@ -1562,7 +1594,7 @@ def render_historical_kline_progress(state: dict[str, Any]) -> str:
     <div><span>状态</span><b>{h(plain_status(payload.get('status')))}</b><small>{h(payload.get('mode') or 'plan_only')}；更新 {h(age_text(parse_dt(payload.get('generated_at'))))}</small></div>
     <div><span>进度</span><b>{pct:.2f}%</b><small>{int(progress.get('completed_requests') or 0)} 完成 / {int(progress.get('total_tasks') or 0)} 任务，已跳过 {int(progress.get('skipped_existing') or 0)}</small></div>
     <div><span>数据量</span><b>{int(progress.get('written_rows') or 0)} 行</b><small>预计 {int(progress.get('planned_bars_estimate') or 0)} 根；失败 {int(progress.get('failed_requests') or 0)}</small></div>
-    <div><span>限速</span><b>{h(cfg.get('max_rps', '-'))} req/s</b><small>Binance 请求 {h(str(payload.get('binance_requests_enabled')))}；扫描频率改动 {h(str(payload.get('strategy_frequency_change')))}（不影响三策略扫描频率）</small></div>
+    <div><span>限速</span><b>{h(cfg.get('max_rps', '-'))} req/s</b><small>私有/下单请求 {h(str(payload.get('binance_requests_enabled')))}；扫描频率改动 {h(str(payload.get('strategy_frequency_change')))}（不影响三策略扫描频率）</small></div>
   </div>
   <div class="history-detail">
     <b>Universe</b>

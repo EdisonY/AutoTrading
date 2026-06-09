@@ -47,6 +47,8 @@ KLINE_BACKFILL_JSON = ROOT / "runtime" / "research_kline_backfill_latest.json"
 KLINE_BACKFILL_MD = REPORTS_DIR / "research_kline_backfill_latest.md"
 HISTORICAL_KLINE_JSON = ROOT / "runtime" / "historical_kline_backfill_latest.json"
 HISTORICAL_KLINE_MD = REPORTS_DIR / "historical_kline_backfill_latest.md"
+MIRROR_HISTORICAL_KLINE_JSON = SERVER_MIRROR_DIR / "runtime" / "historical_kline_backfill_latest.json"
+MIRROR_HISTORICAL_KLINE_MD = SERVER_MIRROR_DIR / "reports" / "historical_kline_backfill_latest.md"
 DEPTH_BACKFILL_JSON = ROOT / "runtime" / "research_depth_backfill_latest.json"
 DEPTH_BACKFILL_MD = REPORTS_DIR / "research_depth_backfill_latest.md"
 RESEARCH_RETENTION_JSON = ROOT / "runtime" / "research_store_retention_latest.json"
@@ -133,6 +135,13 @@ def read_json(path: Path) -> Any:
         return json.loads(path.read_text(encoding="utf-8", errors="replace"))
     except Exception:
         return None
+
+
+def num(value: Any) -> float:
+    try:
+        return float(value)
+    except Exception:
+        return 0.0
 
 
 def read_jsonl(path: Path) -> list[dict[str, Any]]:
@@ -702,7 +711,33 @@ def kline_backfill_summary(path: Path | None) -> dict[str, Any]:
     }
 
 
-def historical_kline_backfill_summary(path: Path | None) -> dict[str, Any]:
+def historical_progress_rank(payload: dict[str, Any], path: Path | None) -> tuple[float, float, float, str, float]:
+    progress = payload.get("progress") if isinstance(payload.get("progress"), dict) else {}
+    completed = num(progress.get("completed_requests")) + num(progress.get("skipped_existing"))
+    written = num(progress.get("written_rows"))
+    failed = num(progress.get("failed_requests"))
+    try:
+        mtime = path.stat().st_mtime if path else 0.0
+    except Exception:
+        mtime = 0.0
+    return (completed, written, -failed, str(payload.get("generated_at") or ""), mtime)
+
+
+def best_historical_payload(*paths: Path | None) -> tuple[dict[str, Any] | None, Path | None]:
+    candidates: list[tuple[tuple[float, float, float, str, float], dict[str, Any], Path]] = []
+    for path in paths:
+        if not path:
+            continue
+        payload = read_json(path)
+        if isinstance(payload, dict):
+            candidates.append((historical_progress_rank(payload, path), payload, path))
+    if not candidates:
+        return None, None
+    candidates.sort(key=lambda item: item[0], reverse=True)
+    return candidates[0][1], candidates[0][2]
+
+
+def historical_kline_backfill_summary(*paths: Path | None) -> dict[str, Any]:
     empty = {
         "available": False,
         "path": HISTORICAL_KLINE_MD,
@@ -727,13 +762,16 @@ def historical_kline_backfill_summary(path: Path | None) -> dict[str, Any]:
             "planned_bars_estimate": 0,
         },
     }
-    payload = read_json(path) if path else None
+    payload, source_path = best_historical_payload(*paths)
     if not isinstance(payload, dict):
         return empty
     generated_at = parse_dt(payload.get("generated_at"))
+    report_path = HISTORICAL_KLINE_MD
+    if source_path == MIRROR_HISTORICAL_KLINE_JSON and MIRROR_HISTORICAL_KLINE_MD.exists():
+        report_path = MIRROR_HISTORICAL_KLINE_MD
     return {
         "available": True,
-        "path": HISTORICAL_KLINE_MD,
+        "path": report_path,
         "age": age_text(generated_at),
         "fresh": bool(generated_at and (datetime.now(CST) - generated_at).total_seconds() < 4 * 3600),
         "status": payload.get("status") or "unknown",
@@ -3273,8 +3311,9 @@ def build_data() -> dict[str, Any]:
     data["research_store_html"] = RESEARCH_STORE_MD
     data["kline_backfill"] = kline_backfill_summary(KLINE_BACKFILL_JSON)
     data["kline_backfill_html"] = KLINE_BACKFILL_MD
-    data["historical_kline_backfill"] = historical_kline_backfill_summary(HISTORICAL_KLINE_JSON)
-    data["historical_kline_backfill_html"] = HISTORICAL_KLINE_MD
+    historical_summary = historical_kline_backfill_summary(HISTORICAL_KLINE_JSON, MIRROR_HISTORICAL_KLINE_JSON)
+    data["historical_kline_backfill"] = historical_summary
+    data["historical_kline_backfill_html"] = historical_summary.get("path") or HISTORICAL_KLINE_MD
     data["depth_backfill"] = depth_backfill_summary(DEPTH_BACKFILL_JSON)
     data["depth_backfill_html"] = DEPTH_BACKFILL_MD
     data["research_retention"] = research_retention_summary(RESEARCH_RETENTION_JSON)

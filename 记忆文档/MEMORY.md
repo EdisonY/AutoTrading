@@ -491,6 +491,7 @@
 - 2026-06-08：等待样本期间的“剩余能做事项”已收口成 `waiting_period_progress.py` 总账。它覆盖样本质检、B/v16 context gap、disabled auto-upgrade policy、rollback dry-run 预览、paper-vs-small-real 校准计划、report 主屏收敛、API/磁盘守护、防误开安全测试；首页和 full portal 都要展示。`research_memory/approvals/auto_upgrade_policy.json` 是 disabled 模板，只消除缺文件歧义，不代表批准自动升级。该总账必须持续保持 `automatic_upgrade_allowed=false`、`automatic_rollback_allowed=false`、`automatic_tuning_allowed=false`、`apply_enabled=false`、`binance_requests_enabled=false`，直到另一个明确人工审批流程改变规则。
 - 2026-06-09：`今日涨跌榜跟踪` 首页展示规则继续收敛。未进场的币种只显示“未进场”和未进场原因，不显示方向关系，也不显示 `+0.0000` 这类无意义盈亏；方向关系和浮盈亏只属于已有模拟持仓的币种。涨跌信号、阶段、24h 变化、速度、tick 合并进 `信号阶段`，避免表格过宽过乱。
 - 2026-06-09：Top30 一年历史 K线回测数据链路开始落地。`historical_kline_backfill.py` 是显式离线命令，默认只写计划/进度；只有传 `--apply` 才会按低速请求公共 Bybit/OKX 历史 K线。它永远不调用 Binance、不提交 Binance queue、不接入 scanner/report timer、不改变 A/B/C 扫描频率、不自动调参、不自动回滚。首页 report 增加 `历史数据拉取进度`，读取 `runtime/historical_kline_backfill_latest.json`，展示进度百分比、写入行数、限速、Universe、最近任务，并明确显示 `Binance 请求 False` 与 `不影响三策略扫描频率`。真实长跑应优先放 Aliyun/shadow 分析节点，先小批量 `--max-rps 0.2 --max-requests 5` 验证，再分批续跑。
+- 2026-06-09：Top30 一年历史 K线已开始真实小批量拉取。Aliyun 首探不通：Bybit `Network is unreachable`、OKX timeout；Tencent 低速 public Bybit/OKX fallback 可用，改用 `jsonl` 后累计落地 `2199` 行，首页显示 `0.12%`、`live_scanner_impact=none`、`binance_requests_enabled=false`。报告/同步规则已改为选择“最佳进度”，避免 Aliyun 失败旧进度覆盖 Tencent 成功进度。下一步只能继续小批量显式 operator run，不进 timer，不提高扫描频率，不启用自动回滚/自动调参。
 
 ---
 ## 2026-05-29 全局运行自检与账户方向口径修复

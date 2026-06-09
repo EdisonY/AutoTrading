@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 import sys
 import base64
+import json
 import subprocess
 import tarfile
 import tempfile
@@ -27,6 +28,9 @@ if sys.platform == "win32":
 ALIYUN_REPORTS = Path("/opt/crypto-shadow-lab/reports")
 ALIYUN_RUNTIME = Path("/opt/crypto-shadow-lab/runtime")
 ALIYUN_RESEARCH = Path("/opt/crypto-shadow-lab/research_memory/attention")
+TENCENT_MIRROR = Path("/opt/crypto-shadow-lab/server_logs_tencent")
+TENCENT_MIRROR_REPORTS = TENCENT_MIRROR / "reports"
+TENCENT_MIRROR_RUNTIME = TENCENT_MIRROR / "runtime"
 
 TENCENT_HOST = os.environ.get("TENCENT_HOST", "129.226.151.144")
 TENCENT_USER = os.environ.get("TENCENT_USER", "ubuntu")
@@ -166,6 +170,59 @@ def shell_quote(value: str) -> str:
     return "'" + value.replace("'", "'\"'\"'") + "'"
 
 
+def num(value: object) -> float:
+    try:
+        return float(value)
+    except Exception:
+        return 0.0
+
+
+def read_json_file(path: Path) -> dict[str, object]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8", errors="replace"))
+    except Exception:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def historical_progress_rank(path: Path) -> tuple[float, float, float, str, float]:
+    payload = read_json_file(path)
+    if not payload:
+        return (-1.0, -1.0, -9999.0, "", 0.0)
+    progress = payload.get("progress") if isinstance(payload.get("progress"), dict) else {}
+    try:
+        mtime = path.stat().st_mtime
+    except Exception:
+        mtime = 0.0
+    return (
+        num(progress.get("completed_requests")) + num(progress.get("skipped_existing")),
+        num(progress.get("written_rows")),
+        -num(progress.get("failed_requests")),
+        str(payload.get("generated_at") or ""),
+        mtime,
+    )
+
+
+def use_tencent_historical_progress() -> bool:
+    mirror = TENCENT_MIRROR_RUNTIME / "historical_kline_backfill_latest.json"
+    local = ALIYUN_RUNTIME / "historical_kline_backfill_latest.json"
+    if not mirror.exists():
+        return False
+    if not local.exists():
+        return True
+    return historical_progress_rank(mirror) > historical_progress_rank(local)
+
+
+def resolve_local_path(base: Path, name: str) -> Path:
+    if name == "historical_kline_backfill_latest.json" and base == ALIYUN_RUNTIME and use_tencent_historical_progress():
+        return TENCENT_MIRROR_RUNTIME / name
+    if name == "historical_kline_backfill_latest.md" and base == ALIYUN_REPORTS and use_tencent_historical_progress():
+        mirror = TENCENT_MIRROR_REPORTS / name
+        if mirror.exists():
+            return mirror
+    return base / name
+
+
 def upload_with_system_ssh(local_path: Path, remote_path: str, file_timeout: int) -> None:
     data = base64.b64encode(local_path.read_bytes())
     remote_dir = remote_path.rsplit("/", 1)[0]
@@ -197,7 +254,7 @@ def upload_priority_tar(max_bytes: int, file_timeout: int) -> dict[str, int]:
         (ALIYUN_RESEARCH, "research_memory/attention", RESEARCH_FILES),
     ):
         for name in names:
-            local = base / name
+            local = resolve_local_path(base, name)
             if not local.exists():
                 skipped += 1
                 print(f"  [SKIP] {prefix}/{name} - not found locally")
@@ -287,6 +344,7 @@ def sync_files(
 
         for name in filenames:
             local_path = local_dir / name
+            local_path = resolve_local_path(local_dir, name)
             if not local_path.exists():
                 print(f"  [SKIP] {label}/{name} - not found locally")
                 continue

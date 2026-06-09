@@ -296,7 +296,7 @@ class DecisionPortalTests(unittest.TestCase):
 
         self.assertIn("15.00%", html)
         self.assertIn("BTCUSDT, ETHUSDT", html)
-        self.assertIn("Binance 请求 False", html)
+        self.assertIn("私有/下单请求 False", html)
         self.assertIn("扫描频率改动 False", html)
         self.assertIn("不影响三策略扫描频率", html)
 

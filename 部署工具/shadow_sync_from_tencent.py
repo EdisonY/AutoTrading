@@ -63,9 +63,11 @@ TEXT_FILES = [
 REPORT_FILES = [
     "reports/market_snapshot_latest.json",
     "reports/alerts_latest.md",
+    "reports/historical_kline_backfill_latest.md",
     "runtime/account_snapshot_latest.json",
     "runtime/alerts_latest.json",
     "runtime/binance_api_queue_summary_latest.json",
+    "runtime/historical_kline_backfill_latest.json",
     "runtime/market_data_cache.json",
     "runtime/market_microstructure_latest.json",
     "runtime/market_mover_watchlist.json",

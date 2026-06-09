@@ -89,6 +89,18 @@ def ms_to_iso(ms: int) -> str:
     return ms_to_dt(ms).isoformat(timespec="seconds")
 
 
+def align_start_ms(ms: int, step_ms: int) -> int:
+    if step_ms <= 0:
+        return ms
+    return ((int(ms) + step_ms - 1) // step_ms) * step_ms
+
+
+def align_end_ms(ms: int, step_ms: int) -> int:
+    if step_ms <= 0:
+        return ms
+    return (int(ms) // step_ms) * step_ms
+
+
 def to_float(value: Any) -> float:
     try:
         return float(value)
@@ -190,10 +202,14 @@ def chunk_tasks(symbols: list[str], intervals: list[str], start_ms: int, end_ms:
             step = INTERVAL_MS.get(interval)
             if not step:
                 continue
+            interval_start_ms = align_start_ms(start_ms, step)
+            interval_end_ms = align_end_ms(end_ms, step)
+            if interval_start_ms > interval_end_ms:
+                continue
             span = step * max(1, int(limit))
-            cursor = start_ms
-            while cursor <= end_ms:
-                chunk_end = min(end_ms, cursor + span - step)
+            cursor = interval_start_ms
+            while cursor <= interval_end_ms:
+                chunk_end = min(interval_end_ms, cursor + span - step)
                 expected_bars = max(1, int(math.floor((chunk_end - cursor) / step)) + 1)
                 tasks.append({
                     "symbol": symbol,
@@ -577,7 +593,7 @@ def run_backfill(args: argparse.Namespace) -> dict[str, Any]:
             failed_requests=failed,
             skipped_existing=skipped_existing,
             fetched_rows=fetched_rows,
-            written_rows=stored_rows + len(buffer),
+            written_rows=stored_rows,
             errors=errors,
             started_at=started_at,
             last_task=last_task,

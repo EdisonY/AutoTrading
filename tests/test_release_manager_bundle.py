@@ -48,7 +48,7 @@ class ReleaseManagerBundleTests(unittest.TestCase):
                 self.assertIn("waiting_period_progress.py", remotes)
                 self.assertIn("research_memory/approvals/auto_upgrade_policy.json", remotes)
 
-    def test_historical_kline_backfill_is_research_shadow_only(self):
+    def test_historical_kline_backfill_is_tencent_research_only(self):
         for component in ("research", "all"):
             with self.subTest(target="tencent", component=component):
                 remotes = {remote for _local, remote in self.tool.TENCENT_COMPONENTS[component]["files"]}
@@ -57,7 +57,7 @@ class ReleaseManagerBundleTests(unittest.TestCase):
         for component in ("shadow", "all"):
             with self.subTest(target="aliyun", component=component):
                 remotes = {remote for _local, remote in self.tool.ALIYUN_COMPONENTS[component]["files"]}
-                self.assertIn("historical_kline_backfill.py", remotes)
+                self.assertNotIn("historical_kline_backfill.py", remotes)
 
         for component in ("portal", "strategy-a", "strategy-b", "strategy-c", "sentinel", "market-data"):
             with self.subTest(component=component):

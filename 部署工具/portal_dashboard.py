@@ -726,12 +726,19 @@ def historical_progress_rank(payload: dict[str, Any], path: Path | None) -> tupl
 
 def best_historical_payload(*paths: Path | None) -> tuple[dict[str, Any] | None, Path | None]:
     candidates: list[tuple[tuple[float, float, float, float, str, float], dict[str, Any], Path]] = []
+    mirror_candidates: list[tuple[tuple[float, float, float, float, str, float], dict[str, Any], Path]] = []
     for path in paths:
         if not path:
             continue
         payload = read_json(path)
         if isinstance(payload, dict):
-            candidates.append((historical_progress_rank(payload, path), payload, path))
+            item = (historical_progress_rank(payload, path), payload, path)
+            candidates.append(item)
+            if "server_logs_tencent" in str(path).replace("\\", "/"):
+                mirror_candidates.append(item)
+    if mirror_candidates:
+        mirror_candidates.sort(key=lambda item: item[0], reverse=True)
+        return mirror_candidates[0][1], mirror_candidates[0][2]
     if not candidates:
         return None, None
     candidates.sort(key=lambda item: item[0], reverse=True)

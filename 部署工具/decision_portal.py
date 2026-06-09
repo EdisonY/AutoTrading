@@ -79,6 +79,7 @@ def num(value: Any) -> float:
 
 def read_best_historical_kline_json(*paths: Path) -> dict[str, Any]:
     candidates: list[tuple[tuple[float, float, float, float, str, float], dict[str, Any]]] = []
+    mirror_candidates: list[tuple[tuple[float, float, float, float, str, float], dict[str, Any]]] = []
     for path in paths:
         payload = read_json(path)
         if not payload:
@@ -96,7 +97,13 @@ def read_best_historical_kline_json(*paths: Path) -> dict[str, Any]:
             str(payload.get("generated_at") or ""),
             mtime,
         )
-        candidates.append((rank, payload))
+        item = (rank, payload)
+        candidates.append(item)
+        if "server_logs_tencent" in str(path).replace("\\", "/"):
+            mirror_candidates.append(item)
+    if mirror_candidates:
+        mirror_candidates.sort(key=lambda item: item[0], reverse=True)
+        return mirror_candidates[0][1]
     if not candidates:
         return {}
     candidates.sort(key=lambda item: item[0], reverse=True)

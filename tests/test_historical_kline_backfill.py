@@ -201,6 +201,30 @@ class HistoricalKlineBackfillTests(unittest.TestCase):
         self.assertEqual(len(tasks), 1)
         self.assertEqual(tasks[0]["expected_bars"], 24)
 
+    def test_task_windows_align_to_kline_open_times(self):
+        start_ms = ms("2026-06-08T16:07:13")
+        end_ms = ms("2026-06-08T17:14:59")
+
+        tasks = self.tool.chunk_tasks(["BTCUSDT"], ["15m"], start_ms, end_ms, limit=10)
+
+        self.assertEqual(len(tasks), 1)
+        self.assertEqual(self.tool.ms_to_iso(tasks[0]["start_ms"]), "2026-06-09T00:15:00+08:00")
+        self.assertEqual(self.tool.ms_to_iso(tasks[0]["end_ms"]), "2026-06-09T01:00:00+08:00")
+        self.assertEqual(tasks[0]["expected_bars"], 4)
+
+    def test_aligned_existing_rows_cover_task(self):
+        start_ms = ms("2026-06-08T16:07:13")
+        end_ms = ms("2026-06-08T17:14:59")
+        task = self.tool.chunk_tasks(["BTCUSDT"], ["15m"], start_ms, end_ms, limit=10)[0]
+        existing = {
+            ("BTCUSDT", "15m", ms("2026-06-08T16:15:00")),
+            ("BTCUSDT", "15m", ms("2026-06-08T16:30:00")),
+            ("BTCUSDT", "15m", ms("2026-06-08T16:45:00")),
+            ("BTCUSDT", "15m", ms("2026-06-08T17:00:00")),
+        }
+
+        self.assertTrue(self.tool.task_covered(task, existing))
+
 
 if __name__ == "__main__":
     unittest.main()

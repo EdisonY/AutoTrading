@@ -247,12 +247,6 @@ def refresh_tencent_historical_mirror() -> None:
         return
     if not isinstance(remote_payload, dict):
         return
-    local_rank = max(
-        historical_progress_rank(ALIYUN_RUNTIME / HISTORICAL_JSON),
-        historical_progress_rank(TENCENT_MIRROR_RUNTIME / HISTORICAL_JSON),
-    )
-    if historical_progress_rank_payload(remote_payload) <= local_rank:
-        return
     TENCENT_MIRROR_RUNTIME.mkdir(parents=True, exist_ok=True)
     TENCENT_MIRROR_REPORTS.mkdir(parents=True, exist_ok=True)
     (TENCENT_MIRROR_RUNTIME / HISTORICAL_JSON).write_text(remote_json, encoding="utf-8")
@@ -263,26 +257,23 @@ def refresh_tencent_historical_mirror() -> None:
 
 def best_historical_payload() -> tuple[dict[str, object], Path | None]:
     refresh_tencent_historical_mirror()
-    candidates: list[tuple[tuple[float, float, float, float, str, float], dict[str, object], Path]] = []
-    for path in (ALIYUN_RUNTIME / HISTORICAL_JSON, TENCENT_MIRROR_RUNTIME / HISTORICAL_JSON):
-        payload = read_json_file(path)
-        if payload:
-            candidates.append((historical_progress_rank(path), payload, path))
-    if not candidates:
-        return {}, None
-    candidates.sort(key=lambda item: item[0], reverse=True)
-    return candidates[0][1], candidates[0][2]
+    mirror = TENCENT_MIRROR_RUNTIME / HISTORICAL_JSON
+    payload = read_json_file(mirror)
+    if payload:
+        return payload, mirror
+    local = ALIYUN_RUNTIME / HISTORICAL_JSON
+    payload = read_json_file(local)
+    if payload:
+        return payload, local
+    return {}, None
 
 
 def use_tencent_historical_progress() -> bool:
     refresh_tencent_historical_mirror()
     mirror = TENCENT_MIRROR_RUNTIME / HISTORICAL_JSON
-    local = ALIYUN_RUNTIME / HISTORICAL_JSON
     if not mirror.exists():
         return False
-    if not local.exists():
-        return True
-    return historical_progress_rank(mirror) > historical_progress_rank(local)
+    return True
 
 
 def resolve_local_path(base: Path, name: str) -> Path:

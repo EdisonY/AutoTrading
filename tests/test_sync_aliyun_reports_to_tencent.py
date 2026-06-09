@@ -72,10 +72,10 @@ class SyncAliyunReportsToTencentTests(unittest.TestCase):
             encoding="utf-8",
         )
 
-    def test_historical_progress_prefers_rows_over_completed_requests(self):
+    def test_historical_progress_prefers_tencent_mirror_over_local(self):
         local = self.tool.ALIYUN_RUNTIME / self.tool.HISTORICAL_JSON
         mirror = self.tool.TENCENT_MIRROR_RUNTIME / self.tool.HISTORICAL_JSON
-        self.write_progress(local, rows=2199, percent=0.12, completed=50)
+        self.write_progress(local, rows=28984, percent=1.52, completed=50)
         self.write_progress(mirror, rows=19983, percent=1.05, completed=0)
 
         payload, source = self.tool.best_historical_payload()

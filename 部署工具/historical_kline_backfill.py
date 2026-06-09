@@ -61,6 +61,52 @@ STABLE_OR_WRAPPED_BASES = {
     "XAG",
 }
 SAFETY = "offline_public_bybit_okx_only_no_binance_no_live_scanner_no_service_restart"
+TRANSIENT_ERROR_MARKERS = (
+    "timeout",
+    "timed out",
+    "temporarily",
+    "network",
+    "unreachable",
+    "rate_budget",
+    "too many",
+    "429",
+    "500",
+    "502",
+    "503",
+    "504",
+    "connection",
+    "reset",
+    "refused",
+)
+TERMINAL_UNAVAILABLE_MARKERS = (
+    "empty",
+    "doesn't exist",
+    "does not exist",
+    "not supported",
+    "unsupported",
+    "invalid symbol",
+    "symbol is invalid",
+    "symbol invalid",
+    "instrument id does not exist",
+    "symbol not found",
+)
+PROVIDER_BAR_LIMITS = {
+    "bybit": 1000,
+    "okx": 300,
+}
+UNAVAILABLE_TASK_STATUSES = {"unavailable", "provider_empty_or_unsupported"}
+PARTIAL_TASK_STATUSES = {"partial_available"}
+SYMBOL_UNAVAILABLE_MARKERS = (
+    "doesn't exist",
+    "does not exist",
+    "not supported",
+    "unsupported",
+    "invalid symbol",
+    "symbol is invalid",
+    "symbol invalid",
+    "instrument id",
+    "symbol not found",
+)
 
 
 def now_cst() -> datetime:
@@ -249,6 +295,102 @@ def task_covered(task: dict[str, Any], existing: set[tuple[str, str, int]]) -> b
     return True
 
 
+def effective_task_limit(provider_order: list[str], requested_limit: int) -> int:
+    caps = [PROVIDER_BAR_LIMITS[item] for item in provider_order if item in PROVIDER_BAR_LIMITS]
+    provider_cap = min(caps) if caps else int(requested_limit)
+    return max(1, min(max(1, int(requested_limit)), provider_cap))
+
+
+def task_key(task: dict[str, Any]) -> tuple[str, str, int, int]:
+    return (str(task["symbol"]), str(task["interval"]), int(task["start_ms"]), int(task["end_ms"]))
+
+
+def task_status_path(store: Path) -> Path:
+    return store / "historical_kline_task_status" / "data.jsonl"
+
+
+def unavailable_path(store: Path) -> Path:
+    return store / "historical_kline_unavailable" / "data.jsonl"
+
+
+def read_task_statuses(store: Path) -> dict[tuple[str, str, int, int], str]:
+    statuses: dict[tuple[str, str, int, int], str] = {}
+    for path in (task_status_path(store), unavailable_path(store)):
+        if not path.exists():
+            continue
+        for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+            if not line.strip():
+                continue
+            try:
+                row = json.loads(line)
+            except Exception:
+                continue
+            symbol = normalize_symbol(row.get("symbol"))
+            interval = str(row.get("interval") or "")
+            start_ms = to_int(row.get("start_ms"))
+            end_ms = to_int(row.get("end_ms"))
+            status = str(row.get("status") or row.get("reason") or "")
+            if symbol and interval and start_ms > 0 and end_ms >= start_ms and status:
+                statuses[(symbol, interval, start_ms, end_ms)] = status
+    return statuses
+
+
+def append_task_status(store: Path, task: dict[str, Any], status: str, provider: str = "", rows: int = 0, error: str = "") -> None:
+    path = task_status_path(store)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    row = {
+        "symbol": str(task["symbol"]),
+        "interval": str(task["interval"]),
+        "date": ms_to_iso(int(task["start_ms"]))[:10],
+        "start": ms_to_iso(int(task["start_ms"])),
+        "end": ms_to_iso(int(task["end_ms"])),
+        "start_ms": int(task["start_ms"]),
+        "end_ms": int(task["end_ms"]),
+        "expected_bars": int(task.get("expected_bars") or 0),
+        "status": status,
+        "provider": str(provider or ""),
+        "rows": int(rows or 0),
+        "error": str(error or ""),
+        "cache_ts": now_cst().isoformat(timespec="seconds"),
+    }
+    with path.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+
+def append_unavailable_task(store: Path, task: dict[str, Any], error: str) -> None:
+    append_task_status(store, task, "unavailable", error=error)
+    path = unavailable_path(store)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    row = {
+        "symbol": str(task["symbol"]),
+        "interval": str(task["interval"]),
+        "date": ms_to_iso(int(task["start_ms"]))[:10],
+        "start": ms_to_iso(int(task["start_ms"])),
+        "end": ms_to_iso(int(task["end_ms"])),
+        "start_ms": int(task["start_ms"]),
+        "end_ms": int(task["end_ms"]),
+        "reason": "provider_empty_or_unsupported",
+        "error": str(error or ""),
+        "cache_ts": now_cst().isoformat(timespec="seconds"),
+    }
+    with path.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+
+def terminal_unavailable_error(message: str) -> bool:
+    text = str(message or "").lower()
+    if any(marker in text for marker in TRANSIENT_ERROR_MARKERS):
+        return False
+    return any(marker in text for marker in TERMINAL_UNAVAILABLE_MARKERS)
+
+
+def symbol_unavailable_error(message: str) -> bool:
+    text = str(message or "").lower()
+    if any(marker in text for marker in TRANSIENT_ERROR_MARKERS):
+        return False
+    return any(marker in text for marker in SYMBOL_UNAVAILABLE_MARKERS)
+
+
 def bybit_kline_window(symbol: str, interval: str, start_ms: int, end_ms: int, limit: int) -> list[list[Any]]:
     payload = bybit_public_get(
         "/v5/market/kline",
@@ -344,12 +486,14 @@ def raw_rows_to_records(symbol: str, interval: str, raw_rows: list[list[Any]], s
     return records
 
 
-def fetch_task(task: dict[str, Any], provider_order: list[str], limit: int) -> tuple[list[dict[str, Any]], str, str]:
+def fetch_task(task: dict[str, Any], provider_order: list[str], limit: int) -> tuple[list[dict[str, Any]], str, str, bool]:
     symbol = str(task["symbol"])
     interval = str(task["interval"])
     start_ms = int(task["start_ms"])
     end_ms = int(task["end_ms"])
     errors: list[str] = []
+    transient = False
+    terminal = False
     for provider in provider_order:
         try:
             if provider == "bybit":
@@ -359,11 +503,17 @@ def fetch_task(task: dict[str, Any], provider_order: list[str], limit: int) -> t
             else:
                 continue
             if raw:
-                return raw_rows_to_records(symbol, interval, raw, provider), provider, ""
+                return raw_rows_to_records(symbol, interval, raw, provider), provider, "", False
             errors.append(f"{provider}:empty")
+            terminal = True
         except Exception as exc:
-            errors.append(f"{provider}:{exc}")
-    return [], "", "; ".join(errors)
+            message = str(exc)
+            errors.append(f"{provider}:{message}")
+            if terminal_unavailable_error(message):
+                terminal = True
+            else:
+                transient = True
+    return [], "", "; ".join(errors), bool(terminal and not transient)
 
 
 def merge_write_rows(store: Path, table: str, rows: list[dict[str, Any]], fmt: str) -> dict[str, Any]:
@@ -386,6 +536,8 @@ def progress_payload(
     completed_requests: int,
     failed_requests: int,
     skipped_existing: int,
+    skipped_unavailable: int,
+    skipped_partial: int,
     fetched_rows: int,
     written_rows: int,
     errors: list[str],
@@ -396,7 +548,7 @@ def progress_payload(
         int(INTERVAL_MS.get(interval, 0) and math.ceil((max(1, args.days) * 86_400_000) / INTERVAL_MS[interval]))
         for interval in csv_values(args.intervals)
     ) * len(symbols)
-    task_percent = (completed_requests + skipped_existing) / total_tasks * 100 if total_tasks else 0.0
+    task_percent = (completed_requests + skipped_existing + skipped_unavailable + skipped_partial) / total_tasks * 100 if total_tasks else 0.0
     row_percent = written_rows / planned_bars * 100 if planned_bars else 0.0
     percent = max(task_percent, row_percent)
     return {
@@ -414,6 +566,7 @@ def progress_payload(
             "intervals": csv_values(args.intervals),
             "top_n": int(args.top_n),
             "limit": int(args.limit),
+            "task_limit": int(getattr(args, "task_limit", args.limit)),
             "provider_order": csv_values(args.providers),
             "max_rps": float(args.max_rps),
             "max_requests": int(args.max_requests),
@@ -430,6 +583,8 @@ def progress_payload(
             "completed_requests": int(completed_requests),
             "failed_requests": int(failed_requests),
             "skipped_existing": int(skipped_existing),
+            "skipped_unavailable": int(skipped_unavailable),
+            "skipped_partial": int(skipped_partial),
             "percent": round(percent, 2),
             "fetched_rows": int(fetched_rows),
             "written_rows": int(written_rows),
@@ -465,7 +620,7 @@ def render_md(payload: dict[str, Any]) -> str:
         "",
         "## Progress",
         "",
-        f"- Tasks: `{progress.get('completed_requests', 0)}` completed / `{progress.get('total_tasks', 0)}` total; skipped existing `{progress.get('skipped_existing', 0)}`",
+        f"- Tasks: `{progress.get('completed_requests', 0)}` completed / `{progress.get('total_tasks', 0)}` total; skipped existing `{progress.get('skipped_existing', 0)}`; unavailable `{progress.get('skipped_unavailable', 0)}`; partial `{progress.get('skipped_partial', 0)}`",
         f"- Percent: `{progress.get('percent', 0)}%`",
         f"- Rows fetched: `{progress.get('fetched_rows', 0)}`",
         f"- Rows written: `{progress.get('written_rows', 0)}`",
@@ -478,6 +633,7 @@ def render_md(payload: dict[str, Any]) -> str:
         f"- Days: `{cfg.get('days')}`",
         f"- Intervals: `{', '.join(cfg.get('intervals') or [])}`",
         f"- Providers: `{', '.join(cfg.get('provider_order') or [])}`",
+        f"- Task limit: `{cfg.get('task_limit', cfg.get('limit'))}` bars",
         f"- Max RPS: `{cfg.get('max_rps')}`",
         f"- Max requests this run: `{cfg.get('max_requests')}`",
         "",
@@ -504,14 +660,25 @@ def run_backfill(args: argparse.Namespace) -> dict[str, Any]:
     start_dt = end_dt - timedelta(days=max(1, int(args.days)))
     symbols, universe_meta = choose_top_symbols(runtime_dir, [normalize_symbol(v) for v in csv_values(args.symbols)], args.top_n)
     intervals = [item for item in csv_values(args.intervals) if item in INTERVAL_MS]
-    tasks = chunk_tasks(symbols, intervals, dt_to_ms(start_dt), dt_to_ms(end_dt) - 1, int(args.limit))
+    provider_order = csv_values(args.providers)
+    task_limit = effective_task_limit(provider_order, int(args.limit))
+    setattr(args, "task_limit", task_limit)
+    tasks = chunk_tasks(symbols, intervals, dt_to_ms(start_dt), dt_to_ms(end_dt) - 1, task_limit)
     existing = read_existing_keys(store, args.format)
+    statuses = read_task_statuses(store)
     stored_rows = len(existing)
     pending = []
     skipped_existing = 0
+    skipped_unavailable = 0
+    skipped_partial = 0
     for task in tasks:
+        status = statuses.get(task_key(task), "")
         if task_covered(task, existing):
             skipped_existing += 1
+        elif status in UNAVAILABLE_TASK_STATUSES:
+            skipped_unavailable += 1
+        elif status in PARTIAL_TASK_STATUSES:
+            skipped_partial += 1
         else:
             pending.append(task)
     payload = progress_payload(
@@ -524,6 +691,8 @@ def run_backfill(args: argparse.Namespace) -> dict[str, Any]:
         completed_requests=0,
         failed_requests=0,
         skipped_existing=skipped_existing,
+        skipped_unavailable=skipped_unavailable,
+        skipped_partial=skipped_partial,
         fetched_rows=0,
         written_rows=stored_rows,
         errors=[],
@@ -533,29 +702,47 @@ def run_backfill(args: argparse.Namespace) -> dict[str, Any]:
     if not args.apply:
         return payload
 
-    provider_order = csv_values(args.providers)
     max_requests = max(0, int(args.max_requests))
     max_runtime_sec = max(1, int(args.max_runtime_sec))
     request_gap = 1.0 / max(float(args.max_rps), 0.01)
     flush_requests = max(1, int(args.flush_requests))
     completed = 0
     failed = 0
+    marked_unavailable = 0
     fetched_rows = 0
     errors: list[str] = []
     buffer: list[dict[str, Any]] = []
+    buffer_statuses: list[tuple[dict[str, Any], str, str, int, str]] = []
+    marked_symbols_unavailable: set[str] = set()
     last_task: dict[str, Any] | None = None
     deadline = time.monotonic() + max_runtime_sec
     status = "running"
     for task in pending:
-        if max_requests and completed + failed >= max_requests:
+        if str(task["symbol"]) in marked_symbols_unavailable:
+            append_unavailable_task(store, task, "symbol_unavailable_after_prior_provider_result")
+            marked_unavailable += 1
+            skipped_unavailable += 1
+            last_task = {
+                "symbol": task["symbol"],
+                "interval": task["interval"],
+                "start": ms_to_iso(int(task["start_ms"])),
+                "end": ms_to_iso(int(task["end_ms"])),
+                "provider": "unavailable_symbol",
+                "rows": 0,
+            }
+            continue
+        attempted = completed + failed + marked_unavailable
+        if max_requests and attempted >= max_requests:
             status = "paused_request_budget"
             break
         if time.monotonic() >= deadline:
             status = "paused_time_budget"
             break
-        rows, provider, error = fetch_task(task, provider_order, int(args.limit))
+        rows, provider, error, terminal_unavailable = fetch_task(task, provider_order, int(args.limit))
         if rows:
             buffer.extend(rows)
+            task_status = "complete" if len(rows) >= int(task.get("expected_bars") or 0) else "partial_available"
+            buffer_statuses.append((task, task_status, provider, len(rows), ""))
             completed += 1
             fetched_rows += len(rows)
             last_task = {
@@ -565,6 +752,22 @@ def run_backfill(args: argparse.Namespace) -> dict[str, Any]:
                 "end": ms_to_iso(int(task["end_ms"])),
                 "provider": provider,
                 "rows": len(rows),
+            }
+        elif terminal_unavailable:
+            append_unavailable_task(store, task, error)
+            marked_unavailable += 1
+            skipped_unavailable += 1
+            if symbol_unavailable_error(error):
+                marked_symbols_unavailable.add(str(task["symbol"]))
+            if error:
+                errors.append(f"{task['symbol']} {task['interval']} {ms_to_iso(int(task['start_ms']))}: unavailable {error}")
+            last_task = {
+                "symbol": task["symbol"],
+                "interval": task["interval"],
+                "start": ms_to_iso(int(task["start_ms"])),
+                "end": ms_to_iso(int(task["end_ms"])),
+                "provider": "unavailable",
+                "rows": 0,
             }
         else:
             failed += 1
@@ -581,17 +784,22 @@ def run_backfill(args: argparse.Namespace) -> dict[str, Any]:
         if buffer and (completed % flush_requests == 0):
             write_result = merge_write_rows(store, "historical_klines", buffer, args.format)
             stored_rows = int(write_result.get("merged_rows") or stored_rows)
+            for item_task, item_status, item_provider, item_rows, item_error in buffer_statuses:
+                append_task_status(store, item_task, item_status, provider=item_provider, rows=item_rows, error=item_error)
             buffer = []
+            buffer_statuses = []
         payload = progress_payload(
             args=args,
             status=status,
             symbols=symbols,
             universe_meta=universe_meta,
             total_tasks=len(tasks),
-            pending_tasks=max(0, len(pending) - completed - failed),
+            pending_tasks=max(0, len(pending) - completed - failed - marked_unavailable),
             completed_requests=completed,
             failed_requests=failed,
             skipped_existing=skipped_existing,
+            skipped_unavailable=skipped_unavailable,
+            skipped_partial=skipped_partial,
             fetched_rows=fetched_rows,
             written_rows=stored_rows,
             errors=errors,
@@ -604,19 +812,24 @@ def run_backfill(args: argparse.Namespace) -> dict[str, Any]:
     if buffer:
         write_result = merge_write_rows(store, "historical_klines", buffer, args.format)
         stored_rows = int(write_result.get("merged_rows") or stored_rows)
+        for item_task, item_status, item_provider, item_rows, item_error in buffer_statuses:
+            append_task_status(store, item_task, item_status, provider=item_provider, rows=item_rows, error=item_error)
         buffer = []
+        buffer_statuses = []
     if status == "running":
-        status = "complete" if completed + failed >= len(pending) else "paused"
+        status = "complete" if completed + failed + marked_unavailable >= len(pending) else "paused"
     payload = progress_payload(
         args=args,
         status=status,
         symbols=symbols,
         universe_meta=universe_meta,
         total_tasks=len(tasks),
-        pending_tasks=max(0, len(pending) - completed - failed),
+        pending_tasks=max(0, len(pending) - completed - failed - marked_unavailable),
         completed_requests=completed,
         failed_requests=failed,
         skipped_existing=skipped_existing,
+        skipped_unavailable=skipped_unavailable,
+        skipped_partial=skipped_partial,
         fetched_rows=fetched_rows,
         written_rows=stored_rows,
         errors=errors,

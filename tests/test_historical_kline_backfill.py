@@ -225,6 +225,165 @@ class HistoricalKlineBackfillTests(unittest.TestCase):
 
         self.assertTrue(self.tool.task_covered(task, existing))
 
+    def test_terminal_unavailable_task_is_marked_and_skipped_on_next_plan(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            runtime = base / "runtime"
+            reports = base / "reports"
+            store = base / "research_store"
+            runtime.mkdir()
+            (runtime / "market_data_cache.json").write_text(
+                json.dumps({"coingecko_top_symbols": ["LEOUSDT"], "available_symbols": ["LEOUSDT"]}),
+                encoding="utf-8",
+            )
+
+            with mock.patch.object(self.tool, "bybit_kline_window", side_effect=RuntimeError("Symbol Is Invalid")), mock.patch.object(
+                self.tool, "okx_kline_window", side_effect=RuntimeError("Instrument ID doesn't exist")
+            ):
+                rc = self.tool.main(
+                    [
+                        "--runtime-dir",
+                        str(runtime),
+                        "--reports-dir",
+                        str(reports),
+                        "--research-store",
+                        str(store),
+                        "--symbols",
+                        "LEOUSDT",
+                        "--days",
+                        "1",
+                        "--intervals",
+                        "1h",
+                        "--end",
+                        "2026-06-09T00:00:00+08:00",
+                        "--format",
+                        "jsonl",
+                        "--limit",
+                        "24",
+                        "--max-requests",
+                        "1",
+                        "--max-rps",
+                        "1000",
+                        "--apply",
+                    ]
+                )
+
+            payload = json.loads((runtime / "historical_kline_backfill_latest.json").read_text(encoding="utf-8"))
+            self.assertEqual(rc, 0)
+            self.assertEqual(payload["progress"]["failed_requests"], 0)
+            self.assertEqual(payload["progress"]["skipped_unavailable"], 1)
+            self.assertTrue((store / "historical_kline_unavailable" / "data.jsonl").exists())
+
+            rc = self.tool.main(
+                [
+                    "--runtime-dir",
+                    str(runtime),
+                    "--reports-dir",
+                    str(reports),
+                    "--research-store",
+                    str(store),
+                    "--symbols",
+                    "LEOUSDT",
+                    "--days",
+                    "1",
+                    "--intervals",
+                    "1h",
+                    "--end",
+                    "2026-06-09T00:00:00+08:00",
+                    "--format",
+                    "jsonl",
+                ]
+            )
+
+            payload = json.loads((runtime / "historical_kline_backfill_latest.json").read_text(encoding="utf-8"))
+            self.assertEqual(rc, 0)
+            self.assertEqual(payload["progress"]["pending_tasks"], 0)
+            self.assertEqual(payload["progress"]["skipped_unavailable"], 1)
+
+    def test_partial_available_task_is_marked_and_skipped_on_next_plan(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            runtime = base / "runtime"
+            reports = base / "reports"
+            store = base / "research_store"
+            runtime.mkdir()
+            (runtime / "market_data_cache.json").write_text(
+                json.dumps({"coingecko_top_symbols": ["BTCUSDT"], "available_symbols": ["BTCUSDT"]}),
+                encoding="utf-8",
+            )
+            open_ms = ms("2026-06-08T23:00:00")
+            response = {
+                "result": {
+                    "list": [
+                        [open_ms, "100", "102", "99", "101", "1.5", "151.5"],
+                    ]
+                }
+            }
+
+            with mock.patch.object(self.tool, "bybit_public_get", return_value=response):
+                rc = self.tool.main(
+                    [
+                        "--runtime-dir",
+                        str(runtime),
+                        "--reports-dir",
+                        str(reports),
+                        "--research-store",
+                        str(store),
+                        "--symbols",
+                        "BTCUSDT",
+                        "--days",
+                        "1",
+                        "--intervals",
+                        "1h",
+                        "--end",
+                        "2026-06-09T00:00:00+08:00",
+                        "--format",
+                        "jsonl",
+                        "--limit",
+                        "24",
+                        "--max-requests",
+                        "1",
+                        "--max-rps",
+                        "1000",
+                        "--apply",
+                    ]
+                )
+
+            payload = json.loads((runtime / "historical_kline_backfill_latest.json").read_text(encoding="utf-8"))
+            status_rows = [
+                json.loads(line)
+                for line in (store / "historical_kline_task_status" / "data.jsonl").read_text(encoding="utf-8").splitlines()
+            ]
+            self.assertEqual(rc, 0)
+            self.assertEqual(payload["progress"]["completed_requests"], 1)
+            self.assertEqual(status_rows[-1]["status"], "partial_available")
+
+            rc = self.tool.main(
+                [
+                    "--runtime-dir",
+                    str(runtime),
+                    "--reports-dir",
+                    str(reports),
+                    "--research-store",
+                    str(store),
+                    "--symbols",
+                    "BTCUSDT",
+                    "--days",
+                    "1",
+                    "--intervals",
+                    "1h",
+                    "--end",
+                    "2026-06-09T00:00:00+08:00",
+                    "--format",
+                    "jsonl",
+                ]
+            )
+
+            payload = json.loads((runtime / "historical_kline_backfill_latest.json").read_text(encoding="utf-8"))
+            self.assertEqual(rc, 0)
+            self.assertEqual(payload["progress"]["pending_tasks"], 0)
+            self.assertEqual(payload["progress"]["skipped_partial"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()

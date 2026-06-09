@@ -711,20 +711,21 @@ def kline_backfill_summary(path: Path | None) -> dict[str, Any]:
     }
 
 
-def historical_progress_rank(payload: dict[str, Any], path: Path | None) -> tuple[float, float, float, str, float]:
+def historical_progress_rank(payload: dict[str, Any], path: Path | None) -> tuple[float, float, float, float, str, float]:
     progress = payload.get("progress") if isinstance(payload.get("progress"), dict) else {}
-    completed = num(progress.get("completed_requests")) + num(progress.get("skipped_existing"))
     written = num(progress.get("written_rows"))
+    percent = num(progress.get("percent"))
+    completed = num(progress.get("completed_requests")) + num(progress.get("skipped_existing"))
     failed = num(progress.get("failed_requests"))
     try:
         mtime = path.stat().st_mtime if path else 0.0
     except Exception:
         mtime = 0.0
-    return (completed, written, -failed, str(payload.get("generated_at") or ""), mtime)
+    return (written, percent, completed, -failed, str(payload.get("generated_at") or ""), mtime)
 
 
 def best_historical_payload(*paths: Path | None) -> tuple[dict[str, Any] | None, Path | None]:
-    candidates: list[tuple[tuple[float, float, float, str, float], dict[str, Any], Path]] = []
+    candidates: list[tuple[tuple[float, float, float, float, str, float], dict[str, Any], Path]] = []
     for path in paths:
         if not path:
             continue

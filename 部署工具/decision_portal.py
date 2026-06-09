@@ -78,7 +78,7 @@ def num(value: Any) -> float:
 
 
 def read_best_historical_kline_json(*paths: Path) -> dict[str, Any]:
-    candidates: list[tuple[tuple[float, float, float, str, float], dict[str, Any]]] = []
+    candidates: list[tuple[tuple[float, float, float, float, str, float], dict[str, Any]]] = []
     for path in paths:
         payload = read_json(path)
         if not payload:
@@ -89,8 +89,9 @@ def read_best_historical_kline_json(*paths: Path) -> dict[str, Any]:
         except Exception:
             mtime = 0.0
         rank = (
-            num(progress.get("completed_requests")) + num(progress.get("skipped_existing")),
             num(progress.get("written_rows")),
+            num(progress.get("percent")),
+            num(progress.get("completed_requests")) + num(progress.get("skipped_existing")),
             -num(progress.get("failed_requests")),
             str(payload.get("generated_at") or ""),
             mtime,

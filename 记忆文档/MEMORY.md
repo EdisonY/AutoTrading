@@ -492,6 +492,7 @@
 - 2026-06-09：`今日涨跌榜跟踪` 首页展示规则继续收敛。未进场的币种只显示“未进场”和未进场原因，不显示方向关系，也不显示 `+0.0000` 这类无意义盈亏；方向关系和浮盈亏只属于已有模拟持仓的币种。涨跌信号、阶段、24h 变化、速度、tick 合并进 `信号阶段`，避免表格过宽过乱。
 - 2026-06-09：Top30 一年历史 K线回测数据链路开始落地。`historical_kline_backfill.py` 是显式离线命令，默认只写计划/进度；只有传 `--apply` 才会按低速请求公共 Bybit/OKX 历史 K线。它永远不调用 Binance、不提交 Binance queue、不接入 scanner/report timer、不改变 A/B/C 扫描频率、不自动调参、不自动回滚。首页 report 增加 `历史数据拉取进度`，读取 `runtime/historical_kline_backfill_latest.json`，展示进度百分比、写入行数、限速、Universe、最近任务，并明确显示 `Binance 请求 False` 与 `不影响三策略扫描频率`。真实长跑应优先放 Aliyun/shadow 分析节点，先小批量 `--max-rps 0.2 --max-requests 5` 验证，再分批续跑。
 - 2026-06-09：Top30 一年历史 K线已开始真实小批量拉取。Aliyun 首探不通：Bybit `Network is unreachable`、OKX timeout；Tencent 低速 public Bybit/OKX fallback 可用，改用 `jsonl` 后累计落地 `2199` 行，首页显示 `0.12%`、`live_scanner_impact=none`、`binance_requests_enabled=false`。报告/同步规则已改为选择“最佳进度”，避免 Aliyun 失败旧进度覆盖 Tencent 成功进度。下一步只能继续小批量显式 operator run，不进 timer，不提高扫描频率，不启用自动回滚/自动调参。
+- 2026-06-09：第二个 Tencent 低速历史批次已真实落地：`--max-rps 0.2 --max-requests 20 --format jsonl` 完成 `20` 个 public Bybit/OKX 请求、失败 `0`，`research_store/historical_klines` 实际已有 `209` 个 daily JSONL 分区、`19983` 行，约 `1.05%`。随后发现 Aliyun 60 秒 report refresh 会在 tiny sync 滞后时用旧 `2199` 行首页/进度反向覆盖 Tencent；已暂停继续拉取，先修同步防护：历史进度按累计 `written_rows` 优先，Aliyun 反向同步如页面不含 Tencent 最新行数则跳过旧 `index.html` / `decision_portal_latest.html` / `portal_latest.html`，防止 report 假回退。下一批必须等首页/live-context 稳定显示 `19983` 行或更高后再跑。
 
 ---
 ## 2026-05-29 全局运行自检与账户方向口径修复

@@ -160,6 +160,11 @@ PRIORITY_RUNTIME_FILES = [
     "waiting_period_optimization_latest.json",
 ]
 
+HISTORICAL_JSON = "historical_kline_backfill_latest.json"
+HISTORICAL_MD = "historical_kline_backfill_latest.md"
+HISTORICAL_EMBEDDED_REPORTS = {"index.html", "decision_portal_latest.html", "portal_latest.html"}
+_REMOTE_HISTORICAL_REFRESHED = False
+
 
 def without_priority(files: list[str], priority: list[str]) -> list[str]:
     priority_set = set(priority)
@@ -185,27 +190,94 @@ def read_json_file(path: Path) -> dict[str, object]:
     return payload if isinstance(payload, dict) else {}
 
 
-def historical_progress_rank(path: Path) -> tuple[float, float, float, str, float]:
-    payload = read_json_file(path)
-    if not payload:
-        return (-1.0, -1.0, -9999.0, "", 0.0)
+def historical_progress_rank_payload(payload: dict[str, object], mtime: float = 0.0) -> tuple[float, float, float, float, str, float]:
     progress = payload.get("progress") if isinstance(payload.get("progress"), dict) else {}
-    try:
-        mtime = path.stat().st_mtime
-    except Exception:
-        mtime = 0.0
     return (
-        num(progress.get("completed_requests")) + num(progress.get("skipped_existing")),
         num(progress.get("written_rows")),
+        num(progress.get("percent")),
+        num(progress.get("completed_requests")) + num(progress.get("skipped_existing")),
         -num(progress.get("failed_requests")),
         str(payload.get("generated_at") or ""),
         mtime,
     )
 
 
+def historical_progress_rank(path: Path) -> tuple[float, float, float, float, str, float]:
+    payload = read_json_file(path)
+    if not payload:
+        return (-1.0, -1.0, -1.0, -9999.0, "", 0.0)
+    try:
+        mtime = path.stat().st_mtime
+    except Exception:
+        mtime = 0.0
+    return historical_progress_rank_payload(payload, mtime)
+
+
+def fetch_tencent_text(remote_path: str, timeout: int = 10) -> str:
+    cmd = [
+        "ssh",
+        "-o",
+        "BatchMode=yes",
+        "-o",
+        "ConnectTimeout=8",
+        "-o",
+        "ServerAliveInterval=4",
+        "-o",
+        "ServerAliveCountMax=1",
+        f"{TENCENT_USER}@{TENCENT_HOST}",
+        f"cat {shell_quote(remote_path)} 2>/dev/null || true",
+    ]
+    proc = subprocess.run(cmd, capture_output=True, timeout=timeout)
+    if proc.returncode != 0 or not proc.stdout:
+        return ""
+    return proc.stdout.decode("utf-8", errors="replace")
+
+
+def refresh_tencent_historical_mirror() -> None:
+    global _REMOTE_HISTORICAL_REFRESHED
+    if _REMOTE_HISTORICAL_REFRESHED:
+        return
+    _REMOTE_HISTORICAL_REFRESHED = True
+    remote_json = fetch_tencent_text(f"{TENCENT_RUNTIME}/{HISTORICAL_JSON}")
+    if not remote_json.strip():
+        return
+    try:
+        remote_payload = json.loads(remote_json)
+    except Exception:
+        return
+    if not isinstance(remote_payload, dict):
+        return
+    local_rank = max(
+        historical_progress_rank(ALIYUN_RUNTIME / HISTORICAL_JSON),
+        historical_progress_rank(TENCENT_MIRROR_RUNTIME / HISTORICAL_JSON),
+    )
+    if historical_progress_rank_payload(remote_payload) <= local_rank:
+        return
+    TENCENT_MIRROR_RUNTIME.mkdir(parents=True, exist_ok=True)
+    TENCENT_MIRROR_REPORTS.mkdir(parents=True, exist_ok=True)
+    (TENCENT_MIRROR_RUNTIME / HISTORICAL_JSON).write_text(remote_json, encoding="utf-8")
+    remote_md = fetch_tencent_text(f"{TENCENT_REPORTS}/{HISTORICAL_MD}")
+    if remote_md.strip():
+        (TENCENT_MIRROR_REPORTS / HISTORICAL_MD).write_text(remote_md, encoding="utf-8")
+
+
+def best_historical_payload() -> tuple[dict[str, object], Path | None]:
+    refresh_tencent_historical_mirror()
+    candidates: list[tuple[tuple[float, float, float, float, str, float], dict[str, object], Path]] = []
+    for path in (ALIYUN_RUNTIME / HISTORICAL_JSON, TENCENT_MIRROR_RUNTIME / HISTORICAL_JSON):
+        payload = read_json_file(path)
+        if payload:
+            candidates.append((historical_progress_rank(path), payload, path))
+    if not candidates:
+        return {}, None
+    candidates.sort(key=lambda item: item[0], reverse=True)
+    return candidates[0][1], candidates[0][2]
+
+
 def use_tencent_historical_progress() -> bool:
-    mirror = TENCENT_MIRROR_RUNTIME / "historical_kline_backfill_latest.json"
-    local = ALIYUN_RUNTIME / "historical_kline_backfill_latest.json"
+    refresh_tencent_historical_mirror()
+    mirror = TENCENT_MIRROR_RUNTIME / HISTORICAL_JSON
+    local = ALIYUN_RUNTIME / HISTORICAL_JSON
     if not mirror.exists():
         return False
     if not local.exists():
@@ -214,13 +286,28 @@ def use_tencent_historical_progress() -> bool:
 
 
 def resolve_local_path(base: Path, name: str) -> Path:
-    if name == "historical_kline_backfill_latest.json" and base == ALIYUN_RUNTIME and use_tencent_historical_progress():
+    if name == HISTORICAL_JSON and base == ALIYUN_RUNTIME and use_tencent_historical_progress():
         return TENCENT_MIRROR_RUNTIME / name
-    if name == "historical_kline_backfill_latest.md" and base == ALIYUN_REPORTS and use_tencent_historical_progress():
+    if name == HISTORICAL_MD and base == ALIYUN_REPORTS and use_tencent_historical_progress():
         mirror = TENCENT_MIRROR_REPORTS / name
         if mirror.exists():
             return mirror
     return base / name
+
+
+def should_skip_upload(base: Path, name: str, local_path: Path) -> bool:
+    if base != ALIYUN_REPORTS or name not in HISTORICAL_EMBEDDED_REPORTS:
+        return False
+    payload, _source_path = best_historical_payload()
+    progress = payload.get("progress") if isinstance(payload.get("progress"), dict) else {}
+    rows = int(num(progress.get("written_rows")))
+    if rows <= 0 or not local_path.exists():
+        return False
+    try:
+        text = local_path.read_text(encoding="utf-8", errors="replace")
+    except Exception:
+        return False
+    return str(rows) not in text
 
 
 def upload_with_system_ssh(local_path: Path, remote_path: str, file_timeout: int) -> None:
@@ -258,6 +345,10 @@ def upload_priority_tar(max_bytes: int, file_timeout: int) -> dict[str, int]:
             if not local.exists():
                 skipped += 1
                 print(f"  [SKIP] {prefix}/{name} - not found locally")
+                continue
+            if should_skip_upload(base, name, local):
+                skipped += 1
+                print(f"  [SKIP] {prefix}/{name} - stale historical progress")
                 continue
             size = local.stat().st_size
             if size > max_bytes:
@@ -347,6 +438,9 @@ def sync_files(
             local_path = resolve_local_path(local_dir, name)
             if not local_path.exists():
                 print(f"  [SKIP] {label}/{name} - not found locally")
+                continue
+            if should_skip_upload(local_dir, name, local_path):
+                print(f"  [SKIP] {label}/{name} - stale historical progress")
                 continue
             size = local_path.stat().st_size
             if size > max_bytes:

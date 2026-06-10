@@ -269,6 +269,8 @@ def chunk_tasks(symbols: list[str], intervals: list[str], start_ms: int, end_ms:
 
 
 def read_existing_keys(store: Path, fmt: str) -> set[tuple[str, str, int]]:
+    if fmt == "jsonl":
+        return read_existing_jsonl_keys(store, "historical_klines")
     rows = load_existing_rows(store, "historical_klines", fmt)
     keys: set[tuple[str, str, int]] = set()
     for row in rows:
@@ -278,6 +280,59 @@ def read_existing_keys(store: Path, fmt: str) -> set[tuple[str, str, int]]:
         if symbol and interval and open_time_ms > 0:
             keys.add((symbol, interval, open_time_ms))
     return keys
+
+
+def read_existing_jsonl_keys(store: Path, table: str) -> set[tuple[str, str, int]]:
+    keys: set[tuple[str, str, int]] = set()
+    for path in sorted((store / table).glob("date=*/data.jsonl")):
+        for row in read_jsonl_rows(path):
+            symbol = normalize_symbol(row.get("symbol"))
+            interval = str(row.get("interval") or "")
+            open_time_ms = to_int(row.get("open_time_ms"))
+            if symbol and interval and open_time_ms > 0:
+                keys.add((symbol, interval, open_time_ms))
+    return keys
+
+
+def read_jsonl_rows(path: Path) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    if not path.exists():
+        return rows
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        if not line.strip():
+            continue
+        try:
+            payload = json.loads(line)
+        except Exception:
+            continue
+        if isinstance(payload, dict):
+            rows.append(payload)
+    return rows
+
+
+def write_jsonl_rows(path: Path, rows: list[dict[str, Any]]) -> int:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    with tmp.open("w", encoding="utf-8") as fh:
+        for row in rows:
+            fh.write(json.dumps(row, ensure_ascii=False, separators=(",", ":")) + "\n")
+    tmp.replace(path)
+    return len(rows)
+
+
+def jsonl_partition_path(store: Path, table: str, day: str) -> Path:
+    return store / table / f"date={day}" / "data.jsonl"
+
+
+def count_jsonl_rows(store: Path, table: str) -> int:
+    total = 0
+    for path in (store / table).glob("date=*/data.jsonl"):
+        try:
+            with path.open("r", encoding="utf-8", errors="replace") as fh:
+                total += sum(1 for line in fh if line.strip())
+        except Exception:
+            continue
+    return total
 
 
 def task_covered(task: dict[str, Any], existing: set[tuple[str, str, int]]) -> bool:
@@ -519,10 +574,27 @@ def fetch_task(task: dict[str, Any], provider_order: list[str], limit: int) -> t
 def merge_write_rows(store: Path, table: str, rows: list[dict[str, Any]], fmt: str) -> dict[str, Any]:
     if not rows:
         return {"rows": 0, "merged_rows": 0, "files": 0}
+    if fmt == "jsonl":
+        return merge_write_jsonl_partitions(store, table, rows)
     existing = load_existing_rows(store, table, fmt)
     merged = dedupe_kline_rows([*existing, *rows])
     result = export_dataset(merged, store, table, fmt)
     return {"rows": len(rows), "merged_rows": len(merged), "files": int(result.get("files") or 0)}
+
+
+def merge_write_jsonl_partitions(store: Path, table: str, rows: list[dict[str, Any]]) -> dict[str, Any]:
+    by_date: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        day = ms_to_iso(to_int(row.get("open_time_ms")))[:10] if to_int(row.get("open_time_ms")) > 0 else str(row.get("date") or "unknown")[:10]
+        by_date.setdefault(day, []).append({**row, "date": day})
+    files = 0
+    for day, new_rows in sorted(by_date.items()):
+        target = jsonl_partition_path(store, table, day)
+        existing_rows = read_jsonl_rows(target)
+        merged = dedupe_kline_rows([*existing_rows, *new_rows])
+        if write_jsonl_rows(target, merged):
+            files += 1
+    return {"rows": len(rows), "merged_rows": count_jsonl_rows(store, table), "files": files}
 
 
 def progress_payload(

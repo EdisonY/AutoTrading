@@ -384,6 +384,77 @@ class HistoricalKlineBackfillTests(unittest.TestCase):
             self.assertEqual(payload["progress"]["pending_tasks"], 0)
             self.assertEqual(payload["progress"]["skipped_partial"], 1)
 
+    def test_jsonl_merge_only_rewrites_touched_partitions(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = Path(tmp)
+            untouched = store / "historical_klines" / "date=2026-06-07" / "data.jsonl"
+            touched = store / "historical_klines" / "date=2026-06-08" / "data.jsonl"
+            untouched.parent.mkdir(parents=True)
+            touched.parent.mkdir(parents=True)
+            untouched_text = json.dumps(
+                {
+                    "symbol": "ETHUSDT",
+                    "interval": "1h",
+                    "date": "2026-06-07",
+                    "open_time_ms": ms("2026-06-07T00:00:00"),
+                    "open_time": "2026-06-07T08:00:00+08:00",
+                    "close": 2000,
+                    "cache_ts": "2026-06-07T08:00:00+08:00",
+                },
+                ensure_ascii=False,
+            ) + "\n"
+            untouched.write_text(untouched_text, encoding="utf-8")
+            touched.write_text(
+                json.dumps(
+                    {
+                        "symbol": "BTCUSDT",
+                        "interval": "1h",
+                        "date": "2026-06-08",
+                        "open_time_ms": ms("2026-06-08T00:00:00"),
+                        "open_time": "2026-06-08T08:00:00+08:00",
+                        "close": 100,
+                        "cache_ts": "2026-06-08T08:00:00+08:00",
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            result = self.tool.merge_write_rows(
+                store,
+                "historical_klines",
+                [
+                    {
+                        "symbol": "BTCUSDT",
+                        "interval": "1h",
+                        "open_time_ms": ms("2026-06-08T00:00:00"),
+                        "open_time": "2026-06-08T08:00:00+08:00",
+                        "close": 101,
+                        "cache_ts": "2026-06-08T09:00:00+08:00",
+                    },
+                    {
+                        "symbol": "BTCUSDT",
+                        "interval": "1h",
+                        "open_time_ms": ms("2026-06-08T01:00:00"),
+                        "open_time": "2026-06-08T09:00:00+08:00",
+                        "close": 102,
+                        "cache_ts": "2026-06-08T09:00:00+08:00",
+                    },
+                ],
+                "jsonl",
+            )
+
+            self.assertEqual(result["merged_rows"], 3)
+            self.assertEqual(untouched.read_text(encoding="utf-8"), untouched_text)
+            touched_rows = [
+                json.loads(line)
+                for line in touched.read_text(encoding="utf-8").splitlines()
+            ]
+            self.assertEqual(len(touched_rows), 2)
+            self.assertEqual(touched_rows[0]["close"], 101)
+            self.assertEqual(touched_rows[1]["close"], 102)
+
 
 if __name__ == "__main__":
     unittest.main()

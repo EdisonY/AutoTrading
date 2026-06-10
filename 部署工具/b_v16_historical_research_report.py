@@ -9,6 +9,7 @@ automatic upgrade state.
 from __future__ import annotations
 
 import argparse
+import gc
 import json
 import math
 import sys
@@ -314,13 +315,27 @@ def run_research(
             "period": {"start": start.isoformat(timespec="seconds"), "end": end.isoformat(timespec="seconds")},
         },
     )
-    loaded = shared.load_all_bars(root=root, symbols=symbols, intervals=intervals, start=start, end=end)
-    coverage = shared.coverage_rows(loaded)
     total_jobs = sum(len(build_variants(interval, max_variants)) for interval in intervals)
     completed = 0
+    coverage: list[dict[str, Any]] = []
     interval_results: dict[str, Any] = {}
 
     for interval in intervals:
+        write_progress(
+            root,
+            {
+                "progress": {
+                    "completed": completed,
+                    "total": total_jobs,
+                    "percent": round(completed / max(total_jobs, 1) * 100.0, 2),
+                    "current": f"{interval} load historical_klines",
+                },
+                "memory_mode": "interval_by_interval",
+            },
+        )
+        loaded = shared.load_all_bars(root=root, symbols=symbols, intervals=[interval], start=start, end=end)
+        interval_coverage = shared.coverage_rows(loaded)
+        coverage.extend(interval_coverage)
         variants = build_variants(interval, max_variants)
         usable = {symbol: bars for symbol, bars in loaded.get(interval, {}).items() if len(bars) >= backtest_engine.MIN_BARS}
         spec = {
@@ -353,6 +368,7 @@ def run_research(
                         "usable_symbol_intervals": sum(1 for row in coverage if row.get("usable")),
                         "target_symbol_intervals": len(coverage),
                     },
+                    "memory_mode": "interval_by_interval",
                 },
             )
             if usable:
@@ -397,6 +413,8 @@ def run_research(
                 "live_entry_reference" if interval == "1h" else "research_comparison_only_not_current_b_v16_entry_timeframe"
             ),
         }
+        del loaded
+        gc.collect()
 
     payload = build_payload(
         root=root,

@@ -208,8 +208,15 @@ def strategy_threshold(strategy: str, interval: str, params: dict[str, Any]) -> 
     return 60.0
 
 
-def signal_for_bar(strategy: str, bars: list[dict[str, Any]], idx: int, params: dict[str, Any]) -> dict[str, Any] | None:
-    closes = [safe_float(row.get("close")) for row in bars]
+def signal_for_bar(
+    strategy: str,
+    bars: list[dict[str, Any]],
+    idx: int,
+    params: dict[str, Any],
+    closes: list[float] | None = None,
+) -> dict[str, Any] | None:
+    if closes is None:
+        closes = [safe_float(row.get("close")) for row in bars]
     close = closes[idx]
     if close <= 0 or idx < 30:
         return None
@@ -219,7 +226,8 @@ def signal_for_bar(strategy: str, bars: list[dict[str, Any]], idx: int, params: 
     momentum = pct_change(closes[idx - 6], close) if idx >= 6 else 0.0
     vol_ratio = volume_ratio(bars, idx)
     body = (close - safe_float(bars[idx].get("open"))) / close * 100.0 if close > 0 else 0.0
-    atr_pct = atr(bars, idx) / close * 100.0 if close > 0 else 0.0
+    atr_value = atr(bars, idx)
+    atr_pct = atr_value / close * 100.0 if close > 0 else 0.0
 
     if strategy == "A/v11":
         raw = abs(momentum) * 18.0 + abs(trend) * 24.0 + max(0.0, vol_ratio - 1.0) * 18.0
@@ -248,7 +256,7 @@ def signal_for_bar(strategy: str, bars: list[dict[str, Any]], idx: int, params: 
         "momentum_pct": round(momentum, 6),
         "trend_pct": round(trend, 6),
         "volume_ratio": round(vol_ratio, 6),
-        "atr": atr(bars, idx),
+        "atr": atr_value,
         "atr_pct": round(atr_pct, 6),
     }
 
@@ -307,9 +315,10 @@ def simulate_symbol(
     slippage_bps = safe_float(spec.get("slippage_bps"), 0.0)
     max_hold_bars = max(4, safe_int(params.get("max_hold_bars"), 96))
     trades: list[dict[str, Any]] = []
+    closes = [safe_float(row.get("close")) for row in bars]
     idx = 30
     while idx < len(bars) - 2 and len(trades) < MAX_TRADES_PER_RUN:
-        signal = signal_for_bar(strategy, bars, idx, params)
+        signal = signal_for_bar(strategy, bars, idx, params, closes=closes)
         if not signal or not side_allowed(signal["side"], direction):
             idx += 1
             continue

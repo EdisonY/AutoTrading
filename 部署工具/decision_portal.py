@@ -1799,7 +1799,7 @@ def render_backtest_trade_rows(trades: list[Any]) -> str:
     if not rows:
         return '<p class="empty">暂无交易明细。通常是历史 K线不足、策略未触发、或周期/方向组合无信号。</p>'
     return f"""
-<div class="table-scroll">
+<div class="table-scroll backtest-trades-scroll">
   <table class="backtest-table backtest-trades-table">
     <thead><tr><th>标的</th><th>开仓</th><th>平仓</th><th>盈亏</th><th>原因</th></tr></thead>
     <tbody>{''.join(rows)}</tbody>
@@ -2156,6 +2156,7 @@ tr:hover td {{ background:#101827; }}
 .backtest-chart svg {{ width:100%; height:160px; display:block; }}
 .backtest-chart-caption {{ display:flex; justify-content:space-between; color:var(--muted); font-size:12px; margin-top:6px; }}
 .backtest-empty-chart {{ border:1px dashed var(--line); border-radius:8px; padding:48px 12px; color:var(--muted); text-align:center; }}
+.backtest-trades-scroll {{ max-height:420px; overflow:auto; }}
 .backtest-trades-table {{ min-width:1180px; }}
 .backtest-monthly-table {{ min-width:360px; }}
 .gate-grid {{ display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px; }}

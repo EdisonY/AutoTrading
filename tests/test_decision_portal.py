@@ -425,6 +425,7 @@ class DecisionPortalTests(unittest.TestCase):
         self.assertIn("净收益</span><b>+12.34 USDT", html)
         self.assertIn("权益 / PnL 曲线", html)
         self.assertIn("详细开平仓记录", html)
+        self.assertIn("backtest-trades-scroll", html)
         self.assertIn("take_profit", html)
         self.assertIn('class="backtest-history-collapse"', html)
         self.assertIn("<details", html)

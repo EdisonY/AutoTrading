@@ -55,6 +55,7 @@ class ReleaseManagerBundleTests(unittest.TestCase):
                 self.assertIn("backtest_module.py", remotes)
                 self.assertIn("backtest_engine.py", remotes)
                 self.assertIn("v11_historical_research_report.py", remotes)
+                self.assertIn("b_v16_historical_research_report.py", remotes)
 
         for component in ("shadow", "all"):
             with self.subTest(target="aliyun", component=component):
@@ -62,6 +63,7 @@ class ReleaseManagerBundleTests(unittest.TestCase):
                 self.assertIn("backtest_module.py", remotes)
                 self.assertIn("backtest_engine.py", remotes)
                 self.assertNotIn("v11_historical_research_report.py", remotes)
+                self.assertNotIn("b_v16_historical_research_report.py", remotes)
 
     def test_historical_kline_backfill_is_tencent_research_only(self):
         for component in ("research", "all"):

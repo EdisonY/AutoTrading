@@ -342,6 +342,7 @@ TENCENT_COMPONENTS: dict[str, dict[str, Any]] = {
             file_pair("部署工具/backtest_engine.py", "backtest_engine.py"),
             file_pair("部署工具/backtest_module.py", "backtest_module.py"),
             file_pair("部署工具/v11_historical_research_report.py", "v11_historical_research_report.py"),
+            file_pair("部署工具/b_v16_historical_research_report.py", "b_v16_historical_research_report.py"),
             file_pair("部署工具/account_state_service.py", "account_state_service.py"),
             file_pair("部署工具/cleanup_event_store.py", "cleanup_event_store.py"),
             file_pair("部署工具/data_maintenance.py", "data_maintenance.py"),

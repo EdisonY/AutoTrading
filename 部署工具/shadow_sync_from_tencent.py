@@ -137,7 +137,7 @@ def shell_quote(value: str) -> str:
     return "'" + value.replace("'", "'\"'\"'") + "'"
 
 
-def remote_shadow_sync_stale_cleanup_command(max_age_minutes: int = 120) -> str:
+def remote_shadow_sync_stale_cleanup_command(max_age_minutes: int = 15) -> str:
     minutes = max(1, int(max_age_minutes))
     return (
         "find /tmp -xdev -maxdepth 1 "

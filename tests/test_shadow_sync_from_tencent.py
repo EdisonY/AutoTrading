@@ -28,7 +28,7 @@ class ShadowSyncFromTencentTests(unittest.TestCase):
         self.assertIn("find /tmp -xdev -maxdepth 1", cmd)
         self.assertIn("-name 'autotrading_shadow_sync_*'", cmd)
         self.assertIn("-name 'autotrading_shadow_sync_*.tgz'", cmd)
-        self.assertIn("-mmin +120", cmd)
+        self.assertIn("-mmin +15", cmd)
         self.assertIn("-exec rm -rf -- {} +", cmd)
 
     def test_exit_trap_removes_only_current_tmp_dir(self):

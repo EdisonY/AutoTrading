@@ -377,6 +377,8 @@ TENCENT_COMPONENTS: dict[str, dict[str, Any]] = {
             file_pair("部署工具/strategy_evolution_gate.py", "strategy_evolution_gate.py"),
             file_pair("部署工具/systemd/crypto-data-maintenance.service", "systemd/crypto-data-maintenance.service"),
             file_pair("部署工具/systemd/crypto-data-maintenance.timer", "systemd/crypto-data-maintenance.timer"),
+            file_pair("部署工具/systemd/crypto-historical-kline-incremental.service", "systemd/crypto-historical-kline-incremental.service"),
+            file_pair("部署工具/systemd/crypto-historical-kline-incremental.timer", "systemd/crypto-historical-kline-incremental.timer"),
             file_pair("部署工具/systemd/run_strategy_evolution_gate.sh", "run_strategy_evolution_gate.sh"),
             file_pair("research_memory/approvals/manual_actions.jsonl", "research_memory/approvals/manual_actions.jsonl"),
             file_pair("research_memory/approvals/manual_actions_latest.jsonl", "research_memory/approvals/manual_actions_latest.jsonl"),
@@ -385,7 +387,10 @@ TENCENT_COMPONENTS: dict[str, dict[str, Any]] = {
             file_pair("research_memory/approvals/auto_upgrade_policy.json", "research_memory/approvals/auto_upgrade_policy.json"),
         ],
         "services": [],
-        "post": ["chmod +x {root}/run_strategy_evolution_gate.sh"],
+        "post": [
+            "chmod +x {root}/run_strategy_evolution_gate.sh",
+            "sudo cp systemd/crypto-historical-kline-incremental.service /etc/systemd/system/crypto-historical-kline-incremental.service && sudo cp systemd/crypto-historical-kline-incremental.timer /etc/systemd/system/crypto-historical-kline-incremental.timer && sudo systemctl daemon-reload && sudo systemctl enable --now crypto-historical-kline-incremental.timer",
+        ],
     },
 }
 

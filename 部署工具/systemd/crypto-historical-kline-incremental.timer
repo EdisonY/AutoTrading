@@ -1,0 +1,11 @@
+[Unit]
+Description=Run AutoTrading historical Kline incremental fill daily
+
+[Timer]
+OnCalendar=*-*-* 03:20:00
+Persistent=true
+RandomizedDelaySec=900
+Unit=crypto-historical-kline-incremental.service
+
+[Install]
+WantedBy=timers.target

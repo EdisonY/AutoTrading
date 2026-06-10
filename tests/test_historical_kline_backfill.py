@@ -299,6 +299,10 @@ class HistoricalKlineBackfillTests(unittest.TestCase):
             self.assertEqual(rc, 0)
             self.assertEqual(payload["progress"]["pending_tasks"], 0)
             self.assertEqual(payload["progress"]["skipped_unavailable"], 1)
+            self.assertEqual(payload["quality"]["status"], "complete_with_provider_gaps")
+            self.assertTrue(payload["quality"]["task_queue_complete"])
+            self.assertEqual(payload["quality"]["target_symbol_interval_count"], 1)
+            self.assertEqual(payload["quality"]["unavailable_symbol_interval_count"], 1)
 
     def test_partial_available_task_is_marked_and_skipped_on_next_plan(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -383,6 +387,143 @@ class HistoricalKlineBackfillTests(unittest.TestCase):
             self.assertEqual(rc, 0)
             self.assertEqual(payload["progress"]["pending_tasks"], 0)
             self.assertEqual(payload["progress"]["skipped_partial"], 1)
+            self.assertEqual(payload["quality"]["status"], "complete_with_provider_gaps")
+            self.assertEqual(payload["quality"]["partial_symbol_interval_count"], 1)
+
+    def test_output_prefix_writes_incremental_progress_files(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            runtime = base / "runtime"
+            reports = base / "reports"
+            store = base / "research_store"
+            runtime.mkdir()
+            (runtime / "market_data_cache.json").write_text(
+                json.dumps({"coingecko_top_symbols": ["BTCUSDT"], "available_symbols": ["BTCUSDT"]}),
+                encoding="utf-8",
+            )
+
+            rc = self.tool.main(
+                [
+                    "--runtime-dir",
+                    str(runtime),
+                    "--reports-dir",
+                    str(reports),
+                    "--research-store",
+                    str(store),
+                    "--symbols",
+                    "BTCUSDT",
+                    "--days",
+                    "1",
+                    "--intervals",
+                    "1h",
+                    "--end",
+                    "2026-06-09T00:00:00+08:00",
+                    "--format",
+                    "jsonl",
+                    "--output-prefix",
+                    "../historical_kline_incremental_latest",
+                ]
+            )
+
+            self.assertEqual(rc, 0)
+            self.assertTrue((runtime / "historical_kline_incremental_latest.json").exists())
+            self.assertTrue((reports / "historical_kline_incremental_latest.md").exists())
+            self.assertFalse((runtime / "historical_kline_backfill_latest.json").exists())
+
+    def test_incremental_progress_counts_only_current_task_window(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            runtime = base / "runtime"
+            reports = base / "reports"
+            store = base / "research_store"
+            runtime.mkdir()
+            (runtime / "market_data_cache.json").write_text(
+                json.dumps({"coingecko_top_symbols": ["BTCUSDT"], "available_symbols": ["BTCUSDT"]}),
+                encoding="utf-8",
+            )
+            old_partition = store / "historical_klines" / "date=2026-05-01" / "data.jsonl"
+            new_partition = store / "historical_klines" / "date=2026-06-08" / "data.jsonl"
+            old_partition.parent.mkdir(parents=True)
+            new_partition.parent.mkdir(parents=True)
+            old_rows = []
+            for hour in range(10):
+                open_time_ms = ms(f"2026-05-01T{hour:02d}:00:00")
+                old_rows.append(
+                    json.dumps(
+                        {
+                            "symbol": "BTCUSDT",
+                            "interval": "1h",
+                            "date": "2026-05-01",
+                            "open_time_ms": open_time_ms,
+                            "open_time": self.tool.ms_to_iso(open_time_ms),
+                            "close": 100 + hour,
+                        },
+                        ensure_ascii=False,
+                    )
+                )
+            old_partition.write_text("\n".join(old_rows) + "\n", encoding="utf-8")
+            recent_open_ms = ms("2026-06-08T00:00:00")
+            new_partition.write_text(
+                json.dumps(
+                    {
+                        "symbol": "BTCUSDT",
+                        "interval": "1h",
+                        "date": "2026-06-08",
+                        "open_time_ms": recent_open_ms,
+                        "open_time": self.tool.ms_to_iso(recent_open_ms),
+                        "close": 200,
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            status_path = store / "historical_kline_task_status" / "data.jsonl"
+            status_path.parent.mkdir(parents=True)
+            status_path.write_text(
+                json.dumps(
+                    {
+                        "symbol": "BTCUSDT",
+                        "interval": "1h",
+                        "start_ms": ms("2026-05-01T00:00:00"),
+                        "end_ms": ms("2026-05-01T23:00:00"),
+                        "status": "unavailable",
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            rc = self.tool.main(
+                [
+                    "--runtime-dir",
+                    str(runtime),
+                    "--reports-dir",
+                    str(reports),
+                    "--research-store",
+                    str(store),
+                    "--symbols",
+                    "BTCUSDT",
+                    "--days",
+                    "3",
+                    "--intervals",
+                    "1h",
+                    "--end",
+                    "2026-06-09T00:00:00+08:00",
+                    "--format",
+                    "jsonl",
+                    "--output-prefix",
+                    "historical_kline_incremental_latest",
+                ]
+            )
+
+            payload = json.loads((runtime / "historical_kline_incremental_latest.json").read_text(encoding="utf-8"))
+            self.assertEqual(rc, 0)
+            self.assertEqual(payload["progress"]["written_rows"], 1)
+            self.assertLessEqual(payload["progress"]["percent"], 100)
+            self.assertEqual(payload["quality"]["covered_symbol_interval_count"], 1)
+            self.assertEqual(payload["quality"]["unavailable_symbol_interval_count"], 0)
 
     def test_jsonl_merge_only_rewrites_touched_partitions(self):
         with tempfile.TemporaryDirectory() as tmp:

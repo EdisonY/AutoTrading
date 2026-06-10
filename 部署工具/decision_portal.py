@@ -354,6 +354,13 @@ def plain_status(value: Any) -> str:
         "missing": "缺少数据",
         "data_gap": "数据缺口",
         "coverage_gap": "覆盖不足",
+        "planned": "待运行",
+        "plan_only": "只读计划",
+        "complete": "任务完成",
+        "complete_with_provider_gaps": "完成但有供应商缺口",
+        "collecting_or_blocked": "采集中或有阻塞",
+        "paused_request_budget": "请求预算暂停",
+        "paused_time_budget": "时间预算暂停",
         "ready_for_plan_only_data_work": "只做离线数据工作",
         "run_staged_kline_depth_ingest_then_replay_review": "先补K线/深度，再复盘",
         "blocked_non_sample_gaps": "还有非样本阻塞",
@@ -1219,6 +1226,10 @@ def build_state() -> dict[str, Any]:
     research = read_first_json(RUNTIME_DIR / "research_store_summary_latest.json", MIRROR_RUNTIME_DIR / "research_store_summary_latest.json")
     kline = read_first_json(RUNTIME_DIR / "research_kline_backfill_latest.json", MIRROR_RUNTIME_DIR / "research_kline_backfill_latest.json")
     historical_kline = read_best_historical_kline_json(RUNTIME_DIR / "historical_kline_backfill_latest.json", MIRROR_RUNTIME_DIR / "historical_kline_backfill_latest.json")
+    historical_kline_incremental = read_best_historical_kline_json(
+        RUNTIME_DIR / "historical_kline_incremental_latest.json",
+        MIRROR_RUNTIME_DIR / "historical_kline_incremental_latest.json",
+    )
     depth = read_first_json(RUNTIME_DIR / "research_depth_backfill_latest.json", MIRROR_RUNTIME_DIR / "research_depth_backfill_latest.json")
     paper_exchange = read_live_runtime_json("paper_exchange_latest.json")
     market = read_live_runtime_json("market_data_cache.json")
@@ -1264,6 +1275,7 @@ def build_state() -> dict[str, Any]:
         "research": research,
         "kline": kline,
         "historical_kline": historical_kline,
+        "historical_kline_incremental": historical_kline_incremental,
         "depth": depth,
         "paper_exchange": paper_exchange,
         "market": market,
@@ -1534,6 +1546,9 @@ def render_cards(state: dict[str, Any]) -> str:
     waiting_progress = state.get("waiting_progress") if isinstance(state.get("waiting_progress"), dict) else {}
     historical = state.get("historical_kline") if isinstance(state.get("historical_kline"), dict) else {}
     historical_progress = historical.get("progress") if isinstance(historical.get("progress"), dict) else {}
+    historical_quality = historical.get("quality") if isinstance(historical.get("quality"), dict) else {}
+    historical_incremental = state.get("historical_kline_incremental") if isinstance(state.get("historical_kline_incremental"), dict) else {}
+    incremental_progress = historical_incremental.get("progress") if isinstance(historical_incremental.get("progress"), dict) else {}
     waiting_summary = waiting_progress.get("summary") if isinstance(waiting_progress.get("summary"), dict) else {}
     b_gap = waiting_progress.get("b_v16_context_gap") if isinstance(waiting_progress.get("b_v16_context_gap"), dict) else {}
     calibration = state.get("paper_real_calibration_plan") if isinstance(state.get("paper_real_calibration_plan"), dict) else {}
@@ -1566,7 +1581,12 @@ def render_cards(state: dict[str, Any]) -> str:
         (
             "一年历史K线",
             f"{float(historical_progress.get('percent') or 0):.1f}% / {plain_status(historical.get('status') or 'missing')}",
-            "Top30 离线拉取进度。只读进度文件，不随首页刷新打 API，不影响三策略扫描频率。",
+            f"任务队列 {plain_status(historical.get('status') or 'missing')}；可用覆盖 {int(historical_quality.get('covered_symbol_count') or 0)}/{int(historical_quality.get('target_symbol_count') or 0)} 币、{int(historical_quality.get('covered_symbol_interval_count') or 0)}/{int(historical_quality.get('target_symbol_interval_count') or 0)} 币种周期。不随首页刷新打 API。",
+        ),
+        (
+            "每日历史增量",
+            f"{plain_status(historical_incremental.get('status') or 'missing')} / {int(incremental_progress.get('written_rows') or 0)} 行",
+            "每天低速补最近3天到同一回测仓。只跑 Tencent timer，不改三策略扫描频率，不用私有/下单接口。",
         ),
     ]
     return "".join(
@@ -1590,9 +1610,13 @@ def render_historical_kline_progress(state: dict[str, Any]) -> str:
 </div>
 """.strip()
     progress = payload.get("progress") if isinstance(payload.get("progress"), dict) else {}
+    quality = payload.get("quality") if isinstance(payload.get("quality"), dict) else {}
     cfg = payload.get("config") if isinstance(payload.get("config"), dict) else {}
     universe = payload.get("universe") if isinstance(payload.get("universe"), dict) else {}
     last = payload.get("last_task") if isinstance(payload.get("last_task"), dict) else {}
+    incremental = state.get("historical_kline_incremental") if isinstance(state.get("historical_kline_incremental"), dict) else {}
+    incremental_progress = incremental.get("progress") if isinstance(incremental.get("progress"), dict) else {}
+    incremental_cfg = incremental.get("config") if isinstance(incremental.get("config"), dict) else {}
     pct = max(0.0, min(100.0, float(progress.get("percent") or 0.0)))
     symbols = universe.get("symbols") if isinstance(universe.get("symbols"), list) else []
     body = f"""
@@ -1603,6 +1627,12 @@ def render_historical_kline_progress(state: dict[str, Any]) -> str:
     <div><span>进度</span><b>{pct:.2f}%</b><small>{int(progress.get('completed_requests') or 0)} 完成 / {int(progress.get('total_tasks') or 0)} 任务，已跳过 {int(progress.get('skipped_existing') or 0)}</small></div>
     <div><span>数据量</span><b>{int(progress.get('written_rows') or 0)} 行</b><small>预计 {int(progress.get('planned_bars_estimate') or 0)} 根；失败 {int(progress.get('failed_requests') or 0)}</small></div>
     <div><span>限速</span><b>{h(cfg.get('max_rps', '-'))} req/s</b><small>私有/下单请求 {h(str(payload.get('binance_requests_enabled')))}；扫描频率改动 {h(str(payload.get('strategy_frequency_change')))}（不影响三策略扫描频率）</small></div>
+    <div><span>覆盖质量</span><b>{h(plain_status(quality.get('status') or '-'))}</b><small>{int(quality.get('covered_symbol_count') or 0)}/{int(quality.get('target_symbol_count') or 0)} 币；{int(quality.get('covered_symbol_interval_count') or 0)}/{int(quality.get('target_symbol_interval_count') or 0)} 币种周期；缺口 {int(quality.get('unavailable_symbol_interval_count') or 0)}，部分 {int(quality.get('partial_symbol_interval_count') or 0)}</small></div>
+    <div><span>每日增量</span><b>{h(plain_status(incremental.get('status') or 'missing'))}</b><small>最近 {h(incremental_cfg.get('days', '-'))} 天；已写 {int(incremental_progress.get('written_rows') or 0)} 行；限速 {h(incremental_cfg.get('max_rps', '-'))} req/s；更新 {h(age_text(parse_dt(incremental.get('generated_at'))))}</small></div>
+  </div>
+  <div class="history-detail">
+    <b>质量说明</b>
+    <span>{h(quality.get('note') or '任务进度和覆盖质量分开看；100% 只代表当前任务队列无待处理。')}</span>
   </div>
   <div class="history-detail">
     <b>Universe</b>

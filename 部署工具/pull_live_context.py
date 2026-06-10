@@ -49,6 +49,7 @@ MAIN_FILES = [
     ("reports/research_store_summary_latest.md", "reports/research_store_summary_latest.md", False),
     ("reports/research_kline_backfill_latest.md", "reports/research_kline_backfill_latest.md", False),
     ("reports/historical_kline_backfill_latest.md", "reports/historical_kline_backfill_latest.md", False),
+    ("reports/historical_kline_incremental_latest.md", "reports/historical_kline_incremental_latest.md", False),
     ("reports/research_depth_backfill_latest.md", "reports/research_depth_backfill_latest.md", False),
     ("reports/external_replay_data_ingest_latest.md", "reports/external_replay_data_ingest_latest.md", False),
     ("reports/research_store_retention_latest.md", "reports/research_store_retention_latest.md", False),
@@ -84,6 +85,7 @@ MAIN_FILES = [
     ("runtime/research_store_summary_latest.json", "runtime/research_store_summary_latest.json", False),
     ("runtime/research_kline_backfill_latest.json", "runtime/research_kline_backfill_latest.json", False),
     ("runtime/historical_kline_backfill_latest.json", "runtime/historical_kline_backfill_latest.json", False),
+    ("runtime/historical_kline_incremental_latest.json", "runtime/historical_kline_incremental_latest.json", False),
     ("runtime/research_depth_backfill_latest.json", "runtime/research_depth_backfill_latest.json", False),
     ("runtime/external_replay_data_ingest_latest.json", "runtime/external_replay_data_ingest_latest.json", False),
     ("runtime/research_store_retention_latest.json", "runtime/research_store_retention_latest.json", False),
@@ -206,6 +208,7 @@ auto_upgrade = read_json(root / "runtime" / "auto_upgrade_readiness_latest.json"
 candidate_governance = read_json(root / "runtime" / "strategy_candidate_governance_latest.json")
 waiting_progress = read_json(root / "runtime" / "waiting_period_progress_latest.json")
 historical_kline = read_json(root / "runtime" / "historical_kline_backfill_latest.json")
+historical_kline_incremental = read_json(root / "runtime" / "historical_kline_incremental_latest.json")
 services = {
     name: unit_state(name)
     for name in (
@@ -221,6 +224,8 @@ services = {
         "crypto-binance-user-stream.service",
         "crypto-binance-user-stream-v16.service",
         "crypto-binance-user-stream-v14.service",
+        "crypto-historical-kline-incremental.timer",
+        "crypto-historical-kline-incremental.service",
     )
 }
 
@@ -293,7 +298,20 @@ print(json.dumps({
         "strategy_frequency_change": historical_kline.get("strategy_frequency_change"),
         "config": historical_kline.get("config", {}),
         "progress": historical_kline.get("progress", {}),
+        "quality": historical_kline.get("quality", {}),
         "universe_size": len((historical_kline.get("universe") or {}).get("symbols") or []),
+    },
+    "historical_kline_incremental_summary": {
+        "status": historical_kline_incremental.get("status"),
+        "mode": historical_kline_incremental.get("mode"),
+        "apply_enabled": historical_kline_incremental.get("apply_enabled"),
+        "live_scanner_impact": historical_kline_incremental.get("live_scanner_impact"),
+        "binance_requests_enabled": historical_kline_incremental.get("binance_requests_enabled"),
+        "strategy_frequency_change": historical_kline_incremental.get("strategy_frequency_change"),
+        "config": historical_kline_incremental.get("config", {}),
+        "progress": historical_kline_incremental.get("progress", {}),
+        "quality": historical_kline_incremental.get("quality", {}),
+        "universe_size": len((historical_kline_incremental.get("universe") or {}).get("symbols") or []),
     },
 }, ensure_ascii=False))
 """
@@ -583,6 +601,7 @@ def main(argv: list[str] | None = None) -> int:
                 "strategy_candidate_governance": live.get("strategy_candidate_governance_summary"),
                 "waiting_period_progress": live.get("waiting_period_progress_summary"),
                 "historical_kline_backfill": live.get("historical_kline_backfill_summary"),
+                "historical_kline_incremental": live.get("historical_kline_incremental_summary"),
                 "output": str(ROOT / "runtime" / "live_context_summary_latest.json"),
             },
             ensure_ascii=False,

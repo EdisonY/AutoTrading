@@ -19,6 +19,25 @@ timeout $SYNC_TIMEOUT $PYTHON shadow_sync_from_tencent.py \
   --log-tail 80 \
   --max-age-hours 2 || echo "[WARN] tiny sync failed or timed out; using local mirror"
 
+TENCENT_HOST=${TENCENT_HOST:-129.226.151.144}
+TENCENT_USER=${TENCENT_USER:-ubuntu}
+TENCENT_ROOT=${TENCENT_ROOT:-/opt/crypto-auto-trader}
+mkdir -p server_logs_tencent/runtime server_logs_tencent/reports
+for rel in \
+  runtime/historical_kline_backfill_latest.json \
+  runtime/historical_kline_incremental_latest.json \
+  reports/historical_kline_backfill_latest.md \
+  reports/historical_kline_incremental_latest.md
+do
+  tmp="server_logs_tencent/${rel}.tmp"
+  if timeout 15s ssh -o BatchMode=yes -o ConnectTimeout=8 -o ServerAliveInterval=4 -o ServerAliveCountMax=1 \
+    "$TENCENT_USER@$TENCENT_HOST" "cat '$TENCENT_ROOT/$rel' 2>/dev/null" > "$tmp" && [ -s "$tmp" ]; then
+    mv "$tmp" "server_logs_tencent/$rel"
+  else
+    rm -f "$tmp"
+  fi
+done
+
 $PYTHON decision_attention.py || echo "[WARN] attention ledger failed"
 $PYTHON long_term_skeleton_review.py --runtime-dir $REMOTE_DIR/runtime --reports-dir $REMOTE_DIR/reports || echo "[WARN] long-term skeleton review failed"
 $PYTHON waiting_period_optimization.py --root $REMOTE_DIR --runtime-dir $REMOTE_DIR/runtime --reports-dir $REMOTE_DIR/reports || echo "[WARN] waiting-period optimization failed"

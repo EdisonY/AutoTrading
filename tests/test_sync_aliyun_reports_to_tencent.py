@@ -101,6 +101,24 @@ class SyncAliyunReportsToTencentTests(unittest.TestCase):
             )
         )
 
+    def test_never_upload_historical_progress_artifacts_back_to_tencent(self):
+        local_json = self.tool.ALIYUN_RUNTIME / self.tool.HISTORICAL_JSON
+        local_md = self.tool.ALIYUN_REPORTS / self.tool.HISTORICAL_MD
+        self.write_progress(local_json, rows=28984, percent=1.52, completed=20)
+        local_md.write_text("历史数据拉取进度 28984 行", encoding="utf-8")
+
+        self.assertTrue(self.tool.should_skip_upload(self.tool.ALIYUN_RUNTIME, self.tool.HISTORICAL_JSON, local_json))
+        self.assertTrue(self.tool.should_skip_upload(self.tool.ALIYUN_REPORTS, self.tool.HISTORICAL_MD, local_md))
+
+    def test_never_upload_historical_incremental_artifacts_back_to_tencent(self):
+        local_json = self.tool.ALIYUN_RUNTIME / self.tool.HISTORICAL_INCREMENTAL_JSON
+        local_md = self.tool.ALIYUN_REPORTS / self.tool.HISTORICAL_INCREMENTAL_MD
+        self.write_progress(local_json, rows=1200, percent=100.0, completed=12)
+        local_md.write_text("每日历史增量 1200 行", encoding="utf-8")
+
+        self.assertTrue(self.tool.should_skip_upload(self.tool.ALIYUN_RUNTIME, self.tool.HISTORICAL_INCREMENTAL_JSON, local_json))
+        self.assertTrue(self.tool.should_skip_upload(self.tool.ALIYUN_REPORTS, self.tool.HISTORICAL_INCREMENTAL_MD, local_md))
+
 
 if __name__ == "__main__":
     unittest.main()

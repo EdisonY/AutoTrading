@@ -49,6 +49,10 @@ HISTORICAL_KLINE_JSON = ROOT / "runtime" / "historical_kline_backfill_latest.jso
 HISTORICAL_KLINE_MD = REPORTS_DIR / "historical_kline_backfill_latest.md"
 MIRROR_HISTORICAL_KLINE_JSON = SERVER_MIRROR_DIR / "runtime" / "historical_kline_backfill_latest.json"
 MIRROR_HISTORICAL_KLINE_MD = SERVER_MIRROR_DIR / "reports" / "historical_kline_backfill_latest.md"
+HISTORICAL_INCREMENTAL_JSON = ROOT / "runtime" / "historical_kline_incremental_latest.json"
+HISTORICAL_INCREMENTAL_MD = REPORTS_DIR / "historical_kline_incremental_latest.md"
+MIRROR_HISTORICAL_INCREMENTAL_JSON = SERVER_MIRROR_DIR / "runtime" / "historical_kline_incremental_latest.json"
+MIRROR_HISTORICAL_INCREMENTAL_MD = SERVER_MIRROR_DIR / "reports" / "historical_kline_incremental_latest.md"
 DEPTH_BACKFILL_JSON = ROOT / "runtime" / "research_depth_backfill_latest.json"
 DEPTH_BACKFILL_MD = REPORTS_DIR / "research_depth_backfill_latest.md"
 RESEARCH_RETENTION_JSON = ROOT / "runtime" / "research_store_retention_latest.json"
@@ -745,10 +749,15 @@ def best_historical_payload(*paths: Path | None) -> tuple[dict[str, Any] | None,
     return candidates[0][1], candidates[0][2]
 
 
-def historical_kline_backfill_summary(*paths: Path | None) -> dict[str, Any]:
+def historical_kline_backfill_summary(
+    *paths: Path | None,
+    local_md: Path = HISTORICAL_KLINE_MD,
+    mirror_json: Path = MIRROR_HISTORICAL_KLINE_JSON,
+    mirror_md: Path = MIRROR_HISTORICAL_KLINE_MD,
+) -> dict[str, Any]:
     empty = {
         "available": False,
-        "path": HISTORICAL_KLINE_MD,
+        "path": local_md,
         "age": "无历史K线进度",
         "fresh": False,
         "status": "missing",
@@ -769,14 +778,15 @@ def historical_kline_backfill_summary(*paths: Path | None) -> dict[str, Any]:
             "written_rows": 0,
             "planned_bars_estimate": 0,
         },
+        "quality": {},
     }
     payload, source_path = best_historical_payload(*paths)
     if not isinstance(payload, dict):
         return empty
     generated_at = parse_dt(payload.get("generated_at"))
-    report_path = HISTORICAL_KLINE_MD
-    if source_path == MIRROR_HISTORICAL_KLINE_JSON and MIRROR_HISTORICAL_KLINE_MD.exists():
-        report_path = MIRROR_HISTORICAL_KLINE_MD
+    report_path = local_md
+    if source_path == mirror_json and mirror_md.exists():
+        report_path = mirror_md
     return {
         "available": True,
         "path": report_path,
@@ -791,6 +801,7 @@ def historical_kline_backfill_summary(*paths: Path | None) -> dict[str, Any]:
         "config": payload.get("config") if isinstance(payload.get("config"), dict) else {},
         "universe": payload.get("universe") if isinstance(payload.get("universe"), dict) else {"symbols": []},
         "progress": payload.get("progress") if isinstance(payload.get("progress"), dict) else empty["progress"],
+        "quality": payload.get("quality") if isinstance(payload.get("quality"), dict) else {},
         "last_task": payload.get("last_task") if isinstance(payload.get("last_task"), dict) else {},
         "errors": payload.get("errors") if isinstance(payload.get("errors"), list) else [],
     }
@@ -2174,6 +2185,10 @@ def function_status_cards(data: dict[str, Any]) -> list[dict[str, str]]:
     historical_kline = data.get("historical_kline_backfill") or {}
     historical_progress = historical_kline.get("progress") or {}
     historical_config = historical_kline.get("config") or {}
+    historical_quality = historical_kline.get("quality") or {}
+    historical_incremental = data.get("historical_kline_incremental") or {}
+    historical_incremental_progress = historical_incremental.get("progress") or {}
+    historical_incremental_config = historical_incremental.get("config") or {}
     depth_backfill = data.get("depth_backfill") or {}
     depth_backfill_plan = (depth_backfill.get("plan") or {}).get("summary") or {}
     depth_backfill_submit = depth_backfill.get("submit") or {}
@@ -2418,11 +2433,31 @@ def function_status_cards(data: dict[str, Any]) -> list[dict[str, str]]:
                 f"状态 {historical_kline.get('status', '-')}; "
                 f"{int(historical_progress.get('completed_requests') or 0)}/{int(historical_progress.get('total_tasks') or 0)} 请求；"
                 f"已写 {int(historical_progress.get('written_rows') or 0)} 行；"
+                f"覆盖 {int(historical_quality.get('covered_symbol_count') or 0)}/{int(historical_quality.get('target_symbol_count') or 0)} 币、"
+                f"{int(historical_quality.get('covered_symbol_interval_count') or 0)}/{int(historical_quality.get('target_symbol_interval_count') or 0)} 币种周期；"
                 f"限速 {historical_config.get('max_rps', '-')} req/s；"
                 f"live影响 {historical_kline.get('live_scanner_impact', 'none')}；"
-                f"Binance请求 {historical_kline.get('binance_requests_enabled')}。"
+                f"私有/下单请求 {historical_kline.get('binance_requests_enabled')}。"
                 if historical_kline.get("available")
                 else "Top30一年历史K线进度尚未生成；首页刷新只读进度文件，不打历史API。"
+            ),
+        },
+        {
+            "level": "ok" if historical_incremental.get("fresh") and historical_incremental.get("available") else "warn",
+            "name": "每日历史增量",
+            "value": (
+                str(historical_incremental.get("status") or "-")
+                if historical_incremental.get("available")
+                else "未生成"
+            ),
+            "body": (
+                f"最近 {historical_incremental_config.get('days', '-')} 天；"
+                f"{int(historical_incremental_progress.get('completed_requests') or 0)}/{int(historical_incremental_progress.get('total_tasks') or 0)} 请求；"
+                f"已写 {int(historical_incremental_progress.get('written_rows') or 0)} 行；"
+                f"限速 {historical_incremental_config.get('max_rps', '-')} req/s；"
+                f"私有/下单请求 {historical_incremental.get('binance_requests_enabled')}；扫描频率改动 {historical_incremental.get('strategy_frequency_change')}。"
+                if historical_incremental.get("available")
+                else "每日增量进度尚未生成；Tencent timer 会低速补最近3天到同一回测仓。"
             ),
         },
         {
@@ -3322,6 +3357,15 @@ def build_data() -> dict[str, Any]:
     historical_summary = historical_kline_backfill_summary(HISTORICAL_KLINE_JSON, MIRROR_HISTORICAL_KLINE_JSON)
     data["historical_kline_backfill"] = historical_summary
     data["historical_kline_backfill_html"] = historical_summary.get("path") or HISTORICAL_KLINE_MD
+    historical_incremental_summary = historical_kline_backfill_summary(
+        HISTORICAL_INCREMENTAL_JSON,
+        MIRROR_HISTORICAL_INCREMENTAL_JSON,
+        local_md=HISTORICAL_INCREMENTAL_MD,
+        mirror_json=MIRROR_HISTORICAL_INCREMENTAL_JSON,
+        mirror_md=MIRROR_HISTORICAL_INCREMENTAL_MD,
+    )
+    data["historical_kline_incremental"] = historical_incremental_summary
+    data["historical_kline_incremental_html"] = historical_incremental_summary.get("path") or HISTORICAL_INCREMENTAL_MD
     data["depth_backfill"] = depth_backfill_summary(DEPTH_BACKFILL_JSON)
     data["depth_backfill_html"] = DEPTH_BACKFILL_MD
     data["research_retention"] = research_retention_summary(RESEARCH_RETENTION_JSON)
@@ -4390,9 +4434,17 @@ def render_html(out_dir: Path) -> str:
         route_card(
             "Top30一年历史K线",
             "离线拉取进度",
-            "看市值Top30一年期K线回填进度、限速、已写行数和最近任务。首页刷新只读进度文件，不会打历史API或影响三策略扫描。",
+            "看市值Top30一年期K线回填进度、覆盖质量、供应商/上市缺口和最近任务。首页刷新只读进度文件，不会打历史API或影响三策略扫描。",
             data["historical_kline_backfill_html"],
             "看历史K线进度",
+            "blue",
+        ),
+        route_card(
+            "每日历史增量",
+            "低速补最近3天",
+            "看 Tencent 每日增量 timer 的最近运行状态。它写入同一个历史回测仓，不改三策略扫描频率，不使用私有/下单接口。",
+            data["historical_kline_incremental_html"],
+            "看每日增量",
             "blue",
         ),
         route_card(

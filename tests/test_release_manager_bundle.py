@@ -53,11 +53,15 @@ class ReleaseManagerBundleTests(unittest.TestCase):
             with self.subTest(target="tencent", component=component):
                 remotes = {remote for _local, remote in self.tool.TENCENT_COMPONENTS[component]["files"]}
                 self.assertIn("historical_kline_backfill.py", remotes)
+                self.assertIn("systemd/crypto-historical-kline-incremental.service", remotes)
+                self.assertIn("systemd/crypto-historical-kline-incremental.timer", remotes)
 
         for component in ("shadow", "all"):
             with self.subTest(target="aliyun", component=component):
                 remotes = {remote for _local, remote in self.tool.ALIYUN_COMPONENTS[component]["files"]}
                 self.assertNotIn("historical_kline_backfill.py", remotes)
+                self.assertNotIn("systemd/crypto-historical-kline-incremental.service", remotes)
+                self.assertNotIn("systemd/crypto-historical-kline-incremental.timer", remotes)
 
         for component in ("portal", "strategy-a", "strategy-b", "strategy-c", "sentinel", "market-data"):
             with self.subTest(component=component):
@@ -71,7 +75,7 @@ class ReleaseManagerBundleTests(unittest.TestCase):
             for component, spec in components.items():
                 with self.subTest(target=target_name, component=component):
                     posts = "\n".join(spec.get("post") or [])
-                    self.assertNotIn("historical_kline_backfill.py", posts)
+                    self.assertNotIn("historical_kline_backfill.py --apply --days 365", posts)
 
     def test_tencent_binance_components_include_start_guard(self):
         for component in ("sentinel", "account", "account-state", "api-queue", "user-stream", "all"):

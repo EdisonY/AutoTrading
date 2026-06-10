@@ -50,6 +50,7 @@ REPORT_FILES = [
     "research_store_summary_latest.md",
     "research_kline_backfill_latest.md",
     "historical_kline_backfill_latest.md",
+    "historical_kline_incremental_latest.md",
     "research_depth_backfill_latest.md",
     "external_replay_data_ingest_latest.md",
     "research_store_retention_latest.md",
@@ -94,6 +95,7 @@ RUNTIME_FILES = [
     "research_store_summary_latest.json",
     "research_kline_backfill_latest.json",
     "historical_kline_backfill_latest.json",
+    "historical_kline_incremental_latest.json",
     "research_depth_backfill_latest.json",
     "external_replay_data_ingest_latest.json",
     "research_store_retention_latest.json",
@@ -128,6 +130,7 @@ PRIORITY_REPORT_FILES = [
     "portal_latest.html",
     "research_store_summary_latest.md",
     "historical_kline_backfill_latest.md",
+    "historical_kline_incremental_latest.md",
     "replay_readiness_latest.md",
     "external_replay_data_ingest_latest.md",
     "waiting_period_optimization_latest.md",
@@ -147,6 +150,7 @@ PRIORITY_RUNTIME_FILES = [
     "alerts_latest.json",
     "research_store_summary_latest.json",
     "historical_kline_backfill_latest.json",
+    "historical_kline_incremental_latest.json",
     "replay_readiness_latest.json",
     "external_replay_data_ingest_latest.json",
     "a_v11_rollout_review_latest.json",
@@ -162,6 +166,8 @@ PRIORITY_RUNTIME_FILES = [
 
 HISTORICAL_JSON = "historical_kline_backfill_latest.json"
 HISTORICAL_MD = "historical_kline_backfill_latest.md"
+HISTORICAL_INCREMENTAL_JSON = "historical_kline_incremental_latest.json"
+HISTORICAL_INCREMENTAL_MD = "historical_kline_incremental_latest.md"
 HISTORICAL_EMBEDDED_REPORTS = {"index.html", "decision_portal_latest.html", "portal_latest.html"}
 _REMOTE_HISTORICAL_REFRESHED = False
 
@@ -286,7 +292,16 @@ def resolve_local_path(base: Path, name: str) -> Path:
     return base / name
 
 
+def is_historical_progress_artifact(base: Path, name: str) -> bool:
+    return (
+        (base == ALIYUN_RUNTIME and name in {HISTORICAL_JSON, HISTORICAL_INCREMENTAL_JSON})
+        or (base == ALIYUN_REPORTS and name in {HISTORICAL_MD, HISTORICAL_INCREMENTAL_MD})
+    )
+
+
 def should_skip_upload(base: Path, name: str, local_path: Path) -> bool:
+    if is_historical_progress_artifact(base, name):
+        return True
     if base != ALIYUN_REPORTS or name not in HISTORICAL_EMBEDDED_REPORTS:
         return False
     payload, _source_path = best_historical_payload()

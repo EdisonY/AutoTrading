@@ -1,0 +1,18 @@
+[Unit]
+Description=AutoTrading daily historical Kline incremental fill
+Wants=network-online.target
+After=network-online.target crypto-market-data-cache.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/crypto-auto-trader
+User=ubuntu
+Group=ubuntu
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/crypto-auto-trader/.venv/bin/python /opt/crypto-auto-trader/historical_kline_backfill.py --apply --runtime-dir /opt/crypto-auto-trader/runtime --reports-dir /opt/crypto-auto-trader/reports --research-store /opt/crypto-auto-trader/research_store --top-n 30 --days 3 --intervals 15m,30m,1h,4h --providers bybit,okx --format jsonl --max-rps 0.3 --max-requests 160 --max-runtime-sec 900 --flush-requests 10 --output-prefix historical_kline_incremental_latest
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+
+[Install]
+WantedBy=multi-user.target

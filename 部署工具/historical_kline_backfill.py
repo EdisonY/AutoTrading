@@ -360,6 +360,58 @@ def task_key(task: dict[str, Any]) -> tuple[str, str, int, int]:
     return (str(task["symbol"]), str(task["interval"]), int(task["start_ms"]), int(task["end_ms"]))
 
 
+def task_bounds(tasks: list[dict[str, Any]]) -> dict[tuple[str, str], tuple[int, int]]:
+    bounds: dict[tuple[str, str], tuple[int, int]] = {}
+    for task in tasks:
+        key = (str(task["symbol"]), str(task["interval"]))
+        start_ms = int(task["start_ms"])
+        end_ms = int(task["end_ms"])
+        if key not in bounds:
+            bounds[key] = (start_ms, end_ms)
+        else:
+            old_start, old_end = bounds[key]
+            bounds[key] = (min(old_start, start_ms), max(old_end, end_ms))
+    return bounds
+
+
+def key_in_task_bounds(symbol: str, interval: str, open_time_ms: int, bounds: dict[tuple[str, str], tuple[int, int]]) -> bool:
+    window = bounds.get((symbol, interval))
+    if not window:
+        return False
+    return window[0] <= int(open_time_ms) <= window[1]
+
+
+def status_in_task_bounds(symbol: str, interval: str, start_ms: int, end_ms: int, bounds: dict[tuple[str, str], tuple[int, int]]) -> bool:
+    window = bounds.get((symbol, interval))
+    if not window:
+        return False
+    return int(start_ms) <= window[1] and int(end_ms) >= window[0]
+
+
+def count_existing_keys_for_tasks(existing: set[tuple[str, str, int]], tasks: list[dict[str, Any]]) -> int:
+    bounds = task_bounds(tasks)
+    if not bounds:
+        return 0
+    return sum(
+        1
+        for symbol, interval, open_time_ms in existing
+        if key_in_task_bounds(symbol, interval, open_time_ms, bounds)
+    )
+
+
+def filter_statuses_for_bounds(
+    task_statuses: dict[tuple[str, str, int, int], str],
+    bounds: dict[tuple[str, str], tuple[int, int]],
+) -> dict[tuple[str, str, int, int], str]:
+    if not bounds:
+        return {}
+    return {
+        (symbol, interval, start_ms, end_ms): status
+        for (symbol, interval, start_ms, end_ms), status in task_statuses.items()
+        if status_in_task_bounds(symbol, interval, start_ms, end_ms, bounds)
+    }
+
+
 def task_status_path(store: Path) -> Path:
     return store / "historical_kline_task_status" / "data.jsonl"
 
@@ -614,6 +666,9 @@ def progress_payload(
     written_rows: int,
     errors: list[str],
     started_at: datetime,
+    existing_keys: set[tuple[str, str, int]] | None = None,
+    task_statuses: dict[tuple[str, str, int, int], str] | None = None,
+    task_bounds_filter: dict[tuple[str, str], tuple[int, int]] | None = None,
     last_task: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     planned_bars = sum(
@@ -622,7 +677,38 @@ def progress_payload(
     ) * len(symbols)
     task_percent = (completed_requests + skipped_existing + skipped_unavailable + skipped_partial) / total_tasks * 100 if total_tasks else 0.0
     row_percent = written_rows / planned_bars * 100 if planned_bars else 0.0
-    percent = max(task_percent, row_percent)
+    percent = min(100.0, max(task_percent, row_percent))
+    existing_keys = existing_keys or set()
+    task_statuses = task_statuses or {}
+    task_bounds_filter = task_bounds_filter or {}
+    scoped_statuses = filter_statuses_for_bounds(task_statuses, task_bounds_filter) if task_bounds_filter else task_statuses
+    covered_symbol_intervals = {
+        (symbol, interval)
+        for symbol, interval, _open_time_ms in existing_keys
+        if symbol in symbols and interval in csv_values(args.intervals)
+        and (not task_bounds_filter or key_in_task_bounds(symbol, interval, _open_time_ms, task_bounds_filter))
+    }
+    unavailable_symbol_intervals = sorted(
+        {
+            (symbol, interval)
+            for (symbol, interval, _start_ms, _end_ms), status in scoped_statuses.items()
+            if status in UNAVAILABLE_TASK_STATUSES
+        }
+    )
+    partial_symbol_intervals = sorted(
+        {
+            (symbol, interval)
+            for (symbol, interval, _start_ms, _end_ms), status in scoped_statuses.items()
+            if status in PARTIAL_TASK_STATUSES
+        }
+    )
+    task_queue_complete = bool(total_tasks and pending_tasks == 0 and failed_requests == 0)
+    if not task_queue_complete:
+        quality_status = "collecting_or_blocked"
+    elif skipped_unavailable or skipped_partial or unavailable_symbol_intervals or partial_symbol_intervals:
+        quality_status = "complete_with_provider_gaps"
+    else:
+        quality_status = "complete"
     return {
         "generated_at": now_cst().isoformat(timespec="seconds"),
         "started_at": started_at.isoformat(timespec="seconds"),
@@ -662,20 +748,57 @@ def progress_payload(
             "written_rows": int(written_rows),
             "planned_bars_estimate": int(planned_bars),
         },
+        "quality": {
+            "status": quality_status,
+            "task_queue_complete": task_queue_complete,
+            "covered_symbol_count": len({symbol for symbol, _interval in covered_symbol_intervals}),
+            "covered_symbol_interval_count": len(covered_symbol_intervals),
+            "target_symbol_count": len(symbols),
+            "target_symbol_interval_count": len(symbols) * len(csv_values(args.intervals)),
+            "unavailable_symbol_interval_count": len(unavailable_symbol_intervals),
+            "partial_symbol_interval_count": len(partial_symbol_intervals),
+            "unavailable_task_count": int(skipped_unavailable),
+            "partial_task_count": int(skipped_partial),
+            "note": (
+                "任务队列已无待处理，但部分合约/周期交易所不提供或上市时间不足；回测需按可用覆盖过滤。"
+                if quality_status == "complete_with_provider_gaps"
+                else "任务队列和数据覆盖均完成。"
+                if quality_status == "complete"
+                else "仍有待处理或失败任务。"
+            ),
+            "unavailable_symbol_intervals_preview": [
+                {"symbol": symbol, "interval": interval}
+                for symbol, interval in unavailable_symbol_intervals[:20]
+            ],
+            "partial_symbol_intervals_preview": [
+                {"symbol": symbol, "interval": interval}
+                for symbol, interval in partial_symbol_intervals[:20]
+            ],
+        },
         "last_task": last_task or {},
         "errors": errors[-20:],
     }
 
 
-def write_progress(runtime_dir: Path, reports_dir: Path, payload: dict[str, Any]) -> None:
+def progress_output_stem(args: argparse.Namespace) -> str:
+    stem = str(getattr(args, "output_prefix", "") or "historical_kline_backfill_latest").strip()
+    stem = stem.replace("\\", "/").split("/")[-1]
+    if not stem:
+        return "historical_kline_backfill_latest"
+    return "".join(ch for ch in stem if ch.isalnum() or ch in {"_", "-", "."}) or "historical_kline_backfill_latest"
+
+
+def write_progress(runtime_dir: Path, reports_dir: Path, payload: dict[str, Any], output_prefix: str = "historical_kline_backfill_latest") -> None:
     runtime_dir.mkdir(parents=True, exist_ok=True)
     reports_dir.mkdir(parents=True, exist_ok=True)
-    (runtime_dir / "historical_kline_backfill_latest.json").write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-    (reports_dir / "historical_kline_backfill_latest.md").write_text(render_md(payload), encoding="utf-8")
+    stem = progress_output_stem(argparse.Namespace(output_prefix=output_prefix))
+    (runtime_dir / f"{stem}.json").write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    (reports_dir / f"{stem}.md").write_text(render_md(payload), encoding="utf-8")
 
 
 def render_md(payload: dict[str, Any]) -> str:
     progress = payload.get("progress") or {}
+    quality = payload.get("quality") or {}
     cfg = payload.get("config") or {}
     universe = payload.get("universe") or {}
     last = payload.get("last_task") or {}
@@ -697,6 +820,16 @@ def render_md(payload: dict[str, Any]) -> str:
         f"- Rows fetched: `{progress.get('fetched_rows', 0)}`",
         f"- Rows written: `{progress.get('written_rows', 0)}`",
         f"- Failed requests: `{progress.get('failed_requests', 0)}`",
+        "",
+        "## Coverage Quality",
+        "",
+        f"- Quality: `{quality.get('status', '-')}`",
+        f"- Task queue complete: `{quality.get('task_queue_complete', False)}`",
+        f"- Covered symbols: `{quality.get('covered_symbol_count', 0)}` / `{quality.get('target_symbol_count', 0)}`",
+        f"- Covered symbol-intervals: `{quality.get('covered_symbol_interval_count', 0)}` / `{quality.get('target_symbol_interval_count', 0)}`",
+        f"- Provider unavailable tasks: `{quality.get('unavailable_task_count', 0)}`",
+        f"- Partial tasks: `{quality.get('partial_task_count', 0)}`",
+        f"- Note: {quality.get('note', '-')}",
         "",
         "## Scope",
         "",
@@ -736,9 +869,10 @@ def run_backfill(args: argparse.Namespace) -> dict[str, Any]:
     task_limit = effective_task_limit(provider_order, int(args.limit))
     setattr(args, "task_limit", task_limit)
     tasks = chunk_tasks(symbols, intervals, dt_to_ms(start_dt), dt_to_ms(end_dt) - 1, task_limit)
+    task_scope = task_bounds(tasks)
     existing = read_existing_keys(store, args.format)
     statuses = read_task_statuses(store)
-    stored_rows = len(existing)
+    stored_rows = count_existing_keys_for_tasks(existing, tasks)
     pending = []
     skipped_existing = 0
     skipped_unavailable = 0
@@ -753,9 +887,10 @@ def run_backfill(args: argparse.Namespace) -> dict[str, Any]:
             skipped_partial += 1
         else:
             pending.append(task)
+    initial_status = "running" if args.apply else ("complete" if not pending else "planned")
     payload = progress_payload(
         args=args,
-        status="planned" if not args.apply else "running",
+        status=initial_status,
         symbols=symbols,
         universe_meta=universe_meta,
         total_tasks=len(tasks),
@@ -769,8 +904,11 @@ def run_backfill(args: argparse.Namespace) -> dict[str, Any]:
         written_rows=stored_rows,
         errors=[],
         started_at=started_at,
+        existing_keys=existing,
+        task_statuses=statuses,
+        task_bounds_filter=task_scope,
     )
-    write_progress(runtime_dir, reports_dir, payload)
+    write_progress(runtime_dir, reports_dir, payload, args.output_prefix)
     if not args.apply:
         return payload
 
@@ -827,6 +965,7 @@ def run_backfill(args: argparse.Namespace) -> dict[str, Any]:
             }
         elif terminal_unavailable:
             append_unavailable_task(store, task, error)
+            statuses[task_key(task)] = "unavailable"
             marked_unavailable += 1
             skipped_unavailable += 1
             if symbol_unavailable_error(error):
@@ -855,9 +994,11 @@ def run_backfill(args: argparse.Namespace) -> dict[str, Any]:
             }
         if buffer and (completed % flush_requests == 0):
             write_result = merge_write_rows(store, "historical_klines", buffer, args.format)
-            stored_rows = int(write_result.get("merged_rows") or stored_rows)
+            existing = read_existing_keys(store, args.format)
+            stored_rows = count_existing_keys_for_tasks(existing, tasks)
             for item_task, item_status, item_provider, item_rows, item_error in buffer_statuses:
                 append_task_status(store, item_task, item_status, provider=item_provider, rows=item_rows, error=item_error)
+                statuses[task_key(item_task)] = item_status
             buffer = []
             buffer_statuses = []
         payload = progress_payload(
@@ -876,16 +1017,21 @@ def run_backfill(args: argparse.Namespace) -> dict[str, Any]:
             written_rows=stored_rows,
             errors=errors,
             started_at=started_at,
+            existing_keys=existing,
+            task_statuses=statuses,
+            task_bounds_filter=task_scope,
             last_task=last_task,
         )
-        write_progress(runtime_dir, reports_dir, payload)
+        write_progress(runtime_dir, reports_dir, payload, args.output_prefix)
         if request_gap > 0:
             time.sleep(request_gap)
     if buffer:
         write_result = merge_write_rows(store, "historical_klines", buffer, args.format)
-        stored_rows = int(write_result.get("merged_rows") or stored_rows)
+        existing = read_existing_keys(store, args.format)
+        stored_rows = count_existing_keys_for_tasks(existing, tasks)
         for item_task, item_status, item_provider, item_rows, item_error in buffer_statuses:
             append_task_status(store, item_task, item_status, provider=item_provider, rows=item_rows, error=item_error)
+            statuses[task_key(item_task)] = item_status
         buffer = []
         buffer_statuses = []
     if status == "running":
@@ -906,9 +1052,12 @@ def run_backfill(args: argparse.Namespace) -> dict[str, Any]:
         written_rows=stored_rows,
         errors=errors,
         started_at=started_at,
+        existing_keys=existing,
+        task_statuses=statuses,
+        task_bounds_filter=task_scope,
         last_task=last_task,
     )
-    write_progress(runtime_dir, reports_dir, payload)
+    write_progress(runtime_dir, reports_dir, payload, args.output_prefix)
     return payload
 
 
@@ -929,6 +1078,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--max-runtime-sec", type=int, default=900)
     parser.add_argument("--flush-requests", type=int, default=10)
     parser.add_argument("--format", choices=["parquet", "jsonl"], default="parquet")
+    parser.add_argument("--output-prefix", default="historical_kline_backfill_latest")
     parser.add_argument("--apply", action="store_true", help="Actually request public Bybit/OKX data. Omit for plan/progress only.")
     return parser.parse_args(argv)
 
@@ -940,6 +1090,7 @@ def main(argv: list[str] | None = None) -> int:
         "status": payload.get("status"),
         "mode": payload.get("mode"),
         "progress": payload.get("progress"),
+        "quality": payload.get("quality"),
         "safety": payload.get("safety"),
     }, ensure_ascii=False))
     return 0

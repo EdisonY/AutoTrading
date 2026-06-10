@@ -172,6 +172,8 @@ HISTORICAL_JSON = "historical_kline_backfill_latest.json"
 HISTORICAL_MD = "historical_kline_backfill_latest.md"
 HISTORICAL_INCREMENTAL_JSON = "historical_kline_incremental_latest.json"
 HISTORICAL_INCREMENTAL_MD = "historical_kline_incremental_latest.md"
+BACKTEST_JSON = "backtest_module_latest.json"
+BACKTEST_MD = "backtest_module_latest.md"
 HISTORICAL_EMBEDDED_REPORTS = {"index.html", "decision_portal_latest.html", "portal_latest.html"}
 _REMOTE_HISTORICAL_REFRESHED = False
 
@@ -303,8 +305,14 @@ def is_historical_progress_artifact(base: Path, name: str) -> bool:
     )
 
 
+def is_tencent_owned_backtest_artifact(base: Path, name: str) -> bool:
+    return (base == ALIYUN_RUNTIME and name == BACKTEST_JSON) or (base == ALIYUN_REPORTS and name == BACKTEST_MD)
+
+
 def should_skip_upload(base: Path, name: str, local_path: Path) -> bool:
     if is_historical_progress_artifact(base, name):
+        return True
+    if is_tencent_owned_backtest_artifact(base, name):
         return True
     if base != ALIYUN_REPORTS or name not in HISTORICAL_EMBEDDED_REPORTS:
         return False

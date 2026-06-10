@@ -283,6 +283,45 @@ class BacktestModuleTests(unittest.TestCase):
             else:
                 self.tool.os.environ["BACKTEST_DISABLE_REMOTE_DELEGATE"] = old_disable
 
+    def test_shadow_refresh_does_not_resurrect_local_backtest_jobs(self):
+        old_remote = self.tool.os.environ.get("BACKTEST_REMOTE_DELEGATE")
+        old_disable = self.tool.os.environ.get("BACKTEST_DISABLE_REMOTE_DELEGATE")
+        try:
+            self.tool.os.environ["BACKTEST_REMOTE_DELEGATE"] = "1"
+            self.tool.os.environ.pop("BACKTEST_DISABLE_REMOTE_DELEGATE", None)
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                self.write_complete_history(root)
+                local_job_dir = root / "runtime" / "backtest_jobs"
+                local_job_dir.mkdir(parents=True)
+                (local_job_dir / "bt-20260610-202001-b1b9283a15.json").write_text(
+                    json.dumps(
+                        {
+                            "job_id": "bt-20260610-202001-b1b9283a15",
+                            "status": "completed",
+                            "spec": {"strategy": "C/v14", "symbols": ["BTCUSDT"], "interval": "15m"},
+                            "result": {"summary": {"net_profit_usdt": -16.25, "trades": 79}},
+                        },
+                        ensure_ascii=False,
+                    ),
+                    encoding="utf-8",
+                )
+
+                payload = self.tool.refresh_status_files(root=root)
+
+                self.assertEqual(payload["recent_jobs"]["total_jobs"], 0)
+                self.assertEqual(payload["recent_jobs"]["jobs"], [])
+                self.assertEqual(payload["latest_job"], {})
+        finally:
+            if old_remote is None:
+                self.tool.os.environ.pop("BACKTEST_REMOTE_DELEGATE", None)
+            else:
+                self.tool.os.environ["BACKTEST_REMOTE_DELEGATE"] = old_remote
+            if old_disable is None:
+                self.tool.os.environ.pop("BACKTEST_DISABLE_REMOTE_DELEGATE", None)
+            else:
+                self.tool.os.environ["BACKTEST_DISABLE_REMOTE_DELEGATE"] = old_disable
+
 
 if __name__ == "__main__":
     unittest.main()

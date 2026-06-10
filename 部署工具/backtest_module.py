@@ -158,6 +158,16 @@ def jobs_dir(root: Path = ROOT) -> Path:
     return runtime_dir(root) / "backtest_jobs"
 
 
+def empty_recent_jobs(limit: int = 20) -> dict[str, Any]:
+    return {
+        "storage": "runtime/backtest_jobs/*.json",
+        "full_history_retained": True,
+        "display_limit": max(0, limit),
+        "total_jobs": 0,
+        "jobs": [],
+    }
+
+
 def latest_json_path(root: Path = ROOT) -> Path:
     return runtime_dir(root) / "backtest_module_latest.json"
 
@@ -190,6 +200,12 @@ def should_delegate_to_tencent(root: Path = ROOT) -> bool:
     if os.environ.get("BACKTEST_REMOTE_DELEGATE", "").strip() in {"1", "true", "TRUE"}:
         return True
     return str(root).rstrip("/") == "/opt/crypto-shadow-lab"
+
+
+def mirrored_status_payload(root: Path = ROOT) -> dict[str, Any]:
+    if not should_delegate_to_tencent(root):
+        return {}
+    return read_json(root / "server_logs_tencent" / "runtime" / "backtest_module_latest.json")
 
 
 def remote_delegate_job(payload: dict[str, Any], *, root: Path = ROOT, user: str = "portal") -> dict[str, Any]:
@@ -525,6 +541,19 @@ def compact_job_summary(job: dict[str, Any]) -> dict[str, Any]:
 
 
 def list_jobs(*, root: Path = ROOT, limit: int = 20, latest_job: dict[str, Any] | None = None) -> dict[str, Any]:
+    if should_delegate_to_tencent(root):
+        mirror = mirrored_status_payload(root)
+        recent = mirror.get("recent_jobs") if isinstance(mirror.get("recent_jobs"), dict) else {}
+        if recent:
+            return recent
+        if isinstance(latest_job, dict) and latest_job:
+            return {
+                **empty_recent_jobs(limit),
+                "total_jobs": 1,
+                "jobs": [compact_job_summary(latest_job)],
+            }
+        return empty_recent_jobs(limit)
+
     directory = jobs_dir(root)
     paths = (
         sorted(directory.glob("bt-*.json"), key=lambda path: (path.stat().st_mtime, path.name), reverse=True)
@@ -630,6 +659,13 @@ def create_job(payload: dict[str, Any], *, root: Path = ROOT, user: str = "porta
 
 
 def load_latest_job(root: Path = ROOT) -> dict[str, Any]:
+    mirror = mirrored_status_payload(root)
+    if mirror:
+        job = mirror.get("latest_job") if isinstance(mirror.get("latest_job"), dict) else {}
+        return job if isinstance(job, dict) else {}
+    if should_delegate_to_tencent(root):
+        return {}
+
     latest = read_json(latest_json_path(root))
     job = latest.get("latest_job") if isinstance(latest.get("latest_job"), dict) else {}
     if job:

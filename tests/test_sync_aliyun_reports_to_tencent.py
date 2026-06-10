@@ -125,6 +125,15 @@ class SyncAliyunReportsToTencentTests(unittest.TestCase):
         self.assertIn("backtest_module_latest.json", self.tool.RUNTIME_FILES)
         self.assertIn("backtest_module_latest.json", self.tool.PRIORITY_RUNTIME_FILES)
 
+    def test_never_upload_backtest_status_artifacts_back_to_tencent(self):
+        local_json = self.tool.ALIYUN_RUNTIME / self.tool.BACKTEST_JSON
+        local_md = self.tool.ALIYUN_REPORTS / self.tool.BACKTEST_MD
+        local_json.write_text(json.dumps({"latest_job": {"job_id": "bt-20260610-202001-b1b9283a15"}}), encoding="utf-8")
+        local_md.write_text("历史回测模块 旧任务", encoding="utf-8")
+
+        self.assertTrue(self.tool.should_skip_upload(self.tool.ALIYUN_RUNTIME, self.tool.BACKTEST_JSON, local_json))
+        self.assertTrue(self.tool.should_skip_upload(self.tool.ALIYUN_REPORTS, self.tool.BACKTEST_MD, local_md))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -98,6 +98,48 @@ PARAMETER_RANGES: dict[str, dict[str, tuple[float, float]]] = {
     },
 }
 
+PARAMETER_LABELS: dict[str, dict[str, str]] = {
+    "A/v11": {
+        "entry_threshold": "入场分数阈值",
+        "strong_signal_threshold": "强信号阈值",
+        "evict_score_gap": "替换弱仓分差",
+        "trailing_pullback_atr": "ATR 回撤止盈",
+    },
+    "B/v16": {
+        "score_threshold": "入场分数阈值",
+        "overheat_cap": "过热上限",
+        "atr_stop_multiplier": "ATR 止损倍数",
+        "ofi_threshold": "OFI 门槛",
+    },
+    "C/v14": {
+        "long_score_threshold": "多头分数阈值",
+        "short_score_threshold": "空头分数阈值",
+        "atr_stop_multiplier": "ATR 止损倍数",
+        "btc_trend_filter": "BTC 趋势过滤",
+    },
+}
+
+PARAMETER_NOTES: dict[str, dict[str, str]] = {
+    "A/v11": {
+        "entry_threshold": "越高越少开仓，过滤更严。",
+        "strong_signal_threshold": "越高越难触发强信号和替换逻辑。",
+        "evict_score_gap": "越高越难用新信号替换旧仓。",
+        "trailing_pullback_atr": "越高越能容忍回撤，出场更慢。",
+    },
+    "B/v16": {
+        "score_threshold": "越高越少开仓，过滤更严。",
+        "overheat_cap": "越低越容易挡住过热行情。",
+        "atr_stop_multiplier": "越高止损更宽，单笔波动更大。",
+        "ofi_threshold": "订单流门槛；负值更宽松，正值更严格。",
+    },
+    "C/v14": {
+        "long_score_threshold": "越高多头入场更少。",
+        "short_score_threshold": "越高空头入场更少。",
+        "atr_stop_multiplier": "越高止损更宽，单笔波动更大。",
+        "btc_trend_filter": "0 关闭，1 开启；用于过滤 BTC 大方向冲突。",
+    },
+}
+
 
 def now_iso() -> str:
     return datetime.now(CST).isoformat(timespec="seconds")
@@ -418,6 +460,84 @@ def anti_overfit_payload() -> dict[str, Any]:
     }
 
 
+def parameter_schema() -> dict[str, Any]:
+    strategies: dict[str, Any] = {}
+    for strategy, ranges in PARAMETER_RANGES.items():
+        labels = PARAMETER_LABELS.get(strategy, {})
+        notes = PARAMETER_NOTES.get(strategy, {})
+        rows = []
+        for key, (lo, hi) in ranges.items():
+            span = abs(hi - lo)
+            step = 1.0 if span >= 10 else 0.1 if span >= 2 else 0.01
+            rows.append(
+                {
+                    "key": key,
+                    "label": labels.get(key, key),
+                    "min": lo,
+                    "max": hi,
+                    "step": step,
+                    "note": notes.get(key, ""),
+                }
+            )
+        strategies[strategy] = rows
+    return {
+        "max_tuned_parameters": MAX_TUNED_PARAMETERS,
+        "max_parameter_variants": MAX_PARAMETER_VARIANTS,
+        "strategies": strategies,
+    }
+
+
+def compact_job_summary(job: dict[str, Any]) -> dict[str, Any]:
+    spec = job.get("spec") if isinstance(job.get("spec"), dict) else {}
+    result = job.get("result") if isinstance(job.get("result"), dict) else {}
+    summary = result.get("summary") if isinstance(result.get("summary"), dict) else {}
+    sweep = result.get("parameter_sweep") if isinstance(result.get("parameter_sweep"), dict) else {}
+    review = sweep.get("anti_overfit_review") if isinstance(sweep.get("anti_overfit_review"), dict) else {}
+    recommendation = result.get("recommendation") if isinstance(result.get("recommendation"), dict) else {}
+    return {
+        "job_id": job.get("job_id") or "",
+        "created_at": job.get("created_at") or "",
+        "updated_at": job.get("updated_at") or "",
+        "created_by": job.get("created_by") or "",
+        "status": job.get("status") or result.get("status") or "",
+        "execution_state": job.get("execution_state") or "",
+        "strategy": spec.get("strategy") or "",
+        "symbols": spec.get("symbols") if isinstance(spec.get("symbols"), list) else [],
+        "interval": spec.get("interval") or "",
+        "period_days": spec.get("period_days") or 0,
+        "net_profit_usdt": summary.get("net_profit_usdt", 0.0),
+        "return_pct": summary.get("return_pct", 0.0),
+        "max_drawdown_pct": summary.get("max_drawdown_pct", 0.0),
+        "profit_factor": summary.get("profit_factor", 0.0),
+        "win_rate_pct": summary.get("win_rate_pct", 0.0),
+        "trades": summary.get("trades", 0),
+        "recommendation_action": recommendation.get("action") or "",
+        "recommendation_reason": recommendation.get("reason") or "",
+        "anti_overfit_status": review.get("status") or "",
+        "engine_parity": result.get("engine_parity") or "research_adapter",
+    }
+
+
+def list_jobs(*, root: Path = ROOT, limit: int = 20, latest_job: dict[str, Any] | None = None) -> dict[str, Any]:
+    directory = jobs_dir(root)
+    paths = sorted(directory.glob("bt-*.json"), reverse=True) if directory.exists() else []
+    rows: list[dict[str, Any]] = []
+    for path in paths[: max(0, limit)]:
+        payload = read_json(path)
+        if payload:
+            rows.append(compact_job_summary(payload))
+    latest_id = str((latest_job or {}).get("job_id") or "")
+    if latest_id and not any(str(row.get("job_id") or "") == latest_id for row in rows):
+        rows.insert(0, compact_job_summary(latest_job or {}))
+    return {
+        "storage": "runtime/backtest_jobs/*.json",
+        "full_history_retained": True,
+        "display_limit": max(0, limit),
+        "total_jobs": max(len(paths), len(rows)),
+        "jobs": rows,
+    }
+
+
 def execute_job_result(spec: dict[str, Any], warnings: list[str], *, root: Path = ROOT) -> dict[str, Any]:
     try:
         result = backtest_engine.run_backtest(spec, root=root)
@@ -554,7 +674,9 @@ def status_payload(*, root: Path = ROOT, latest_job: dict[str, Any] | None = Non
             "parameter_sweep": True,
         },
         "anti_overfit": anti_overfit_payload(),
+        "parameter_schema": parameter_schema(),
         "latest_job": job,
+        "recent_jobs": list_jobs(root=root, limit=20, latest_job=job),
         "next_steps": [
             "harden_live_scanner_byte_for_byte_parity",
             "add_async_tencent_job_queue_for_large_runs",
@@ -569,6 +691,31 @@ def write_markdown(payload: dict[str, Any], *, root: Path = ROOT) -> None:
     job = payload.get("latest_job") if isinstance(payload.get("latest_job"), dict) else {}
     hist = payload.get("historical_baseline") if isinstance(payload.get("historical_baseline"), dict) else {}
     caps = payload.get("capabilities") if isinstance(payload.get("capabilities"), dict) else {}
+    recent = payload.get("recent_jobs") if isinstance(payload.get("recent_jobs"), dict) else {}
+    schema = payload.get("parameter_schema") if isinstance(payload.get("parameter_schema"), dict) else parameter_schema()
+
+    def md_value(value: Any, digits: int = 2, signed: bool = False) -> str:
+        try:
+            number = float(value)
+        except Exception:
+            return "-"
+        prefix = "+" if signed and number > 0 else ""
+        text = f"{prefix}{number:.{digits}f}"
+        return text.rstrip("0").rstrip(".")
+
+    def job_conclusion(summary: dict[str, Any], review: dict[str, Any]) -> tuple[str, str]:
+        trades = int(summary.get("trades") or 0)
+        net = finite_float(summary.get("net_profit_usdt"), 0.0)
+        pf = finite_float(summary.get("profit_factor"), 0.0)
+        dd = finite_float(summary.get("max_drawdown_pct"), 0.0)
+        if trades < 30:
+            return "样本偏少", "扩大币种/周期后再判断；不能用于升级。"
+        if net > 0 and pf >= 1.1 and dd <= 20 and review.get("status") == "passed_research_only":
+            return "可进入人工研究复核", "仍需 fresh paper 样本、跨周期稳定性和人工审批。"
+        if net > 0:
+            return "全窗口盈利但门控未过", "重点检查 OOS、邻近参数稳定性和跨币种表现。"
+        return "当前不建议应用", "先定位亏损来源，不要用单窗口参数搜索硬拟合。"
+
     lines = [
         "# 历史回测模块报告",
         "",
@@ -576,6 +723,7 @@ def write_markdown(payload: dict[str, Any], *, root: Path = ROOT) -> None:
         f"- 模块状态: `{payload.get('status', '-')}`",
         f"- 历史基线: `{hist.get('status', '-')}` / `{hist.get('percent', 0):.2f}%` / `{hist.get('written_rows', 0)}` 行",
         f"- 覆盖: `{hist.get('covered_symbol_count', 0)}/{hist.get('target_symbol_count', 0)}` 币，`{hist.get('covered_symbol_interval_count', 0)}/{hist.get('target_symbol_interval_count', 0)}` 币种周期",
+        f"- 任务历史: 保留在 `runtime/backtest_jobs/*.json`；报告默认展示最近 `{((payload.get('recent_jobs') or {}).get('display_limit') if isinstance(payload.get('recent_jobs'), dict) else 20)}` 条",
         "",
         "## 已落地",
         "",
@@ -604,6 +752,11 @@ def write_markdown(payload: dict[str, Any], *, root: Path = ROOT) -> None:
         sweep = result.get("parameter_sweep") if isinstance(result.get("parameter_sweep"), dict) else {}
         review = sweep.get("anti_overfit_review") if isinstance(sweep.get("anti_overfit_review"), dict) else {}
         recommendation = result.get("recommendation") if isinstance(result.get("recommendation"), dict) else {}
+        benchmark = result.get("benchmark") if isinstance(result.get("benchmark"), dict) else {}
+        charts = result.get("charts") if isinstance(result.get("charts"), dict) else {}
+        equity = charts.get("equity_curve") if isinstance(charts.get("equity_curve"), list) else []
+        trades = result.get("trades") if isinstance(result.get("trades"), list) else []
+        conclusion, advice = job_conclusion(summary, review)
         lines.extend(
             [
                 f"- job_id: `{job.get('job_id', '-')}`",
@@ -612,10 +765,107 @@ def write_markdown(payload: dict[str, Any], *, root: Path = ROOT) -> None:
                 f"- 结果: `{result.get('status', '-')}` / 净收益 `{summary.get('net_profit_usdt', 0)}` USDT / 交易 `{summary.get('trades', 0)}` / 回撤 `{summary.get('max_drawdown_pct', 0)}`%",
                 f"- 建议: `{recommendation.get('action', '-')}` / `{recommendation.get('reason', '-')}`",
                 f"- 反拟合/OOS: `{review.get('status', '-')}` / auto_apply `{review.get('auto_apply_allowed', False)}`",
+                "",
+                "### 总结与建议",
+                "",
+                f"- 结论: `{conclusion}`",
+                f"- 建议: {advice}",
+                f"- 收益/风险: 净收益 `{md_value(summary.get('net_profit_usdt'), 2, True)}` USDT；收益率 `{md_value(summary.get('return_pct'), 2, True)}%`；最大回撤 `{md_value(summary.get('max_drawdown_pct'), 2)}%`；PF `{md_value(summary.get('profit_factor'), 2)}`；胜率 `{md_value(summary.get('win_rate_pct'), 2)}%`。",
+                f"- 基准: 买入持有平均 `{md_value(benchmark.get('buy_hold_return_pct'), 2, True)}%`。",
             ]
         )
+        if equity:
+            first = equity[0] if isinstance(equity[0], dict) else {}
+            last = equity[-1] if isinstance(equity[-1], dict) else {}
+            lines.extend(
+                [
+                    "",
+                    "### 权益 / PnL 曲线摘要",
+                    "",
+                    f"- 起点权益: `{md_value(first.get('equity'), 2)}`",
+                    f"- 终点权益: `{md_value(last.get('equity'), 2)}`",
+                    f"- 曲线点数: `{len(equity)}`",
+                ]
+            )
+        if trades:
+            lines.extend(
+                [
+                    "",
+                    "### 最近开平仓记录",
+                    "",
+                    "| 标的 | 方向 | 开仓时间 | 开仓价 | 平仓时间 | 平仓价 | 净盈亏 | 出场原因 |",
+                    "| --- | --- | --- | ---: | --- | ---: | ---: | --- |",
+                ]
+            )
+            for trade in trades[-40:]:
+                if not isinstance(trade, dict):
+                    continue
+                lines.append(
+                    "| {symbol} | {side} | {entry_ts} | {entry_price} | {exit_ts} | {exit_price} | {pnl} | {reason} |".format(
+                        symbol=str(trade.get("symbol") or "-"),
+                        side=str(trade.get("side") or "-"),
+                        entry_ts=str(trade.get("entry_ts") or "-"),
+                        entry_price=md_value(trade.get("entry_price"), 8),
+                        exit_ts=str(trade.get("exit_ts") or "-"),
+                        exit_price=md_value(trade.get("exit_price"), 8),
+                        pnl=md_value(trade.get("net_pnl_usdt"), 4, True),
+                        reason=str(trade.get("exit_reason") or "-"),
+                    )
+                )
     else:
         lines.append("- 暂无前端提交任务。")
+    lines.extend(
+        [
+            "",
+            "## 历史任务保留",
+            "",
+            f"- 任务文件: `{recent.get('storage', 'runtime/backtest_jobs/*.json')}`",
+            f"- 全量历史保留: `{recent.get('full_history_retained', True)}`",
+            f"- 报告展示最近: `{recent.get('display_limit', 20)}` 条",
+            f"- 当前任务总数: `{recent.get('total_jobs', 0)}`",
+        ]
+    )
+    recent_jobs = recent.get("jobs") if isinstance(recent.get("jobs"), list) else []
+    if recent_jobs:
+        lines.extend(
+            [
+                "",
+                "| job_id | 时间 | 策略 | 周期 | 状态 | 净收益 | 交易 | OOS |",
+                "| --- | --- | --- | --- | --- | ---: | ---: | --- |",
+            ]
+        )
+        for row in recent_jobs[:20]:
+            if not isinstance(row, dict):
+                continue
+            lines.append(
+                "| {job_id} | {created_at} | {strategy} | {interval} | {status} | {net} | {trades} | {oos} |".format(
+                    job_id=str(row.get("job_id") or "-"),
+                    created_at=str(row.get("created_at") or "-"),
+                    strategy=str(row.get("strategy") or "-"),
+                    interval=str(row.get("interval") or "-"),
+                    status=str(row.get("status") or "-"),
+                    net=md_value(row.get("net_profit_usdt"), 2, True),
+                    trades=str(row.get("trades") or 0),
+                    oos=str(row.get("anti_overfit_status") or "-"),
+                )
+            )
+    lines.extend(["", "## 可调参数接口", ""])
+    for strategy, rows in (schema.get("strategies") if isinstance(schema.get("strategies"), dict) else {}).items():
+        lines.extend([f"### {strategy}", "", "| 参数 | 中文名 | 范围 | 步长 | 说明 |", "| --- | --- | --- | ---: | --- |"])
+        for row in rows if isinstance(rows, list) else []:
+            if not isinstance(row, dict):
+                continue
+            lines.append(
+                "| {key} | {label} | {lo} - {hi} | {step} | {note} |".format(
+                    key=str(row.get("key") or "-"),
+                    label=str(row.get("label") or "-"),
+                    lo=md_value(row.get("min"), 4),
+                    hi=md_value(row.get("max"), 4),
+                    step=md_value(row.get("step"), 4),
+                    note=str(row.get("note") or "-"),
+                )
+            )
+        lines.append("")
     lines.extend(
         [
             "",

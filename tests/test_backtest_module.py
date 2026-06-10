@@ -100,6 +100,8 @@ class BacktestModuleTests(unittest.TestCase):
             self.assertTrue(payload["capabilities"]["strategy_pnl_metrics"])
             self.assertTrue(payload["capabilities"]["historical_store_query"])
             self.assertEqual(payload["status"], "backtest_engine_ready")
+            self.assertIn("A/v11", payload["parameter_schema"]["strategies"])
+            self.assertTrue(payload["recent_jobs"]["full_history_retained"])
             self.assertTrue((root / "runtime" / "backtest_module_latest.json").exists())
             self.assertTrue((root / "reports" / "backtest_module_latest.md").exists())
 
@@ -133,6 +135,24 @@ class BacktestModuleTests(unittest.TestCase):
             self.assertTrue((root / "runtime" / "backtest_jobs" / f"{job['job_id']}.json").exists())
             latest = json.loads((root / "runtime" / "backtest_module_latest.json").read_text(encoding="utf-8"))
             self.assertEqual(latest["latest_job"]["job_id"], job["job_id"])
+            self.assertEqual(latest["recent_jobs"]["total_jobs"], 1)
+            self.assertEqual(latest["recent_jobs"]["jobs"][0]["job_id"], job["job_id"])
+
+    def test_list_jobs_keeps_history_summaries(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write_complete_history(root)
+
+            first = self.tool.create_job({"strategy": "A/v11", "symbols": "BTCUSDT", "interval": "1h"}, root=root, user="test")
+            second = self.tool.create_job({"strategy": "B/v16", "symbols": "ETHUSDT", "interval": "1h"}, root=root, user="test")
+            jobs = self.tool.list_jobs(root=root, limit=10)
+
+            self.assertTrue(first["ok"])
+            self.assertTrue(second["ok"])
+            self.assertTrue(jobs["full_history_retained"])
+            self.assertEqual(jobs["total_jobs"], 2)
+            self.assertEqual(jobs["jobs"][0]["job_id"], second["job_id"])
+            self.assertEqual(jobs["jobs"][1]["job_id"], first["job_id"])
 
     def test_valid_job_runs_research_adapter_with_numeric_metrics(self):
         with tempfile.TemporaryDirectory() as tmp:

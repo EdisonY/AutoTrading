@@ -10,6 +10,7 @@ Endpoints:
   POST /api/attention/resolve - Resolve an item
   GET  /api/backtest/status  - Read backtest module status
   GET  /api/backtest/job     - Read a backtest job by id
+  GET  /api/backtest/jobs    - List retained backtest job summaries
   POST /api/backtest/jobs    - Create an audited backtest job
   GET  /api/report/refresh   - Read safe report-refresh status
   POST /api/report/refresh   - Start safe report-only refresh
@@ -508,6 +509,13 @@ class AttentionHandler(BaseHTTPRequestHandler):
             self._json_response({"ok": True, "items": items, "count": len(items)})
         elif parsed.path == "/api/backtest/status":
             self._json_response({"ok": True, **backtest_module.status_payload(root=ROOT)})
+        elif parsed.path == "/api/backtest/jobs":
+            limit_raw = (parse_qs(parsed.query).get("limit") or ["20"])[0]
+            try:
+                limit = max(1, min(100, int(limit_raw)))
+            except Exception:
+                limit = 20
+            self._json_response({"ok": True, **backtest_module.list_jobs(root=ROOT, limit=limit)})
         elif parsed.path == "/api/backtest/job":
             job_id = (parse_qs(parsed.query).get("id") or [""])[0]
             job = backtest_module.load_job(job_id, root=ROOT)

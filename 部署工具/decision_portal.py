@@ -1668,6 +1668,158 @@ def render_historical_kline_progress(state: dict[str, Any]) -> str:
     return body
 
 
+def backtest_fmt(value: Any, digits: int = 2, signed: bool = False) -> str:
+    try:
+        number_value = float(value)
+    except Exception:
+        return "-"
+    prefix = "+" if signed and number_value > 0 else ""
+    return f"{prefix}{number_value:.{digits}f}".rstrip("0").rstrip(".")
+
+
+def backtest_svg(points: list[dict[str, Any]], *, key: str = "equity", height: int = 160) -> str:
+    usable = [row for row in points if isinstance(row, dict) and row.get(key) is not None]
+    if len(usable) < 2:
+        return '<div class="backtest-empty-chart">暂无足够曲线数据</div>'
+    values = [num(row.get(key)) for row in usable]
+    min_v = min(values)
+    max_v = max(values)
+    span = max(max_v - min_v, 1e-9)
+    width = 720
+    plot = []
+    for idx, value in enumerate(values):
+        x = idx / max(1, len(values) - 1) * width
+        y = height - ((value - min_v) / span * (height - 18) + 9)
+        plot.append(f"{x:.1f},{y:.1f}")
+    color = "#39d98a" if values[-1] >= values[0] else "#ff6b6b"
+    first = backtest_fmt(values[0], 2)
+    last = backtest_fmt(values[-1], 2)
+    return f"""
+<div class="backtest-chart">
+  <svg viewBox="0 0 {width} {height}" role="img" aria-label="权益曲线">
+    <polyline points="{h(' '.join(plot))}" fill="none" stroke="{color}" stroke-width="3" vector-effect="non-scaling-stroke" />
+    <line x1="0" y1="{height - 9}" x2="{width}" y2="{height - 9}" stroke="rgba(255,255,255,.12)" />
+  </svg>
+  <div class="backtest-chart-caption"><span>起点 {h(first)}</span><span>终点 {h(last)}</span></div>
+</div>
+""".strip()
+
+
+def backtest_summary_report(job: dict[str, Any]) -> str:
+    if not job:
+        return ""
+    result = job.get("result") if isinstance(job.get("result"), dict) else {}
+    summary = result.get("summary") if isinstance(result.get("summary"), dict) else {}
+    recommendation = result.get("recommendation") if isinstance(result.get("recommendation"), dict) else {}
+    sweep = result.get("parameter_sweep") if isinstance(result.get("parameter_sweep"), dict) else {}
+    review = sweep.get("anti_overfit_review") if isinstance(sweep.get("anti_overfit_review"), dict) else {}
+    benchmark = result.get("benchmark") if isinstance(result.get("benchmark"), dict) else {}
+    net = num(summary.get("net_profit_usdt"))
+    trades = int(summary.get("trades") or 0)
+    pf = num(summary.get("profit_factor"))
+    dd = num(summary.get("max_drawdown_pct"))
+    buy_hold = benchmark.get("buy_hold_return_pct")
+    if trades < 30:
+        verdict = "样本偏少"
+        advice = "先扩大币种或周期复测；不用于升级。"
+    elif net > 0 and pf >= 1.1 and dd <= 20 and review.get("status") == "passed_research_only":
+        verdict = "可进入人工研究复核"
+        advice = "仍需 fresh paper 样本和跨周期稳定性；不能自动应用。"
+    elif net > 0:
+        verdict = "全窗口盈利但门控未过"
+        advice = "重点看 OOS、邻近参数稳定性和不同币种表现，避免拟合。"
+    else:
+        verdict = "当前不建议调优应用"
+        advice = "优先找亏损来源、降低复杂参数数量，避免用单窗口强行优化。"
+    return f"""
+<div class="backtest-advice-grid">
+  <div><span>结论</span><b>{h(verdict)}</b><small>{h(advice)}</small></div>
+  <div><span>收益/风险</span><b>{h(backtest_fmt(net, 2, signed=True))} USDT</b><small>回撤 {h(backtest_fmt(dd, 2))}%；PF {h(backtest_fmt(pf, 2))}；交易 {trades}</small></div>
+  <div><span>基准对比</span><b>{h(backtest_fmt(buy_hold, 2, signed=True))}%</b><small>买入持有平均收益；只做参考。</small></div>
+  <div><span>建议状态</span><b>{h(recommendation.get('action') or 'research_review_only')}</b><small>{h(recommendation.get('reason') or '-')}; OOS {h(review.get('status') or '-')}</small></div>
+</div>
+""".strip()
+
+
+def render_backtest_recent_jobs(backtest: dict[str, Any]) -> str:
+    recent = backtest.get("recent_jobs") if isinstance(backtest.get("recent_jobs"), dict) else {}
+    jobs = recent.get("jobs") if isinstance(recent.get("jobs"), list) else []
+    if not jobs:
+        return '<p class="empty">暂无历史任务列表。任务文件保存在 runtime/backtest_jobs，提交后会显示最近任务。</p>'
+    rows = []
+    for job in jobs[:20]:
+        if not isinstance(job, dict):
+            continue
+        rows.append(
+            f"""
+<tr>
+  <td>{h(job.get('job_id') or '-')}<small>{h(job.get('created_at') or '-')}</small></td>
+  <td>{h(job.get('strategy') or '-')} / {h(job.get('interval') or '-')}<small>{h(', '.join(job.get('symbols') or []) or '-')}</small></td>
+  <td>{h(job.get('status') or '-')}<small>{h(job.get('engine_parity') or 'research_adapter')}</small></td>
+  <td>{h(backtest_fmt(job.get('net_profit_usdt'), 2, signed=True))}<small>交易 {h(job.get('trades') or 0)}；回撤 {h(backtest_fmt(job.get('max_drawdown_pct'), 2))}%；PF {h(backtest_fmt(job.get('profit_factor'), 2))}</small></td>
+  <td>{h(job.get('recommendation_reason') or '-')}<small>OOS {h(job.get('anti_overfit_status') or '-')}</small></td>
+</tr>
+""".strip()
+        )
+    return f"""
+<div class="table-scroll">
+  <table class="backtest-table">
+    <thead><tr><th>任务</th><th>策略/周期</th><th>状态</th><th>结果</th><th>建议</th></tr></thead>
+    <tbody>{''.join(rows)}</tbody>
+  </table>
+</div>
+<p class="backtest-note">历史任务不是只保留一个：服务端保留 job 文件，首页只展示最近 {h(recent.get('display_limit') or 20)} 条；当前总数 {h(recent.get('total_jobs') or len(jobs))}。</p>
+""".strip()
+
+
+def render_backtest_trade_rows(trades: list[Any]) -> str:
+    rows = []
+    for trade in list(trades)[-80:]:
+        if not isinstance(trade, dict):
+            continue
+        rows.append(
+            f"""
+<tr>
+  <td>{h(trade.get('symbol') or '-')}<small>{h(trade.get('side') or '-')} / {h(trade.get('interval') or '-')}</small></td>
+  <td>{h(trade.get('entry_ts') or '-')}<small>{h(backtest_fmt(trade.get('entry_price'), 8))}</small></td>
+  <td>{h(trade.get('exit_ts') or '-')}<small>{h(backtest_fmt(trade.get('exit_price'), 8))}</small></td>
+  <td>{h(backtest_fmt(trade.get('net_pnl_usdt'), 4, signed=True))}<small>fee {h(backtest_fmt(trade.get('fee_usdt'), 4))}；bars {h(trade.get('bars_held') or 0)}</small></td>
+  <td>{h(trade.get('exit_reason') or '-')}<small>score {h(backtest_fmt(trade.get('score'), 2))} / threshold {h(backtest_fmt(trade.get('threshold'), 2))}</small></td>
+</tr>
+""".strip()
+        )
+    if not rows:
+        return '<p class="empty">暂无交易明细。通常是历史 K线不足、策略未触发、或周期/方向组合无信号。</p>'
+    return f"""
+<div class="table-scroll">
+  <table class="backtest-table backtest-trades-table">
+    <thead><tr><th>标的</th><th>开仓</th><th>平仓</th><th>盈亏</th><th>原因</th></tr></thead>
+    <tbody>{''.join(rows)}</tbody>
+  </table>
+</div>
+""".strip()
+
+
+def render_backtest_parameter_controls(schema: dict[str, Any]) -> str:
+    strategies = schema.get("strategies") if isinstance(schema.get("strategies"), dict) else {}
+    active = strategies.get("A/v11") if isinstance(strategies.get("A/v11"), list) else []
+    controls = []
+    for row in active:
+        if not isinstance(row, dict):
+            continue
+        key = row.get("key") or ""
+        controls.append(
+            f"""
+<label class="param-control" data-param-key="{h(key)}">
+  <span><input type="checkbox" name="param_enabled" value="{h(key)}"> {h(row.get('label') or key)}</span>
+  <input name="param_value_{h(key)}" value="" placeholder="{h(row.get('min'))} - {h(row.get('max'))}" inputmode="decimal" data-min="{h(row.get('min'))}" data-max="{h(row.get('max'))}" data-step="{h(row.get('step'))}">
+  <small>{h(key)}；范围 {h(row.get('min'))} - {h(row.get('max'))}。{h(row.get('note') or '')}</small>
+</label>
+""".strip()
+        )
+    return "".join(controls)
+
+
 def render_backtest_module(state: dict[str, Any]) -> str:
     historical = state.get("historical_kline") if isinstance(state.get("historical_kline"), dict) else {}
     quality = historical.get("quality") if isinstance(historical.get("quality"), dict) else {}
@@ -1675,40 +1827,80 @@ def render_backtest_module(state: dict[str, Any]) -> str:
     incremental_progress = incremental.get("progress") if isinstance(incremental.get("progress"), dict) else {}
     backtest = state.get("backtest_module") if isinstance(state.get("backtest_module"), dict) else {}
     caps = backtest.get("capabilities") if isinstance(backtest.get("capabilities"), dict) else {}
+    schema = backtest.get("parameter_schema") if isinstance(backtest.get("parameter_schema"), dict) else {}
     latest = backtest.get("latest_job") if isinstance(backtest.get("latest_job"), dict) else {}
     latest_spec = latest.get("spec") if isinstance(latest.get("spec"), dict) else {}
     latest_result = latest.get("result") if isinstance(latest.get("result"), dict) else {}
     latest_summary = latest_result.get("summary") if isinstance(latest_result.get("summary"), dict) else {}
-    latest_recommendation = latest_result.get("recommendation") if isinstance(latest_result.get("recommendation"), dict) else {}
-    latest_sweep = latest_result.get("parameter_sweep") if isinstance(latest_result.get("parameter_sweep"), dict) else {}
-    latest_oos = latest_sweep.get("anti_overfit_review") if isinstance(latest_sweep.get("anti_overfit_review"), dict) else {}
+    latest_charts = latest_result.get("charts") if isinstance(latest_result.get("charts"), dict) else {}
+    latest_trades = latest_result.get("trades") if isinstance(latest_result.get("trades"), list) else []
+    monthly = latest_charts.get("monthly_returns") if isinstance(latest_charts.get("monthly_returns"), list) else []
     history_done = historical_kline_complete(historical)
     if not history_done:
         return render_historical_kline_progress(state)
 
-    latest_html = (
+    metric_cards = ""
+    if latest:
+        metric_cards = f"""
+  <div class="backtest-metrics">
+    <div><span>净收益</span><b>{h(backtest_fmt(latest_summary.get('net_profit_usdt'), 2, signed=True))} USDT</b><small>收益率 {h(backtest_fmt(latest_summary.get('return_pct'), 2, signed=True))}%</small></div>
+    <div><span>最大回撤</span><b>{h(backtest_fmt(latest_summary.get('max_drawdown_pct'), 2))}%</b><small>胜率 {h(backtest_fmt(latest_summary.get('win_rate_pct'), 2))}%</small></div>
+    <div><span>Profit Factor</span><b>{h(backtest_fmt(latest_summary.get('profit_factor'), 2))}</b><small>交易 {h(latest_summary.get('trades') or 0)}；均值 {h(backtest_fmt(latest_summary.get('avg_trade_usdt'), 4, signed=True))}</small></div>
+    <div><span>成本</span><b>{h(backtest_fmt(latest_summary.get('fees_usdt'), 2))} USDT</b><small>滑点/冲击 {h(backtest_fmt(latest_summary.get('slippage_usdt'), 2))}</small></div>
+  </div>
+""".rstrip()
+
+    monthly_rows = "".join(
+        f"<tr><td>{h(row.get('month') or '-')}</td><td>{h(backtest_fmt(row.get('return_pct'), 2, signed=True))}%</td></tr>"
+        for row in monthly[-12:]
+        if isinstance(row, dict)
+    )
+    monthly_html = (
         f"""
 <div class="table-scroll">
-  <table class="backtest-table">
-    <thead><tr><th>任务</th><th>策略/周期</th><th>范围</th><th>结果</th><th>反拟合/建议</th></tr></thead>
-    <tbody>
-      <tr>
-        <td>{h(latest.get('job_id') or '-')}<small>{h(latest.get('created_at') or '-')}</small></td>
-        <td>{h(latest_spec.get('strategy') or '-')} / {h(latest_spec.get('interval') or '-')}<small>{h(', '.join(latest_spec.get('symbols') or []) or '-')}</small></td>
-        <td>{h(latest_spec.get('period_days') or '-')} 天<small>fill {h(latest_spec.get('fill_model') or 'paper_fill_model_v2')}</small></td>
-        <td>{h(latest.get('status') or latest_result.get('status') or '-')}<small>净收益 {h(latest_summary.get('net_profit_usdt'))}；交易 {h(latest_summary.get('trades') or 0)}；回撤 {h(latest_summary.get('max_drawdown_pct'))}%；胜率 {h(latest_summary.get('win_rate_pct'))}%；PF {h(latest_summary.get('profit_factor'))}</small></td>
-        <td>{h(latest_recommendation.get('action') or 'research_review_only')}<small>{h(latest_recommendation.get('reason') or '-')}; OOS {h(latest_oos.get('status') or '-')}; {h(latest_result.get('engine_parity') or 'research_adapter')}；不自动改策略。</small></td>
-      </tr>
-    </tbody>
+  <table class="backtest-table backtest-monthly-table">
+    <thead><tr><th>月份</th><th>收益率</th></tr></thead>
+    <tbody>{monthly_rows}</tbody>
   </table>
 </div>
 """.strip()
-        if latest
-        else '<p class="empty">暂无回测任务。提交后会在 Tencent 历史仓执行研究级回测，并返回指标；结果不自动改策略。</p>'
+        if monthly_rows
+        else '<p class="empty">暂无月度收益数据。</p>'
     )
+
+    latest_html = (
+        f"""
+<div class="backtest-latest">
+  <div class="history-detail">
+    <b>最新任务</b>
+    <span>{h(latest.get('job_id') or '-')}；{h(latest_spec.get('strategy') or '-')} / {h(latest_spec.get('interval') or '-')} / {h(', '.join(latest_spec.get('symbols') or []) or '-')}；{h(latest_spec.get('period_days') or '-')} 天；{h(latest.get('status') or latest_result.get('status') or '-')}；{h(latest_result.get('engine_parity') or 'research_adapter')}。</span>
+  </div>
+  {backtest_summary_report(latest)}
+  {metric_cards}
+  <div class="backtest-detail-grid">
+    <div>
+      <h3>权益 / PnL 曲线</h3>
+      {backtest_svg(latest_charts.get('equity_curve') if isinstance(latest_charts.get('equity_curve'), list) else [])}
+    </div>
+    <div>
+      <h3>月度收益</h3>
+      {monthly_html}
+    </div>
+  </div>
+  <div class="backtest-results">
+    <h3>详细开平仓记录</h3>
+    {render_backtest_trade_rows(latest_trades)}
+  </div>
+</div>
+""".strip()
+        if latest
+        else '<p class="empty">暂无回测任务。提交后会在 Tencent 历史仓执行研究级回测，并返回指标、曲线和交易明细；结果不自动改策略。</p>'
+    )
+    schema_json = json.dumps(schema, ensure_ascii=False, sort_keys=True).replace("</", "<\\/")
 
     return f"""
 <div class="history-progress backtest-module">
+  <script type="application/json" id="backtestParameterSchema">{schema_json}</script>
   <div class="history-grid">
     <div><span>历史基线</span><b>已完成</b><small>{int(quality.get('covered_symbol_count') or 0)}/{int(quality.get('target_symbol_count') or 0)} 币；{int(quality.get('covered_symbol_interval_count') or 0)}/{int(quality.get('target_symbol_interval_count') or 0)} 币种周期；质量 {h(plain_status(quality.get('status') or '-'))}</small></div>
     <div><span>每日增量</span><b>{h(plain_status(incremental.get('status') or 'missing'))}</b><small>最近写入 {int(incremental_progress.get('written_rows') or 0)} 行；只跑 Tencent 低速 timer。</small></div>
@@ -1724,15 +1916,22 @@ def render_backtest_module(state: dict[str, Any]) -> str:
     <label><span>本金</span><input name="capital_usdt" value="10000" inputmode="decimal"></label>
     <label><span>手续费 bps</span><input name="fee_bps" value="4" inputmode="decimal"></label>
     <label><span>滑点 bps</span><input name="slippage_bps" value="0" inputmode="decimal"></label>
-    <label class="wide"><span>参数 JSON</span><textarea name="params" rows="3">{{}}</textarea></label>
+    <label><span>参数变体数</span><input name="parameter_variants" value="1" inputmode="numeric"></label>
+    <div class="backtest-param-panel wide">
+      <div class="param-head"><b>可调参数</b><small>勾选后才进入回测；最多 {h(schema.get('max_tuned_parameters') or 3)} 个参数，最多 {h(schema.get('max_parameter_variants') or 24)} 组变体。别用一堆参数硬拟合。</small></div>
+      <div id="backtestParamControls" class="param-controls">{render_backtest_parameter_controls(schema)}</div>
+    </div>
+    <label class="wide backtest-advanced"><span>高级 JSON</span><textarea name="params" rows="3">{{}}</textarea><small>上方控件会自动生成；只在需要手写额外研究参数时修改。</small></label>
     <div class="backtest-actions">
       <button class="icon-btn" type="submit">创建回测任务</button>
       <span id="backtestStatus" class="refresh-status">反拟合门控启用；结果只做研究建议，不自动改策略。</span>
     </div>
   </form>
   <div class="backtest-results">
-    <h3>最近回测任务</h3>
+    <h3>最新回测报告</h3>
     {latest_html}
+    <h3>历史任务列表</h3>
+    {render_backtest_recent_jobs(backtest)}
   </div>
 </div>
 """.strip()
@@ -1924,8 +2123,26 @@ tr:hover td {{ background:#101827; }}
 .backtest-form textarea {{ resize:vertical; min-height:78px; }}
 .backtest-form .wide {{ grid-column:span 4; }}
 .backtest-actions {{ grid-column:span 4; display:flex; flex-wrap:wrap; align-items:center; gap:10px; }}
-.backtest-results h3 {{ margin:4px 0 8px; font-size:15px; color:#f7fbff; }}
+.backtest-results h3 {{ margin:14px 0 8px; font-size:15px; color:#f7fbff; }}
 .backtest-table {{ min-width:900px; }}
+.backtest-note {{ margin:8px 0 0; color:var(--muted); font-size:12px; }}
+.backtest-param-panel {{ border:1px solid var(--line); border-radius:8px; background:#08111d; padding:10px; display:grid; gap:10px; }}
+.param-head b,.param-head small {{ display:block; }}
+.param-head small,.param-control small,.backtest-advanced small {{ color:var(--muted); }}
+.param-controls {{ display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }}
+.param-control {{ border:1px solid var(--line); border-radius:8px; padding:9px; background:#0b1320; }}
+.param-control span {{ display:flex; align-items:center; gap:6px; color:#e8f0fb; font-weight:800; }}
+.param-control input[type="checkbox"] {{ width:auto; }}
+.backtest-advice-grid,.backtest-metrics,.backtest-detail-grid {{ display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px; }}
+.backtest-detail-grid {{ grid-template-columns:2fr 1fr; }}
+.backtest-advice-grid div,.backtest-metrics div,.backtest-detail-grid > div {{ border:1px solid var(--line); border-radius:8px; background:#0b1320; padding:12px; }}
+.backtest-advice-grid span,.backtest-advice-grid small,.backtest-metrics span,.backtest-metrics small {{ display:block; color:var(--muted); }}
+.backtest-advice-grid b,.backtest-metrics b {{ display:block; color:#f7fbff; margin:3px 0; }}
+.backtest-chart svg {{ width:100%; height:160px; display:block; }}
+.backtest-chart-caption {{ display:flex; justify-content:space-between; color:var(--muted); font-size:12px; margin-top:6px; }}
+.backtest-empty-chart {{ border:1px dashed var(--line); border-radius:8px; padding:48px 12px; color:var(--muted); text-align:center; }}
+.backtest-trades-table {{ min-width:1180px; }}
+.backtest-monthly-table {{ min-width:360px; }}
 .gate-grid {{ display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px; }}
 .gate-grid div {{ border:1px solid var(--line); border-radius:8px; background:#0b1320; padding:12px; min-height:76px; }}
 .gate-grid b {{ display:block; margin:2px 0 4px; }}
@@ -1936,7 +2153,7 @@ tr:hover td {{ background:#101827; }}
 .refresh-status {{ color:var(--muted); font-size:12px; }}
 .refresh-countdown {{ display:inline-flex; align-items:center; gap:6px; border:1px solid var(--line); border-radius:8px; padding:7px 10px; color:#dbe7f6; background:#0b1320; font-weight:800; }}
 @media (max-width: 1320px) {{ .metrics,.cards {{ grid-template-columns:repeat(2, minmax(0, 1fr)); }} .app-shell {{ grid-template-columns:1fr; }} .side-rail {{ position:relative; height:auto; display:none; }} }}
-@media (max-width: 980px) {{ .metrics,.cards,.grid,.paper-summary,.paper-cards,.gate-grid,.history-grid,.position-detail-grid,.backtest-form {{ grid-template-columns:1fr; }} .backtest-form .wide,.backtest-actions {{ grid-column:span 1; }} header {{ grid-template-columns:1fr; }} .wrap {{ padding:18px; }} }}
+@media (max-width: 980px) {{ .metrics,.cards,.grid,.paper-summary,.paper-cards,.gate-grid,.history-grid,.position-detail-grid,.backtest-form,.param-controls,.backtest-advice-grid,.backtest-metrics,.backtest-detail-grid {{ grid-template-columns:1fr; }} .backtest-form .wide,.backtest-actions {{ grid-column:span 1; }} header {{ grid-template-columns:1fr; }} .wrap {{ padding:18px; }} }}
 </style>
 </head>
 <body>
@@ -2103,6 +2320,79 @@ async function refreshReport(btn) {{
     }}
   }}
 }}
+function getBacktestParameterSchema() {{
+  const el = document.getElementById('backtestParameterSchema');
+  if (!el) return {{strategies: {{}}}};
+  try {{
+    return JSON.parse(el.textContent || '{{}}');
+  }} catch (err) {{
+    return {{strategies: {{}}}};
+  }}
+}}
+function renderBacktestParamControls() {{
+  const form = document.querySelector('.backtest-form');
+  const box = document.getElementById('backtestParamControls');
+  if (!form || !box) return;
+  const schema = getBacktestParameterSchema();
+  const strategy = String(form.querySelector('[name="strategy"]')?.value || 'A/v11');
+  const rows = (schema.strategies && schema.strategies[strategy]) || [];
+  box.innerHTML = rows.map((row) => {{
+    const key = String(row.key || '');
+    return `<label class="param-control" data-param-key="${{key}}">
+      <span><input type="checkbox" name="param_enabled" value="${{key}}"> ${{row.label || key}}</span>
+      <input name="param_value_${{key}}" value="" placeholder="${{row.min}} - ${{row.max}}" inputmode="decimal" data-min="${{row.min}}" data-max="${{row.max}}" data-step="${{row.step}}">
+      <small>${{key}}；范围 ${{row.min}} - ${{row.max}}。${{row.note || ''}}</small>
+    </label>`;
+  }}).join('');
+  syncBacktestParamsFromControls();
+}}
+function syncBacktestParamsFromControls() {{
+  const form = document.querySelector('.backtest-form');
+  if (!form) return {{}};
+  const schema = getBacktestParameterSchema();
+  const maxParams = Number(schema.max_tuned_parameters || 3);
+  const params = {{}};
+  const enabled = Array.from(form.querySelectorAll('input[name="param_enabled"]:checked'));
+  const status = document.getElementById('backtestStatus');
+  if (enabled.length > maxParams) {{
+    if (status) status.textContent = '最多只能勾选 ' + maxParams + ' 个参数，避免过拟合。';
+    throw new Error('too_many_tuned_parameters');
+  }}
+  for (const checkbox of enabled) {{
+    const key = checkbox.value;
+    const input = form.querySelector(`[name="param_value_${{key}}"]`);
+    const raw = String(input?.value || '').trim();
+    if (!raw) continue;
+    const value = Number(raw);
+    const min = Number(input.dataset.min);
+    const max = Number(input.dataset.max);
+    if (!Number.isFinite(value)) throw new Error('参数不是数字：' + key);
+    if (Number.isFinite(min) && value < min) throw new Error('参数低于范围：' + key);
+    if (Number.isFinite(max) && value > max) throw new Error('参数高于范围：' + key);
+    params[key] = value;
+  }}
+  const textarea = form.querySelector('[name="params"]');
+  if (textarea && (enabled.length > 0 || !String(textarea.value || '').trim())) {{
+    textarea.value = JSON.stringify(params, null, 2);
+  }}
+  return params;
+}}
+function initBacktestParamControls() {{
+  const form = document.querySelector('.backtest-form');
+  if (!form) return;
+  form.querySelector('[name="strategy"]')?.addEventListener('change', renderBacktestParamControls);
+  form.addEventListener('input', (evt) => {{
+    if (evt.target.closest('.param-control')) {{
+      try {{ syncBacktestParamsFromControls(); }} catch (err) {{}}
+    }}
+  }});
+  form.addEventListener('change', (evt) => {{
+    if (evt.target.closest('.param-control')) {{
+      try {{ syncBacktestParamsFromControls(); }} catch (err) {{}}
+    }}
+  }});
+  renderBacktestParamControls();
+}}
 async function submitBacktestJob(evt) {{
   evt.preventDefault();
   const form = evt.target;
@@ -2115,8 +2405,18 @@ async function submitBacktestJob(evt) {{
   if (status) status.textContent = '正在执行研究级回测；只读历史仓，不下单。';
   const fd = new FormData(form);
   let params = {{}};
-  const rawParams = String(fd.get('params') || '').trim();
-  if (rawParams) {{
+  try {{
+    params = syncBacktestParamsFromControls();
+  }} catch (err) {{
+    if (status) status.textContent = '参数超出范围或数量过多，任务未提交。';
+    if (btn) {{
+      btn.disabled = false;
+      btn.textContent = '创建回测任务';
+    }}
+    return;
+  }}
+  const rawParams = String(form.querySelector('[name="params"]')?.value || '').trim();
+  if (rawParams && Object.keys(params).length === 0) {{
     try {{
       params = JSON.parse(rawParams);
     }} catch (err) {{
@@ -2138,6 +2438,7 @@ async function submitBacktestJob(evt) {{
     capital_usdt: fd.get('capital_usdt'),
     fee_bps: fd.get('fee_bps'),
     slippage_bps: fd.get('slippage_bps'),
+    parameter_variants: fd.get('parameter_variants'),
     params: params
   }};
   try {{
@@ -2185,6 +2486,7 @@ function startRefreshCountdown() {{
   tick();
   setInterval(tick, 1000);
 }}
+initBacktestParamControls();
 startRefreshCountdown();
 </script>
 </body>

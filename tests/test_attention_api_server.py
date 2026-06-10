@@ -281,6 +281,10 @@ class AttentionApiServerTests(unittest.TestCase):
         self.assertFalse(result["safety"]["binance_requests_enabled"])
         self.assertFalse(result["safety"]["paper_or_real_orders"])
         self.assertTrue((self.root / "runtime" / "backtest_module_latest.json").exists())
+        jobs = self.tool.backtest_module.list_jobs(root=self.root, limit=5)
+        self.assertTrue(jobs["full_history_retained"])
+        self.assertEqual(jobs["jobs"][0]["job_id"], result["job_id"])
+        self.assertEqual(jobs["jobs"][0]["engine_parity"], "research_adapter")
 
 
 if __name__ == "__main__":

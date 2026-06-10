@@ -320,6 +320,22 @@ class DecisionPortalTests(unittest.TestCase):
                 "strategy_replay_adapter": True,
                 "strategy_pnl_metrics": True,
             },
+            "parameter_schema": {
+                "max_tuned_parameters": 3,
+                "max_parameter_variants": 24,
+                "strategies": {
+                    "A/v11": [
+                        {
+                            "key": "entry_threshold",
+                            "label": "入场分数阈值",
+                            "min": 80,
+                            "max": 140,
+                            "step": 1,
+                            "note": "越高越少开仓",
+                        }
+                    ]
+                },
+            },
             "latest_job": {
                 "job_id": "bt-test",
                 "created_at": "2026-06-10T15:00:00+08:00",
@@ -341,9 +357,55 @@ class DecisionPortalTests(unittest.TestCase):
                         "win_rate_pct": 57.14,
                         "profit_factor": 1.22,
                     },
+                    "charts": {
+                        "equity_curve": [
+                            {"ts": "", "equity": 10000, "net_pnl": 0},
+                            {"ts": "2026-06-01T00:00:00+08:00", "equity": 10012.34, "net_pnl": 12.34},
+                        ],
+                        "monthly_returns": [{"month": "2026-06", "return_pct": 0.12}],
+                    },
+                    "trades": [
+                        {
+                            "symbol": "BTCUSDT",
+                            "side": "long",
+                            "interval": "1h",
+                            "entry_ts": "2026-06-01T00:00:00+08:00",
+                            "exit_ts": "2026-06-01T04:00:00+08:00",
+                            "entry_price": 100,
+                            "exit_price": 103,
+                            "net_pnl_usdt": 12.34,
+                            "fee_usdt": 0.4,
+                            "bars_held": 4,
+                            "exit_reason": "take_profit",
+                            "score": 88,
+                            "threshold": 80,
+                        }
+                    ],
                     "recommendation": {"action": "research_review_only", "reason": "profitable_full_window_but_oos_gate_not_passed"},
                     "parameter_sweep": {"anti_overfit_review": {"status": "no_variant_passed"}},
                 },
+            },
+            "recent_jobs": {
+                "full_history_retained": True,
+                "display_limit": 20,
+                "total_jobs": 1,
+                "jobs": [
+                    {
+                        "job_id": "bt-test",
+                        "created_at": "2026-06-10T15:00:00+08:00",
+                        "strategy": "A/v11",
+                        "symbols": ["BTCUSDT"],
+                        "interval": "1h",
+                        "status": "completed",
+                        "net_profit_usdt": 12.34,
+                        "trades": 7,
+                        "max_drawdown_pct": 1.5,
+                        "profit_factor": 1.22,
+                        "recommendation_reason": "profitable_full_window_but_oos_gate_not_passed",
+                        "anti_overfit_status": "no_variant_passed",
+                        "engine_parity": "research_adapter",
+                    }
+                ],
             },
         }
 
@@ -360,7 +422,13 @@ class DecisionPortalTests(unittest.TestCase):
         self.assertIn("反拟合门控启用", html)
         self.assertIn("research_adapter", html)
         self.assertIn("不自动改策略", html)
-        self.assertIn("净收益 12.34", html)
+        self.assertIn("净收益</span><b>+12.34 USDT", html)
+        self.assertIn("权益 / PnL 曲线", html)
+        self.assertIn("详细开平仓记录", html)
+        self.assertIn("take_profit", html)
+        self.assertIn("历史任务不是只保留一个", html)
+        self.assertIn("可调参数", html)
+        self.assertIn("entry_threshold", html)
         self.assertNotIn("<h2>历史数据拉取进度</h2>", html)
 
     def test_decision_portal_contains_backtest_api_submit_hook(self):

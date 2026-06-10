@@ -275,7 +275,9 @@ class AttentionApiServerTests(unittest.TestCase):
         )
 
         self.assertTrue(result["ok"])
-        self.assertEqual(result["status"], "replay_adapter_pending")
+        self.assertEqual(result["status"], "data_unavailable")
+        self.assertEqual(result["result"]["status"], "data_unavailable")
+        self.assertEqual(result["result"]["summary"]["net_profit_usdt"], 0.0)
         self.assertFalse(result["safety"]["binance_requests_enabled"])
         self.assertFalse(result["safety"]["paper_or_real_orders"])
         self.assertTrue((self.root / "runtime" / "backtest_module_latest.json").exists())

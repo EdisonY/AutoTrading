@@ -46,17 +46,25 @@ class PortalDashboardBacktestTests(unittest.TestCase):
                 "backtest_module": {
                     "available": True,
                     "fresh": True,
-                    "status": "phase1_job_api_ready",
+                    "status": "backtest_engine_ready",
                     "capabilities": {
                         "job_submit_api": True,
                         "anti_overfit_gate": True,
-                        "strategy_replay_adapter": False,
+                        "strategy_replay_adapter": True,
                     },
                     "historical_baseline": {
                         "covered_symbol_count": 26,
                         "target_symbol_count": 30,
                         "covered_symbol_interval_count": 104,
                         "target_symbol_interval_count": 120,
+                    },
+                    "latest_job": {
+                        "status": "completed",
+                        "result": {
+                            "engine_parity": "research_adapter",
+                            "summary": {"net_profit_usdt": 12.34, "trades": 7},
+                            "parameter_sweep": {"anti_overfit_review": {"status": "no_variant_passed"}},
+                        },
                     },
                 },
             }
@@ -66,7 +74,9 @@ class PortalDashboardBacktestTests(unittest.TestCase):
         self.assertIn("历史回测模块", names)
         self.assertNotIn("Top30一年历史K线", names)
         backtest_card = next(card for card in cards if card["name"] == "历史回测模块")
-        self.assertIn("不生成假收益", backtest_card["body"])
+        self.assertIn("research replay/PnL True", backtest_card["body"])
+        self.assertIn("净收益 12.34", backtest_card["body"])
+        self.assertIn("不自动改策略", backtest_card["body"])
 
     def test_backtest_summary_prefers_mirror_report_path(self):
         with tempfile.TemporaryDirectory() as tmp:

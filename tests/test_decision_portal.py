@@ -313,17 +313,17 @@ class DecisionPortalTests(unittest.TestCase):
             },
         }
         backtest = {
-            "status": "phase1_job_api_ready",
+            "status": "backtest_engine_ready",
             "capabilities": {
                 "job_submit_api": True,
                 "anti_overfit_gate": True,
-                "strategy_replay_adapter": False,
-                "strategy_pnl_metrics": False,
+                "strategy_replay_adapter": True,
+                "strategy_pnl_metrics": True,
             },
             "latest_job": {
                 "job_id": "bt-test",
                 "created_at": "2026-06-10T15:00:00+08:00",
-                "status": "replay_adapter_pending",
+                "status": "completed",
                 "spec": {
                     "strategy": "A/v11",
                     "symbols": ["BTCUSDT"],
@@ -332,9 +332,17 @@ class DecisionPortalTests(unittest.TestCase):
                     "fill_model": "paper_fill_model_v2",
                 },
                 "result": {
-                    "status": "replay_adapter_pending",
-                    "summary": {"net_profit_usdt": None, "trades": 0},
-                    "recommendation": {"action": "no_parameter_change"},
+                    "status": "completed",
+                    "engine_parity": "research_adapter",
+                    "summary": {
+                        "net_profit_usdt": 12.34,
+                        "trades": 7,
+                        "max_drawdown_pct": 1.5,
+                        "win_rate_pct": 57.14,
+                        "profit_factor": 1.22,
+                    },
+                    "recommendation": {"action": "research_review_only", "reason": "profitable_full_window_but_oos_gate_not_passed"},
+                    "parameter_sweep": {"anti_overfit_review": {"status": "no_variant_passed"}},
                 },
             },
         }
@@ -350,7 +358,9 @@ class DecisionPortalTests(unittest.TestCase):
         self.assertIn("历史回测模块", html)
         self.assertIn("submitBacktestJob", html)
         self.assertIn("反拟合门控启用", html)
-        self.assertIn("不生成假收益", html)
+        self.assertIn("research_adapter", html)
+        self.assertIn("不自动改策略", html)
+        self.assertIn("净收益 12.34", html)
         self.assertNotIn("<h2>历史数据拉取进度</h2>", html)
 
     def test_decision_portal_contains_backtest_api_submit_hook(self):

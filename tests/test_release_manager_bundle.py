@@ -53,11 +53,13 @@ class ReleaseManagerBundleTests(unittest.TestCase):
             with self.subTest(target="tencent", component=component):
                 remotes = {remote for _local, remote in self.tool.TENCENT_COMPONENTS[component]["files"]}
                 self.assertIn("backtest_module.py", remotes)
+                self.assertIn("backtest_engine.py", remotes)
 
         for component in ("shadow", "all"):
             with self.subTest(target="aliyun", component=component):
                 remotes = {remote for _local, remote in self.tool.ALIYUN_COMPONENTS[component]["files"]}
                 self.assertIn("backtest_module.py", remotes)
+                self.assertIn("backtest_engine.py", remotes)
 
     def test_historical_kline_backfill_is_tencent_research_only(self):
         for component in ("research", "all"):

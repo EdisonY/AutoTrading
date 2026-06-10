@@ -1,18 +1,21 @@
 """Backtest module job/spec ledger.
 
-This is the first landing layer for historical backtests. It accepts and
-audits frontend job requests, records anti-overfit constraints, and exposes
-report-ready status. It does not pretend to calculate strategy PnL before the
-A/B/C replay adapters are connected.
+Accepts frontend historical backtest jobs, audits anti-overfit constraints, and
+runs a read-only research adapter against the historical Kline warehouse. The
+adapter returns real computed metrics, but it is not byte-for-byte live scanner
+parity and never applies strategy changes automatically.
 """
 
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
 import json
 import math
+import os
 import re
+import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -27,7 +30,13 @@ if sys.platform == "win32":
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 ROOT = SCRIPT_DIR.parent if SCRIPT_DIR.name == "部署工具" else SCRIPT_DIR
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
 CST = timezone(timedelta(hours=8))
+
+import backtest_engine
 
 STRATEGIES = {
     "A": "A/v11",
@@ -51,6 +60,7 @@ PARAM_RE = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
 MAX_SYMBOLS_PER_JOB = 30
 MAX_TUNED_PARAMETERS = 3
 MAX_PARAMETER_VARIANTS = 24
+REMOTE_DELEGATE_TIMEOUT_SEC = 900
 
 ANTI_OVERFIT_RULES = [
     "no_single_window_promotion",
@@ -124,6 +134,78 @@ def read_json(path: Path) -> dict[str, Any]:
 def write_json(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+
+
+def local_historical_store_available(root: Path = ROOT) -> bool:
+    table = root / "research_store" / "historical_klines"
+    return table.exists() and any(table.glob("date=*/data.jsonl"))
+
+
+def should_delegate_to_tencent(root: Path = ROOT) -> bool:
+    if os.environ.get("BACKTEST_DISABLE_REMOTE_DELEGATE", "").strip() in {"1", "true", "TRUE"}:
+        return False
+    if local_historical_store_available(root):
+        return False
+    if os.environ.get("BACKTEST_REMOTE_DELEGATE", "").strip() in {"1", "true", "TRUE"}:
+        return True
+    return str(root).rstrip("/") == "/opt/crypto-shadow-lab"
+
+
+def remote_delegate_job(payload: dict[str, Any], *, root: Path = ROOT, user: str = "portal") -> dict[str, Any]:
+    host = os.environ.get("TENCENT_HOST", "129.226.151.144")
+    remote_user = os.environ.get("TENCENT_USER", "ubuntu")
+    remote_root = os.environ.get("TENCENT_ROOT", "/opt/crypto-auto-trader")
+    encoded = base64.b64encode(json.dumps(payload, ensure_ascii=False).encode("utf-8")).decode("ascii")
+    remote_cmd = (
+        f"cd {shell_quote(remote_root)} && "
+        "PY=.venv/bin/python; [ -x \"$PY\" ] || PY=$(command -v python3); "
+        f"\"$PY\" backtest_module.py --no-remote-delegate --user {shell_quote(user)} --create-job-json-b64 {shell_quote(encoded)}"
+    )
+    cmd = [
+        "ssh",
+        "-o",
+        "BatchMode=yes",
+        "-o",
+        "ConnectTimeout=10",
+        "-o",
+        "ServerAliveInterval=10",
+        "-o",
+        "ServerAliveCountMax=2",
+        f"{remote_user}@{host}",
+        remote_cmd,
+    ]
+    proc = subprocess.run(cmd, capture_output=True, timeout=REMOTE_DELEGATE_TIMEOUT_SEC)
+    stdout = proc.stdout.decode("utf-8", errors="replace")
+    stderr = proc.stderr.decode("utf-8", errors="replace")
+    if proc.returncode != 0:
+        return {
+            "ok": False,
+            "status": "remote_delegate_failed",
+            "errors": [f"tencent_delegate_failed:{(stderr or stdout)[-400:]}"],
+            "anti_overfit": anti_overfit_payload(),
+        }
+    try:
+        result = json.loads(stdout)
+    except Exception:
+        return {
+            "ok": False,
+            "status": "remote_delegate_bad_response",
+            "errors": ["tencent_delegate_bad_json"],
+            "raw": stdout[-400:],
+            "anti_overfit": anti_overfit_payload(),
+        }
+    if isinstance(result, dict) and result.get("ok"):
+        job_id = str(result.get("job_id") or "")
+        if job_id:
+            write_json(jobs_dir(root) / f"{job_id}.json", result)
+        status = status_payload(root=root, latest_job=result)
+        write_json(latest_json_path(root), status)
+        write_markdown(status, root=root)
+    return result if isinstance(result, dict) else {"ok": False, "status": "remote_delegate_bad_response"}
+
+
+def shell_quote(value: str) -> str:
+    return "'" + str(value).replace("'", "'\"'\"'") + "'"
 
 
 def normalize_strategy(value: Any) -> str:
@@ -338,51 +420,46 @@ def anti_overfit_payload() -> dict[str, Any]:
     }
 
 
-def build_pending_result(spec: dict[str, Any], warnings: list[str]) -> dict[str, Any]:
-    return {
-        "status": "replay_adapter_pending",
-        "summary": {
-            "net_profit_usdt": None,
-            "return_pct": None,
-            "max_drawdown_pct": None,
-            "profit_factor": None,
-            "win_rate_pct": None,
-            "trades": 0,
-            "fees_usdt": None,
-            "slippage_usdt": None,
-        },
-        "charts": {
-            "equity_curve": [],
-            "drawdown": [],
-            "monthly_returns": [],
-        },
-        "trades": [],
-        "benchmark": {
-            "status": "pending_historical_query_layer",
-            "buy_hold_return_pct": None,
-        },
-        "recommendation": {
-            "action": "no_parameter_change",
-            "reason": "strategy_replay_adapter_not_connected",
-            "warnings": warnings,
-        },
-        "next_engine_steps": [
-            "historical_store_query",
-            "strategy_replay_adapter",
-            "backtest_engine_event_loop",
-            "tradingview_style_metrics",
-            "walk_forward_parameter_comparison",
-        ],
-        "requested": {
-            "strategy": spec["strategy"],
-            "symbols": spec["symbols"],
-            "interval": spec["interval"],
-            "period_days": spec["period_days"],
-        },
-    }
+def execute_job_result(spec: dict[str, Any], warnings: list[str], *, root: Path = ROOT) -> dict[str, Any]:
+    try:
+        result = backtest_engine.run_backtest(spec, root=root)
+    except Exception as exc:
+        return {
+            "status": "engine_error",
+            "summary": {
+                "net_profit_usdt": 0.0,
+                "return_pct": 0.0,
+                "max_drawdown_pct": 0.0,
+                "profit_factor": 0.0,
+                "win_rate_pct": 0.0,
+                "trades": 0,
+                "fees_usdt": 0.0,
+                "slippage_usdt": 0.0,
+            },
+            "charts": {"equity_curve": [], "drawdown": [], "monthly_returns": []},
+            "trades": [],
+            "benchmark": {"status": "error", "buy_hold_return_pct": None},
+            "coverage": [],
+            "recommendation": {
+                "action": "no_parameter_change",
+                "reason": f"engine_error:{str(exc)[:160]}",
+                "warnings": warnings,
+                "auto_apply_allowed": False,
+                "automatic_upgrade_allowed": False,
+            },
+            "parameter_sweep": {"enabled": False, "variants": [], "anti_overfit_review": {"status": "engine_error"}},
+            "safety": backtest_engine.safety_payload(),
+        }
+    recommendation = result.get("recommendation") if isinstance(result.get("recommendation"), dict) else {}
+    recommendation["warnings"] = warnings
+    result["recommendation"] = recommendation
+    return result
 
 
 def create_job(payload: dict[str, Any], *, root: Path = ROOT, user: str = "portal") -> dict[str, Any]:
+    if should_delegate_to_tencent(root):
+        return remote_delegate_job(payload, root=root, user=user)
+
     spec, errors, warnings = normalize_job_spec(payload, root=root)
     created_at = now_iso()
     if errors:
@@ -395,14 +472,16 @@ def create_job(payload: dict[str, Any], *, root: Path = ROOT, user: str = "porta
         }
 
     jid = job_id_for(spec, created_at)
+    result = execute_job_result(spec, warnings, root=root)
+    job_status = str(result.get("status") or "completed")
     job = {
         "ok": True,
         "job_id": jid,
         "created_at": created_at,
         "updated_at": created_at,
         "created_by": user,
-        "status": "replay_adapter_pending",
-        "execution_state": "accepted_report_only",
+        "status": job_status,
+        "execution_state": "completed_research_only" if job_status == "completed" else job_status,
         "safety": {
             "binance_requests_enabled": False,
             "strategy_frequency_change": False,
@@ -413,7 +492,7 @@ def create_job(payload: dict[str, Any], *, root: Path = ROOT, user: str = "porta
         "spec": spec,
         "warnings": warnings,
         "anti_overfit": anti_overfit_payload(),
-        "result": build_pending_result(spec, warnings),
+        "result": result,
     }
     write_json(jobs_dir(root) / f"{jid}.json", job)
     latest = status_payload(root=root, latest_job=job)
@@ -449,11 +528,11 @@ def status_payload(*, root: Path = ROOT, latest_job: dict[str, Any] | None = Non
     job = latest_job if isinstance(latest_job, dict) else load_latest_job(root)
     status = {
         "generated_at": now_iso(),
-        "status": "phase1_job_api_ready",
+        "status": "backtest_engine_ready",
         "module": "historical_backtest",
         "frontend_callable": True,
-        "compute_node": "tencent_planned",
-        "storage_policy": "historical_warehouse_stays_on_tencent; current_api_is_report_only_control_plane",
+        "compute_node": "tencent_or_local_read_only",
+        "storage_policy": "historical_warehouse_stays_on_tencent; engine_reads_local_or_tencent_warehouse_only",
         "historical_baseline": {
             "status": hist.get("status") or "missing",
             "complete": historical_complete(root),
@@ -471,18 +550,18 @@ def status_payload(*, root: Path = ROOT, latest_job: dict[str, Any] | None = Non
             "job_status_api": True,
             "parameter_audit": True,
             "anti_overfit_gate": True,
-            "historical_store_query": False,
-            "strategy_replay_adapter": False,
-            "strategy_pnl_metrics": False,
-            "parameter_sweep": False,
+            "historical_store_query": True,
+            "strategy_replay_adapter": True,
+            "strategy_pnl_metrics": True,
+            "parameter_sweep": True,
         },
         "anti_overfit": anti_overfit_payload(),
         "latest_job": job,
         "next_steps": [
-            "connect_read_only_historical_store_query",
-            "connect_A_B_C_replay_adapters",
-            "emit_equity_drawdown_trades_metrics",
-            "add_walk_forward_parameter_comparison",
+            "harden_live_scanner_byte_for_byte_parity",
+            "add_async_tencent_job_queue_for_large_runs",
+            "add_depth_snapshot_replay_when_available",
+            "feed_research_results_into_governance_without_auto_apply",
         ],
     }
     return status
@@ -505,25 +584,36 @@ def write_markdown(payload: dict[str, Any], *, root: Path = ROOT) -> None:
         f"- 前端提交 API: `{caps.get('job_submit_api')}`",
         f"- 参数审计: `{caps.get('parameter_audit')}`",
         f"- 反拟合门控: `{caps.get('anti_overfit_gate')}`",
-        "",
-        "## 未完成",
-        "",
         f"- 历史仓查询层: `{caps.get('historical_store_query')}`",
         f"- A/B/C 策略 replay adapter: `{caps.get('strategy_replay_adapter')}`",
         f"- 策略 PnL 指标: `{caps.get('strategy_pnl_metrics')}`",
         f"- 参数复测/调优: `{caps.get('parameter_sweep')}`",
+        f"- 计算口径: `{((job.get('result') or {}).get('engine_parity') if isinstance(job.get('result'), dict) else 'research_adapter') or 'research_adapter'}`",
+        "",
+        "## 仍需强化",
+        "",
+        "- live scanner byte-for-byte parity 仍需独立验收。",
+        "- 大任务异步队列、深度盘口 replay、治理证据自动汇总仍需继续强化。",
+        "- 回测建议只作为研究证据，不自动调参、升级或回滚。",
         "",
         "## 最近任务",
         "",
     ]
     if job:
         spec = job.get("spec") if isinstance(job.get("spec"), dict) else {}
+        result = job.get("result") if isinstance(job.get("result"), dict) else {}
+        summary = result.get("summary") if isinstance(result.get("summary"), dict) else {}
+        sweep = result.get("parameter_sweep") if isinstance(result.get("parameter_sweep"), dict) else {}
+        review = sweep.get("anti_overfit_review") if isinstance(sweep.get("anti_overfit_review"), dict) else {}
+        recommendation = result.get("recommendation") if isinstance(result.get("recommendation"), dict) else {}
         lines.extend(
             [
                 f"- job_id: `{job.get('job_id', '-')}`",
                 f"- 状态: `{job.get('status', '-')}`",
                 f"- 策略/币种/周期: `{spec.get('strategy', '-')}` / `{','.join(spec.get('symbols') or [])}` / `{spec.get('interval', '-')}`",
-                f"- 结果: `{((job.get('result') or {}).get('status') if isinstance(job.get('result'), dict) else '-')}`",
+                f"- 结果: `{result.get('status', '-')}` / 净收益 `{summary.get('net_profit_usdt', 0)}` USDT / 交易 `{summary.get('trades', 0)}` / 回撤 `{summary.get('max_drawdown_pct', 0)}`%",
+                f"- 建议: `{recommendation.get('action', '-')}` / `{recommendation.get('reason', '-')}`",
+                f"- 反拟合/OOS: `{review.get('status', '-')}` / auto_apply `{review.get('auto_apply_allowed', False)}`",
             ]
         )
     else:
@@ -557,10 +647,18 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--root", type=Path, default=ROOT)
     parser.add_argument("--refresh", action="store_true")
     parser.add_argument("--create-job-json", default="")
+    parser.add_argument("--create-job-json-b64", default="")
+    parser.add_argument("--user", default="cli")
+    parser.add_argument("--no-remote-delegate", action="store_true")
     args = parser.parse_args(argv)
-    if args.create_job_json:
-        payload = json.loads(args.create_job_json)
-        result = create_job(payload, root=args.root, user="cli")
+    if args.no_remote_delegate:
+        os.environ["BACKTEST_DISABLE_REMOTE_DELEGATE"] = "1"
+    if args.create_job_json or args.create_job_json_b64:
+        if args.create_job_json_b64:
+            payload = json.loads(base64.b64decode(args.create_job_json_b64).decode("utf-8"))
+        else:
+            payload = json.loads(args.create_job_json)
+        result = create_job(payload, root=args.root, user=args.user)
     else:
         result = refresh_status_files(root=args.root)
     print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))

@@ -1570,8 +1570,8 @@ def render_cards(state: dict[str, Any]) -> str:
     history_or_backtest_card = (
         (
             "历史回测",
-            plain_status(backtest.get("status") or "phase1_job_api_ready"),
-            f"基线已完成；覆盖 {int(historical_quality.get('covered_symbol_count') or 0)}/{int(historical_quality.get('target_symbol_count') or 0)} 币、{int(historical_quality.get('covered_symbol_interval_count') or 0)}/{int(historical_quality.get('target_symbol_interval_count') or 0)} 币种周期。前端任务API {plain_status(backtest_caps.get('job_submit_api', True))}；策略 replay/PnL 仍待接，不生成假收益。",
+            plain_status(backtest.get("status") or "backtest_engine_ready"),
+            f"基线已完成；覆盖 {int(historical_quality.get('covered_symbol_count') or 0)}/{int(historical_quality.get('target_symbol_count') or 0)} 币、{int(historical_quality.get('covered_symbol_interval_count') or 0)}/{int(historical_quality.get('target_symbol_interval_count') or 0)} 币种周期。前端任务API {plain_status(backtest_caps.get('job_submit_api', True))}；research replay/PnL {plain_status(backtest_caps.get('strategy_replay_adapter', False))}；结果不自动改策略。",
         )
         if history_done
         else (
@@ -1679,6 +1679,9 @@ def render_backtest_module(state: dict[str, Any]) -> str:
     latest_spec = latest.get("spec") if isinstance(latest.get("spec"), dict) else {}
     latest_result = latest.get("result") if isinstance(latest.get("result"), dict) else {}
     latest_summary = latest_result.get("summary") if isinstance(latest_result.get("summary"), dict) else {}
+    latest_recommendation = latest_result.get("recommendation") if isinstance(latest_result.get("recommendation"), dict) else {}
+    latest_sweep = latest_result.get("parameter_sweep") if isinstance(latest_result.get("parameter_sweep"), dict) else {}
+    latest_oos = latest_sweep.get("anti_overfit_review") if isinstance(latest_sweep.get("anti_overfit_review"), dict) else {}
     history_done = historical_kline_complete(historical)
     if not history_done:
         return render_historical_kline_progress(state)
@@ -1687,21 +1690,21 @@ def render_backtest_module(state: dict[str, Any]) -> str:
         f"""
 <div class="table-scroll">
   <table class="backtest-table">
-    <thead><tr><th>任务</th><th>策略/周期</th><th>范围</th><th>结果</th><th>建议</th></tr></thead>
+    <thead><tr><th>任务</th><th>策略/周期</th><th>范围</th><th>结果</th><th>反拟合/建议</th></tr></thead>
     <tbody>
       <tr>
         <td>{h(latest.get('job_id') or '-')}<small>{h(latest.get('created_at') or '-')}</small></td>
         <td>{h(latest_spec.get('strategy') or '-')} / {h(latest_spec.get('interval') or '-')}<small>{h(', '.join(latest_spec.get('symbols') or []) or '-')}</small></td>
         <td>{h(latest_spec.get('period_days') or '-')} 天<small>fill {h(latest_spec.get('fill_model') or 'paper_fill_model_v2')}</small></td>
-        <td>{h(latest.get('status') or latest_result.get('status') or '-')}<small>净收益 {h(latest_summary.get('net_profit_usdt'))}；交易 {h(latest_summary.get('trades') or 0)}</small></td>
-        <td>{h(((latest_result.get('recommendation') or {}).get('action') if isinstance(latest_result.get('recommendation'), dict) else '') or 'no_parameter_change')}<small>未接 replay 前不生成假收益。</small></td>
+        <td>{h(latest.get('status') or latest_result.get('status') or '-')}<small>净收益 {h(latest_summary.get('net_profit_usdt'))}；交易 {h(latest_summary.get('trades') or 0)}；回撤 {h(latest_summary.get('max_drawdown_pct'))}%；胜率 {h(latest_summary.get('win_rate_pct'))}%；PF {h(latest_summary.get('profit_factor'))}</small></td>
+        <td>{h(latest_recommendation.get('action') or 'research_review_only')}<small>{h(latest_recommendation.get('reason') or '-')}; OOS {h(latest_oos.get('status') or '-')}; {h(latest_result.get('engine_parity') or 'research_adapter')}；不自动改策略。</small></td>
       </tr>
     </tbody>
   </table>
 </div>
 """.strip()
         if latest
-        else '<p class="empty">暂无回测任务。提交后先生成可审计 job；策略 replay 未接入前不会显示收益。</p>'
+        else '<p class="empty">暂无回测任务。提交后会在 Tencent 历史仓执行研究级回测，并返回指标；结果不自动改策略。</p>'
     )
 
     return f"""
@@ -1709,8 +1712,8 @@ def render_backtest_module(state: dict[str, Any]) -> str:
   <div class="history-grid">
     <div><span>历史基线</span><b>已完成</b><small>{int(quality.get('covered_symbol_count') or 0)}/{int(quality.get('target_symbol_count') or 0)} 币；{int(quality.get('covered_symbol_interval_count') or 0)}/{int(quality.get('target_symbol_interval_count') or 0)} 币种周期；质量 {h(plain_status(quality.get('status') or '-'))}</small></div>
     <div><span>每日增量</span><b>{h(plain_status(incremental.get('status') or 'missing'))}</b><small>最近写入 {int(incremental_progress.get('written_rows') or 0)} 行；只跑 Tencent 低速 timer。</small></div>
-    <div><span>前端任务</span><b>{h(plain_status(caps.get('job_submit_api', True)))}</b><small>提交 API 已接；当前先登记 job/spec/参数审计。</small></div>
-    <div><span>策略收益计算</span><b>{h(plain_status(caps.get('strategy_replay_adapter', False)))}</b><small>A/B/C replay adapter 未接前，不显示模拟收益。</small></div>
+    <div><span>前端任务</span><b>{h(plain_status(caps.get('job_submit_api', True)))}</b><small>提交后执行只读历史仓回测；Aliyun 会委托 Tencent 历史仓。</small></div>
+    <div><span>策略收益计算</span><b>{h(plain_status(caps.get('strategy_replay_adapter', False)))}</b><small>A/B/C research adapter 可用；不是 live scanner 逐行完全复刻。</small></div>
   </div>
   <form class="backtest-form" onsubmit="submitBacktestJob(event)">
     <label><span>策略</span><select name="strategy"><option>A/v11</option><option>B/v16</option><option>C/v14</option></select></label>
@@ -2109,7 +2112,7 @@ async function submitBacktestJob(evt) {{
     btn.disabled = true;
     btn.textContent = '创建中';
   }}
-  if (status) status.textContent = '正在创建回测任务；只写任务台账，不下单。';
+  if (status) status.textContent = '正在执行研究级回测；只读历史仓，不下单。';
   const fd = new FormData(form);
   let params = {{}};
   const rawParams = String(fd.get('params') || '').trim();
@@ -2145,8 +2148,9 @@ async function submitBacktestJob(evt) {{
     }});
     const data = await resp.json();
     if (!data.ok) throw new Error((data.errors || [data.error || '创建失败']).join('；'));
-    if (status) status.textContent = '任务已创建：' + data.job_id + '。当前为 replay 接入前的审计任务，不生成假收益。';
-    setTimeout(() => window.location.reload(), 3000);
+    const summary = (data.result && data.result.summary) || {{}};
+    if (status) status.textContent = '回测完成：' + data.job_id + '；状态 ' + data.status + '；净收益 ' + (summary.net_profit_usdt ?? '-') + '；交易 ' + (summary.trades ?? 0) + '。结果只做研究建议，不自动改策略。';
+    setTimeout(() => window.location.reload(), 5000);
   }} catch (err) {{
     if (status) status.textContent = '创建失败：' + (err.message || err);
     if (btn) {{

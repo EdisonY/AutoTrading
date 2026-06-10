@@ -212,6 +212,11 @@ waiting_progress = read_json(root / "runtime" / "waiting_period_progress_latest.
 historical_kline = read_json(root / "runtime" / "historical_kline_backfill_latest.json")
 historical_kline_incremental = read_json(root / "runtime" / "historical_kline_incremental_latest.json")
 backtest_module = read_json(root / "runtime" / "backtest_module_latest.json")
+backtest_latest = backtest_module.get("latest_job") if isinstance(backtest_module.get("latest_job"), dict) else {}
+backtest_latest_result = backtest_latest.get("result") if isinstance(backtest_latest.get("result"), dict) else {}
+backtest_latest_summary = backtest_latest_result.get("summary") if isinstance(backtest_latest_result.get("summary"), dict) else {}
+backtest_latest_sweep = backtest_latest_result.get("parameter_sweep") if isinstance(backtest_latest_result.get("parameter_sweep"), dict) else {}
+backtest_latest_oos = backtest_latest_sweep.get("anti_overfit_review") if isinstance(backtest_latest_sweep.get("anti_overfit_review"), dict) else {}
 services = {
     name: unit_state(name)
     for name in (
@@ -326,10 +331,18 @@ print(json.dumps({
         "capabilities": backtest_module.get("capabilities", {}),
         "anti_overfit": backtest_module.get("anti_overfit", {}),
         "latest_job": {
-            "job_id": (backtest_module.get("latest_job") or {}).get("job_id"),
-            "status": (backtest_module.get("latest_job") or {}).get("status"),
-            "execution_state": (backtest_module.get("latest_job") or {}).get("execution_state"),
-        } if isinstance(backtest_module.get("latest_job"), dict) else {},
+            "job_id": backtest_latest.get("job_id"),
+            "status": backtest_latest.get("status"),
+            "execution_state": backtest_latest.get("execution_state"),
+            "engine_parity": backtest_latest_result.get("engine_parity"),
+            "net_profit_usdt": backtest_latest_summary.get("net_profit_usdt"),
+            "return_pct": backtest_latest_summary.get("return_pct"),
+            "max_drawdown_pct": backtest_latest_summary.get("max_drawdown_pct"),
+            "profit_factor": backtest_latest_summary.get("profit_factor"),
+            "win_rate_pct": backtest_latest_summary.get("win_rate_pct"),
+            "trades": backtest_latest_summary.get("trades"),
+            "anti_overfit_status": backtest_latest_oos.get("status"),
+        } if backtest_latest else {},
     },
 }, ensure_ascii=False))
 """

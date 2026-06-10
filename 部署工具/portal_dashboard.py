@@ -2255,6 +2255,9 @@ def function_status_cards(data: dict[str, Any]) -> list[dict[str, str]]:
     backtest_hist = backtest_module.get("historical_baseline") or {}
     backtest_latest = backtest_module.get("latest_job") or {}
     backtest_latest_result = backtest_latest.get("result") if isinstance(backtest_latest.get("result"), dict) else {}
+    backtest_latest_summary = backtest_latest_result.get("summary") if isinstance(backtest_latest_result.get("summary"), dict) else {}
+    backtest_latest_sweep = backtest_latest_result.get("parameter_sweep") if isinstance(backtest_latest_result.get("parameter_sweep"), dict) else {}
+    backtest_latest_oos = backtest_latest_sweep.get("anti_overfit_review") if isinstance(backtest_latest_sweep.get("anti_overfit_review"), dict) else {}
     depth_backfill = data.get("depth_backfill") or {}
     depth_backfill_plan = (depth_backfill.get("plan") or {}).get("summary") or {}
     depth_backfill_submit = depth_backfill.get("submit") or {}
@@ -2485,14 +2488,16 @@ def function_status_cards(data: dict[str, Any]) -> list[dict[str, str]]:
             {
                 "level": "ok" if backtest_module.get("fresh") or backtest_module.get("available") else "warn",
                 "name": "历史回测模块",
-                "value": str(backtest_module.get("status") or "phase1_job_api_ready"),
+                "value": str(backtest_module.get("status") or "backtest_engine_ready"),
                 "body": (
                     f"历史基线完成；覆盖 {int(backtest_hist.get('covered_symbol_count') or historical_quality.get('covered_symbol_count') or 0)}/"
                     f"{int(backtest_hist.get('target_symbol_count') or historical_quality.get('target_symbol_count') or 0)} 币、"
                     f"{int(backtest_hist.get('covered_symbol_interval_count') or historical_quality.get('covered_symbol_interval_count') or 0)}/"
                     f"{int(backtest_hist.get('target_symbol_interval_count') or historical_quality.get('target_symbol_interval_count') or 0)} 币种周期。"
                     f"前端任务API {backtest_caps.get('job_submit_api', False)}；反拟合门控 {backtest_caps.get('anti_overfit_gate', False)}；"
-                    f"replay/PnL {backtest_caps.get('strategy_replay_adapter', False)}，不生成假收益。"
+                    f"research replay/PnL {backtest_caps.get('strategy_replay_adapter', False)}；"
+                    f"最近任务 {backtest_latest.get('status') or '-'}，净收益 {backtest_latest_summary.get('net_profit_usdt', '-')} USDT，"
+                    f"交易 {backtest_latest_summary.get('trades', 0)}，OOS {backtest_latest_oos.get('status', '-')}；不自动改策略。"
                 ),
             }
             if historical_done
@@ -4521,7 +4526,7 @@ def render_html(out_dir: Path) -> str:
             route_card(
                 "历史回测模块",
                 "前端发起回测",
-                "看 A/B/C 策略、币种、分时、参数任务入口状态；当前只接 job/spec/参数审计，replay 未接前不显示假收益。",
+                "看 A/B/C 策略、币种、分时和参数复测结果；当前是 research adapter，不等同 live scanner 逐行复刻，结果不自动改策略。",
                 data["backtest_module_html"],
                 "看历史回测模块",
                 "blue",

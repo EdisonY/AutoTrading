@@ -137,6 +137,19 @@ def shell_quote(value: str) -> str:
     return "'" + value.replace("'", "'\"'\"'") + "'"
 
 
+def remote_shadow_sync_stale_cleanup_command(max_age_minutes: int = 120) -> str:
+    minutes = max(1, int(max_age_minutes))
+    return (
+        "find /tmp -xdev -maxdepth 1 "
+        "\\( -type d -name 'autotrading_shadow_sync_*' -o -type f -name 'autotrading_shadow_sync_*.tgz' \\) "
+        f"-mmin +{minutes} -exec rm -rf -- {{}} + || true"
+    )
+
+
+def remote_shadow_sync_exit_trap(tmp_dir: str) -> str:
+    return f"trap \"rm -rf {shell_quote(tmp_dir)}\" EXIT"
+
+
 def jsonl_shard_dir(rel: str) -> str:
     return Path(rel).with_suffix("").as_posix()
 
@@ -375,7 +388,9 @@ def sync_bundle(
 
     commands = [
         "set -e",
+        remote_shadow_sync_stale_cleanup_command(),
         f"rm -rf {shell_quote(tmp_dir)} {shell_quote(archive)}",
+        remote_shadow_sync_exit_trap(tmp_dir),
         f"mkdir -p {shell_quote(tmp_dir)}",
         f"cd {shell_quote(REMOTE_DIR)}",
     ]
@@ -422,6 +437,7 @@ def sync_bundle(
     commands.extend(
         [
             f"tar -czf {shell_quote(archive)} -C {shell_quote(tmp_dir)} .",
+            f"rm -rf {shell_quote(tmp_dir)}",
             f"du -h {shell_quote(archive)} | awk '{{print $1}}'",
         ]
     )

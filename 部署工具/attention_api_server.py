@@ -8,6 +8,9 @@ Endpoints:
   POST /api/attention/ack    - Acknowledge an item
   POST /api/attention/decision - Record an operator decision
   POST /api/attention/resolve - Resolve an item
+  GET  /api/backtest/status  - Read backtest module status
+  GET  /api/backtest/job     - Read a backtest job by id
+  POST /api/backtest/jobs    - Create an audited backtest job
   GET  /api/report/refresh   - Read safe report-refresh status
   POST /api/report/refresh   - Start safe report-only refresh
   GET  /api/health           - Health check
@@ -28,7 +31,7 @@ from datetime import datetime, timezone, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 if sys.platform == "win32":
     try:
@@ -40,6 +43,10 @@ if sys.platform == "win32":
 CST = timezone(timedelta(hours=8))
 SCRIPT_DIR = Path(__file__).resolve().parent
 ROOT = SCRIPT_DIR.parent if SCRIPT_DIR.name == "部署工具" else SCRIPT_DIR
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+import backtest_module
+
 EVENT_STORE_DB = ROOT / "runtime" / "event_store.sqlite3"
 ATTENTION_JSON = ROOT / "research_memory" / "attention" / "open_items.json"
 REPORTS_DIR = ROOT / "reports"
@@ -499,6 +506,15 @@ class AttentionHandler(BaseHTTPRequestHandler):
         elif parsed.path == "/api/attention":
             items = load_attention_items()
             self._json_response({"ok": True, "items": items, "count": len(items)})
+        elif parsed.path == "/api/backtest/status":
+            self._json_response({"ok": True, **backtest_module.status_payload(root=ROOT)})
+        elif parsed.path == "/api/backtest/job":
+            job_id = (parse_qs(parsed.query).get("id") or [""])[0]
+            job = backtest_module.load_job(job_id, root=ROOT)
+            if not job:
+                self._json_response({"ok": False, "error": "job_not_found"}, 404)
+            else:
+                self._json_response({"ok": True, "job": job})
         elif parsed.path == "/api/report/refresh":
             status = report_refresh_status()
             status.update({"ok": True, "safety": "report_only_no_binance_submit"})
@@ -563,6 +579,10 @@ class AttentionHandler(BaseHTTPRequestHandler):
         elif parsed.path == "/api/report/refresh":
             result = start_report_refresh(user)
             self._json_response(result)
+
+        elif parsed.path == "/api/backtest/jobs":
+            result = backtest_module.create_job(data, root=ROOT, user=user)
+            self._json_response(result, 200 if result.get("ok") else 400)
 
         else:
             self._json_response({"error": "Not found"}, 404)

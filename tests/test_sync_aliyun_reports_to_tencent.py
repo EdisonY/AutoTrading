@@ -119,6 +119,12 @@ class SyncAliyunReportsToTencentTests(unittest.TestCase):
         self.assertTrue(self.tool.should_skip_upload(self.tool.ALIYUN_RUNTIME, self.tool.HISTORICAL_INCREMENTAL_JSON, local_json))
         self.assertTrue(self.tool.should_skip_upload(self.tool.ALIYUN_REPORTS, self.tool.HISTORICAL_INCREMENTAL_MD, local_md))
 
+    def test_backtest_module_small_files_are_priority_synced(self):
+        self.assertIn("backtest_module_latest.md", self.tool.REPORT_FILES)
+        self.assertIn("backtest_module_latest.md", self.tool.PRIORITY_REPORT_FILES)
+        self.assertIn("backtest_module_latest.json", self.tool.RUNTIME_FILES)
+        self.assertIn("backtest_module_latest.json", self.tool.PRIORITY_RUNTIME_FILES)
+
 
 if __name__ == "__main__":
     unittest.main()

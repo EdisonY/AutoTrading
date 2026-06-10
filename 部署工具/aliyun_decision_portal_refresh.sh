@@ -26,8 +26,10 @@ mkdir -p server_logs_tencent/runtime server_logs_tencent/reports
 for rel in \
   runtime/historical_kline_backfill_latest.json \
   runtime/historical_kline_incremental_latest.json \
+  runtime/backtest_module_latest.json \
   reports/historical_kline_backfill_latest.md \
-  reports/historical_kline_incremental_latest.md
+  reports/historical_kline_incremental_latest.md \
+  reports/backtest_module_latest.md
 do
   tmp="server_logs_tencent/${rel}.tmp"
   if timeout 15s ssh -o BatchMode=yes -o ConnectTimeout=8 -o ServerAliveInterval=4 -o ServerAliveCountMax=1 \
@@ -46,6 +48,7 @@ $PYTHON rollback_automation_guard.py --runtime-dir $REMOTE_DIR/runtime --reports
 $PYTHON auto_upgrade_readiness.py --runtime-dir $REMOTE_DIR/runtime --reports-dir $REMOTE_DIR/reports || echo "[WARN] auto upgrade readiness failed"
 $PYTHON strategy_candidate_governance.py --runtime-dir $REMOTE_DIR/runtime --reports-dir $REMOTE_DIR/reports || echo "[WARN] strategy candidate governance failed"
 $PYTHON waiting_period_progress.py --runtime-dir $REMOTE_DIR/runtime --reports-dir $REMOTE_DIR/reports --policy-json $REMOTE_DIR/research_memory/approvals/auto_upgrade_policy.json || echo "[WARN] waiting-period progress failed"
+$PYTHON backtest_module.py --root $REMOTE_DIR --refresh || echo "[WARN] backtest module status failed"
 $PYTHON portal_dashboard.py --out-dir $REMOTE_DIR/reports || echo "[WARN] portal generation failed"
 $PYTHON decision_portal.py --out-dir $REMOTE_DIR/reports || echo "[WARN] decision portal generation failed"
 

@@ -300,6 +300,65 @@ class DecisionPortalTests(unittest.TestCase):
         self.assertIn("扫描频率改动 False", html)
         self.assertIn("不影响三策略扫描频率", html)
 
+    def test_completed_historical_baseline_shows_backtest_module_instead_of_progress_panel(self):
+        historical = {
+            "status": "complete",
+            "progress": {"pending_tasks": 0, "percent": 100.0, "written_rows": 1602051},
+            "quality": {
+                "status": "complete_with_provider_gaps",
+                "covered_symbol_count": 26,
+                "target_symbol_count": 30,
+                "covered_symbol_interval_count": 104,
+                "target_symbol_interval_count": 120,
+            },
+        }
+        backtest = {
+            "status": "phase1_job_api_ready",
+            "capabilities": {
+                "job_submit_api": True,
+                "anti_overfit_gate": True,
+                "strategy_replay_adapter": False,
+                "strategy_pnl_metrics": False,
+            },
+            "latest_job": {
+                "job_id": "bt-test",
+                "created_at": "2026-06-10T15:00:00+08:00",
+                "status": "replay_adapter_pending",
+                "spec": {
+                    "strategy": "A/v11",
+                    "symbols": ["BTCUSDT"],
+                    "interval": "1h",
+                    "period_days": 365,
+                    "fill_model": "paper_fill_model_v2",
+                },
+                "result": {
+                    "status": "replay_adapter_pending",
+                    "summary": {"net_profit_usdt": None, "trades": 0},
+                    "recommendation": {"action": "no_parameter_change"},
+                },
+            },
+        }
+
+        html = self.tool.render_history_or_backtest_panel(
+            {
+                "historical_kline": historical,
+                "historical_kline_incremental": {"status": "planned", "progress": {"written_rows": 10}},
+                "backtest_module": backtest,
+            }
+        )
+
+        self.assertIn("历史回测模块", html)
+        self.assertIn("submitBacktestJob", html)
+        self.assertIn("反拟合门控启用", html)
+        self.assertIn("不生成假收益", html)
+        self.assertNotIn("<h2>历史数据拉取进度</h2>", html)
+
+    def test_decision_portal_contains_backtest_api_submit_hook(self):
+        html = self.tool.render_html()
+
+        self.assertIn("submitBacktestJob", html)
+        self.assertIn("/api/backtest/jobs", html)
+
     def test_strategy_detail_shows_position_pnl_and_fee_without_funding(self):
         account = {
             "accounts": [

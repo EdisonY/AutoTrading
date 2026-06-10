@@ -32,6 +32,8 @@ MIRROR_RUNTIME_DIR = ROOT / "server_logs_tencent" / "runtime"
 ATTENTION_JSON = ROOT / "research_memory" / "attention" / "open_items.json"
 LIVE_ATTENTION_JSON = RUNTIME_DIR / "live_attention_latest.json"
 MIRROR_ATTENTION_JSON = MIRROR_RUNTIME_DIR / "live_attention_latest.json"
+BACKTEST_MODULE_JSON = RUNTIME_DIR / "backtest_module_latest.json"
+MIRROR_BACKTEST_MODULE_JSON = MIRROR_RUNTIME_DIR / "backtest_module_latest.json"
 LOCAL_DB = RUNTIME_DIR / "event_store.sqlite3"
 MIRROR_DB = ROOT / "server_logs_tencent" / "runtime" / "event_store.sqlite3"
 EVENT_DB = MIRROR_DB if MIRROR_DB.exists() else LOCAL_DB
@@ -108,6 +110,11 @@ def read_best_historical_kline_json(*paths: Path) -> dict[str, Any]:
         return {}
     candidates.sort(key=lambda item: item[0], reverse=True)
     return candidates[0][1]
+
+
+def historical_kline_complete(payload: dict[str, Any]) -> bool:
+    progress = payload.get("progress") if isinstance(payload.get("progress"), dict) else {}
+    return str(payload.get("status") or "") == "complete" and int(progress.get("pending_tasks") or 0) == 0
 
 
 def read_alerts_json() -> dict[str, Any]:
@@ -1230,6 +1237,7 @@ def build_state() -> dict[str, Any]:
         RUNTIME_DIR / "historical_kline_incremental_latest.json",
         MIRROR_RUNTIME_DIR / "historical_kline_incremental_latest.json",
     )
+    backtest_module = read_first_json(BACKTEST_MODULE_JSON, MIRROR_BACKTEST_MODULE_JSON)
     depth = read_first_json(RUNTIME_DIR / "research_depth_backfill_latest.json", MIRROR_RUNTIME_DIR / "research_depth_backfill_latest.json")
     paper_exchange = read_live_runtime_json("paper_exchange_latest.json")
     market = read_live_runtime_json("market_data_cache.json")
@@ -1276,6 +1284,7 @@ def build_state() -> dict[str, Any]:
         "kline": kline,
         "historical_kline": historical_kline,
         "historical_kline_incremental": historical_kline_incremental,
+        "backtest_module": backtest_module,
         "depth": depth,
         "paper_exchange": paper_exchange,
         "market": market,
@@ -1555,6 +1564,22 @@ def render_cards(state: dict[str, Any]) -> str:
     paper = state.get("paper_exchange") if isinstance(state.get("paper_exchange"), dict) else {}
     market = state.get("market") if isinstance(state.get("market"), dict) else {}
     micro = state.get("microstructure") if isinstance(state.get("microstructure"), dict) else {}
+    backtest = state.get("backtest_module") if isinstance(state.get("backtest_module"), dict) else {}
+    backtest_caps = backtest.get("capabilities") if isinstance(backtest.get("capabilities"), dict) else {}
+    history_done = historical_kline_complete(historical)
+    history_or_backtest_card = (
+        (
+            "历史回测",
+            plain_status(backtest.get("status") or "phase1_job_api_ready"),
+            f"基线已完成；覆盖 {int(historical_quality.get('covered_symbol_count') or 0)}/{int(historical_quality.get('target_symbol_count') or 0)} 币、{int(historical_quality.get('covered_symbol_interval_count') or 0)}/{int(historical_quality.get('target_symbol_interval_count') or 0)} 币种周期。前端任务API {plain_status(backtest_caps.get('job_submit_api', True))}；策略 replay/PnL 仍待接，不生成假收益。",
+        )
+        if history_done
+        else (
+            "一年历史K线",
+            f"{float(historical_progress.get('percent') or 0):.1f}% / {plain_status(historical.get('status') or 'missing')}",
+            f"任务队列 {plain_status(historical.get('status') or 'missing')}；可用覆盖 {int(historical_quality.get('covered_symbol_count') or 0)}/{int(historical_quality.get('target_symbol_count') or 0)} 币、{int(historical_quality.get('covered_symbol_interval_count') or 0)}/{int(historical_quality.get('target_symbol_interval_count') or 0)} 币种周期。不随首页刷新打 API。",
+        )
+    )
     rows = [
         ("模拟账本", f"{paper.get('open_positions', 0)} 仓 / {number(paper.get('total_unrealized_pnl'), 4)} USDT", "这是当前主 PnL 入口。点击下方策略表，可看每个持仓和入场K线。"),
         ("行情覆盖", f"{len(market.get('available_symbols') or [])} 币 / Top {len(market.get('top_symbols') or [])}", f"来源：{report_text(','.join(market.get('sources') or []) or '外部公开行情')}。"),
@@ -1578,11 +1603,7 @@ def render_cards(state: dict[str, Any]) -> str:
         ("回放验收", plain_status(replay.get("status")), f"已准备 {replay_summary.get('ready_components', 0)}/{replay_summary.get('total_components', 0)} 块；下一步：{plain_status(replay.get('next_action'))}。"),
         ("同输入审计", f"{float(parity_summary.get('pass_rate_pct') or 0):.1f}% 通过", f"同一批输入下，已验 {parity_summary.get('gate_cases', 0)} 个策略判断，不一致 {parity_summary.get('mismatched', 0)} 个。"),
         ("K线/深度", plain_status(kline_acceptance.get("status")), "这是以后回测和升级策略的燃料。第一版先看是否在稳定积累，不急着一次补满。"),
-        (
-            "一年历史K线",
-            f"{float(historical_progress.get('percent') or 0):.1f}% / {plain_status(historical.get('status') or 'missing')}",
-            f"任务队列 {plain_status(historical.get('status') or 'missing')}；可用覆盖 {int(historical_quality.get('covered_symbol_count') or 0)}/{int(historical_quality.get('target_symbol_count') or 0)} 币、{int(historical_quality.get('covered_symbol_interval_count') or 0)}/{int(historical_quality.get('target_symbol_interval_count') or 0)} 币种周期。不随首页刷新打 API。",
-        ),
+        history_or_backtest_card,
         (
             "每日历史增量",
             f"{plain_status(historical_incremental.get('status') or 'missing')} / {int(incremental_progress.get('written_rows') or 0)} 行",
@@ -1645,6 +1666,89 @@ def render_historical_kline_progress(state: dict[str, Any]) -> str:
 </div>
 """.strip()
     return body
+
+
+def render_backtest_module(state: dict[str, Any]) -> str:
+    historical = state.get("historical_kline") if isinstance(state.get("historical_kline"), dict) else {}
+    quality = historical.get("quality") if isinstance(historical.get("quality"), dict) else {}
+    incremental = state.get("historical_kline_incremental") if isinstance(state.get("historical_kline_incremental"), dict) else {}
+    incremental_progress = incremental.get("progress") if isinstance(incremental.get("progress"), dict) else {}
+    backtest = state.get("backtest_module") if isinstance(state.get("backtest_module"), dict) else {}
+    caps = backtest.get("capabilities") if isinstance(backtest.get("capabilities"), dict) else {}
+    latest = backtest.get("latest_job") if isinstance(backtest.get("latest_job"), dict) else {}
+    latest_spec = latest.get("spec") if isinstance(latest.get("spec"), dict) else {}
+    latest_result = latest.get("result") if isinstance(latest.get("result"), dict) else {}
+    latest_summary = latest_result.get("summary") if isinstance(latest_result.get("summary"), dict) else {}
+    history_done = historical_kline_complete(historical)
+    if not history_done:
+        return render_historical_kline_progress(state)
+
+    latest_html = (
+        f"""
+<div class="table-scroll">
+  <table class="backtest-table">
+    <thead><tr><th>任务</th><th>策略/周期</th><th>范围</th><th>结果</th><th>建议</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>{h(latest.get('job_id') or '-')}<small>{h(latest.get('created_at') or '-')}</small></td>
+        <td>{h(latest_spec.get('strategy') or '-')} / {h(latest_spec.get('interval') or '-')}<small>{h(', '.join(latest_spec.get('symbols') or []) or '-')}</small></td>
+        <td>{h(latest_spec.get('period_days') or '-')} 天<small>fill {h(latest_spec.get('fill_model') or 'paper_fill_model_v2')}</small></td>
+        <td>{h(latest.get('status') or latest_result.get('status') or '-')}<small>净收益 {h(latest_summary.get('net_profit_usdt'))}；交易 {h(latest_summary.get('trades') or 0)}</small></td>
+        <td>{h(((latest_result.get('recommendation') or {}).get('action') if isinstance(latest_result.get('recommendation'), dict) else '') or 'no_parameter_change')}<small>未接 replay 前不生成假收益。</small></td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+""".strip()
+        if latest
+        else '<p class="empty">暂无回测任务。提交后先生成可审计 job；策略 replay 未接入前不会显示收益。</p>'
+    )
+
+    return f"""
+<div class="history-progress backtest-module">
+  <div class="history-grid">
+    <div><span>历史基线</span><b>已完成</b><small>{int(quality.get('covered_symbol_count') or 0)}/{int(quality.get('target_symbol_count') or 0)} 币；{int(quality.get('covered_symbol_interval_count') or 0)}/{int(quality.get('target_symbol_interval_count') or 0)} 币种周期；质量 {h(plain_status(quality.get('status') or '-'))}</small></div>
+    <div><span>每日增量</span><b>{h(plain_status(incremental.get('status') or 'missing'))}</b><small>最近写入 {int(incremental_progress.get('written_rows') or 0)} 行；只跑 Tencent 低速 timer。</small></div>
+    <div><span>前端任务</span><b>{h(plain_status(caps.get('job_submit_api', True)))}</b><small>提交 API 已接；当前先登记 job/spec/参数审计。</small></div>
+    <div><span>策略收益计算</span><b>{h(plain_status(caps.get('strategy_replay_adapter', False)))}</b><small>A/B/C replay adapter 未接前，不显示模拟收益。</small></div>
+  </div>
+  <form class="backtest-form" onsubmit="submitBacktestJob(event)">
+    <label><span>策略</span><select name="strategy"><option>A/v11</option><option>B/v16</option><option>C/v14</option></select></label>
+    <label><span>币种</span><input name="symbols" value="BTCUSDT" maxlength="260"></label>
+    <label><span>分时</span><select name="interval"><option>15m</option><option>30m</option><option selected>1h</option><option>4h</option></select></label>
+    <label><span>周期</span><select name="period_days"><option value="90">90天</option><option value="180">180天</option><option value="365" selected>365天</option></select></label>
+    <label><span>方向</span><select name="direction"><option value="strategy_default" selected>策略默认</option><option value="long">只多</option><option value="short">只空</option><option value="both">多空</option></select></label>
+    <label><span>本金</span><input name="capital_usdt" value="10000" inputmode="decimal"></label>
+    <label><span>手续费 bps</span><input name="fee_bps" value="4" inputmode="decimal"></label>
+    <label><span>滑点 bps</span><input name="slippage_bps" value="0" inputmode="decimal"></label>
+    <label class="wide"><span>参数 JSON</span><textarea name="params" rows="3">{{}}</textarea></label>
+    <div class="backtest-actions">
+      <button class="icon-btn" type="submit">创建回测任务</button>
+      <span id="backtestStatus" class="refresh-status">反拟合门控启用；结果只做研究建议，不自动改策略。</span>
+    </div>
+  </form>
+  <div class="backtest-results">
+    <h3>最近回测任务</h3>
+    {latest_html}
+  </div>
+</div>
+""".strip()
+
+
+def render_history_or_backtest_panel(state: dict[str, Any]) -> str:
+    historical = state.get("historical_kline") if isinstance(state.get("historical_kline"), dict) else {}
+    if historical_kline_complete(historical):
+        title = "历史回测模块"
+        body = render_backtest_module(state)
+    else:
+        title = "历史数据拉取进度"
+        body = render_historical_kline_progress(state)
+    return f"""
+  <section class="panel" id="backtest">
+    <h2>{h(title)}</h2>
+    {body}
+  </section>
+""".rstrip()
 
 
 def render_cleanup(state: dict[str, Any]) -> str:
@@ -1811,6 +1915,14 @@ tr:hover td {{ background:#101827; }}
 .history-grid div,.history-detail {{ border:1px solid var(--line); border-radius:8px; background:#0b1320; padding:12px; }}
 .history-grid span,.history-grid small,.history-detail span {{ display:block; color:var(--muted); }}
 .history-grid b,.history-detail b {{ display:block; color:#f7fbff; margin:3px 0; }}
+.backtest-form {{ display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px; border:1px solid var(--line); border-radius:8px; background:#0b1320; padding:12px; }}
+.backtest-form label {{ display:grid; gap:5px; color:var(--muted); font-size:12px; }}
+.backtest-form input,.backtest-form select,.backtest-form textarea {{ width:100%; border:1px solid var(--line); border-radius:8px; background:#08111d; color:var(--ink); padding:8px 9px; font:inherit; }}
+.backtest-form textarea {{ resize:vertical; min-height:78px; }}
+.backtest-form .wide {{ grid-column:span 4; }}
+.backtest-actions {{ grid-column:span 4; display:flex; flex-wrap:wrap; align-items:center; gap:10px; }}
+.backtest-results h3 {{ margin:4px 0 8px; font-size:15px; color:#f7fbff; }}
+.backtest-table {{ min-width:900px; }}
 .gate-grid {{ display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px; }}
 .gate-grid div {{ border:1px solid var(--line); border-radius:8px; background:#0b1320; padding:12px; min-height:76px; }}
 .gate-grid b {{ display:block; margin:2px 0 4px; }}
@@ -1821,7 +1933,7 @@ tr:hover td {{ background:#101827; }}
 .refresh-status {{ color:var(--muted); font-size:12px; }}
 .refresh-countdown {{ display:inline-flex; align-items:center; gap:6px; border:1px solid var(--line); border-radius:8px; padding:7px 10px; color:#dbe7f6; background:#0b1320; font-weight:800; }}
 @media (max-width: 1320px) {{ .metrics,.cards {{ grid-template-columns:repeat(2, minmax(0, 1fr)); }} .app-shell {{ grid-template-columns:1fr; }} .side-rail {{ position:relative; height:auto; display:none; }} }}
-@media (max-width: 980px) {{ .metrics,.cards,.grid,.paper-summary,.paper-cards,.gate-grid,.history-grid,.position-detail-grid {{ grid-template-columns:1fr; }} header {{ grid-template-columns:1fr; }} .wrap {{ padding:18px; }} }}
+@media (max-width: 980px) {{ .metrics,.cards,.grid,.paper-summary,.paper-cards,.gate-grid,.history-grid,.position-detail-grid,.backtest-form {{ grid-template-columns:1fr; }} .backtest-form .wide,.backtest-actions {{ grid-column:span 1; }} header {{ grid-template-columns:1fr; }} .wrap {{ padding:18px; }} }}
 </style>
 </head>
 <body>
@@ -1832,7 +1944,7 @@ tr:hover td {{ background:#101827; }}
     <a class="active" href="#overview">总览</a>
     <a href="#paper">模拟账本</a>
     <a href="#movers">涨跌榜</a>
-    <a href="#history">历史数据</a>
+    <a href="#backtest">历史回测</a>
     <a href="#strategies">三策略</a>
     <a href="#actions">确认事项</a>
   </nav>
@@ -1856,10 +1968,7 @@ tr:hover td {{ background:#101827; }}
     <h2>今日重点</h2>
     <div class="cards">{render_cards(state)}</div>
   </section>
-  <section class="panel" id="history">
-    <h2>历史数据拉取进度</h2>
-    {render_historical_kline_progress(state)}
-  </section>
+{render_history_or_backtest_panel(state)}
   <section class="panel" id="paper">
     <h2>三策略模拟账本运行总览</h2>
     {render_paper_exchange(state)}
@@ -1902,7 +2011,8 @@ tr:hover td {{ background:#101827; }}
           <a href="/reports/long_term_skeleton_latest.md">长期目标骨架</a>
           <a href="/reports/strategy_evolution_latest.html">策略进化</a>
           <a href="/reports/research_store_summary_latest.md">研究仓</a>
-          <a href="/reports/historical_kline_backfill_latest.md">历史K线进度</a>
+          <a href="/reports/backtest_module_latest.md">历史回测模块</a>
+          <a href="/api/backtest/status">回测状态 API</a>
           <a href="/api/attention">确认事项 API</a>
         </div>
       </section>
@@ -1987,6 +2097,61 @@ async function refreshReport(btn) {{
     if (btn) {{
       btn.disabled = false;
       btn.textContent = '刷新报表';
+    }}
+  }}
+}}
+async function submitBacktestJob(evt) {{
+  evt.preventDefault();
+  const form = evt.target;
+  const status = document.getElementById('backtestStatus');
+  const btn = form.querySelector('button[type="submit"]');
+  if (btn) {{
+    btn.disabled = true;
+    btn.textContent = '创建中';
+  }}
+  if (status) status.textContent = '正在创建回测任务；只写任务台账，不下单。';
+  const fd = new FormData(form);
+  let params = {{}};
+  const rawParams = String(fd.get('params') || '').trim();
+  if (rawParams) {{
+    try {{
+      params = JSON.parse(rawParams);
+    }} catch (err) {{
+      if (status) status.textContent = '参数 JSON 无效，任务未提交。';
+      if (btn) {{
+        btn.disabled = false;
+        btn.textContent = '创建回测任务';
+      }}
+      return;
+    }}
+  }}
+  const payload = {{
+    user: 'decision_portal',
+    strategy: fd.get('strategy'),
+    symbols: fd.get('symbols'),
+    interval: fd.get('interval'),
+    period_days: fd.get('period_days'),
+    direction: fd.get('direction'),
+    capital_usdt: fd.get('capital_usdt'),
+    fee_bps: fd.get('fee_bps'),
+    slippage_bps: fd.get('slippage_bps'),
+    params: params
+  }};
+  try {{
+    const resp = await fetch('/api/backtest/jobs', {{
+      method: 'POST',
+      headers: {{'Content-Type': 'application/json'}},
+      body: JSON.stringify(payload)
+    }});
+    const data = await resp.json();
+    if (!data.ok) throw new Error((data.errors || [data.error || '创建失败']).join('；'));
+    if (status) status.textContent = '任务已创建：' + data.job_id + '。当前为 replay 接入前的审计任务，不生成假收益。';
+    setTimeout(() => window.location.reload(), 3000);
+  }} catch (err) {{
+    if (status) status.textContent = '创建失败：' + (err.message || err);
+    if (btn) {{
+      btn.disabled = false;
+      btn.textContent = '创建回测任务';
     }}
   }}
 }}

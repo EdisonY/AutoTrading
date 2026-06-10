@@ -50,6 +50,7 @@ MAIN_FILES = [
     ("reports/research_kline_backfill_latest.md", "reports/research_kline_backfill_latest.md", False),
     ("reports/historical_kline_backfill_latest.md", "reports/historical_kline_backfill_latest.md", False),
     ("reports/historical_kline_incremental_latest.md", "reports/historical_kline_incremental_latest.md", False),
+    ("reports/backtest_module_latest.md", "reports/backtest_module_latest.md", False),
     ("reports/research_depth_backfill_latest.md", "reports/research_depth_backfill_latest.md", False),
     ("reports/external_replay_data_ingest_latest.md", "reports/external_replay_data_ingest_latest.md", False),
     ("reports/research_store_retention_latest.md", "reports/research_store_retention_latest.md", False),
@@ -86,6 +87,7 @@ MAIN_FILES = [
     ("runtime/research_kline_backfill_latest.json", "runtime/research_kline_backfill_latest.json", False),
     ("runtime/historical_kline_backfill_latest.json", "runtime/historical_kline_backfill_latest.json", False),
     ("runtime/historical_kline_incremental_latest.json", "runtime/historical_kline_incremental_latest.json", False),
+    ("runtime/backtest_module_latest.json", "runtime/backtest_module_latest.json", False),
     ("runtime/research_depth_backfill_latest.json", "runtime/research_depth_backfill_latest.json", False),
     ("runtime/external_replay_data_ingest_latest.json", "runtime/external_replay_data_ingest_latest.json", False),
     ("runtime/research_store_retention_latest.json", "runtime/research_store_retention_latest.json", False),
@@ -209,6 +211,7 @@ candidate_governance = read_json(root / "runtime" / "strategy_candidate_governan
 waiting_progress = read_json(root / "runtime" / "waiting_period_progress_latest.json")
 historical_kline = read_json(root / "runtime" / "historical_kline_backfill_latest.json")
 historical_kline_incremental = read_json(root / "runtime" / "historical_kline_incremental_latest.json")
+backtest_module = read_json(root / "runtime" / "backtest_module_latest.json")
 services = {
     name: unit_state(name)
     for name in (
@@ -312,6 +315,21 @@ print(json.dumps({
         "progress": historical_kline_incremental.get("progress", {}),
         "quality": historical_kline_incremental.get("quality", {}),
         "universe_size": len((historical_kline_incremental.get("universe") or {}).get("symbols") or []),
+    },
+    "backtest_module_summary": {
+        "status": backtest_module.get("status"),
+        "module": backtest_module.get("module"),
+        "frontend_callable": backtest_module.get("frontend_callable"),
+        "compute_node": backtest_module.get("compute_node"),
+        "storage_policy": backtest_module.get("storage_policy"),
+        "historical_baseline": backtest_module.get("historical_baseline", {}),
+        "capabilities": backtest_module.get("capabilities", {}),
+        "anti_overfit": backtest_module.get("anti_overfit", {}),
+        "latest_job": {
+            "job_id": (backtest_module.get("latest_job") or {}).get("job_id"),
+            "status": (backtest_module.get("latest_job") or {}).get("status"),
+            "execution_state": (backtest_module.get("latest_job") or {}).get("execution_state"),
+        } if isinstance(backtest_module.get("latest_job"), dict) else {},
     },
 }, ensure_ascii=False))
 """
@@ -602,6 +620,7 @@ def main(argv: list[str] | None = None) -> int:
                 "waiting_period_progress": live.get("waiting_period_progress_summary"),
                 "historical_kline_backfill": live.get("historical_kline_backfill_summary"),
                 "historical_kline_incremental": live.get("historical_kline_incremental_summary"),
+                "backtest_module": live.get("backtest_module_summary"),
                 "output": str(ROOT / "runtime" / "live_context_summary_latest.json"),
             },
             ensure_ascii=False,

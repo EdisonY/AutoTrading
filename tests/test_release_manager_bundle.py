@@ -48,6 +48,17 @@ class ReleaseManagerBundleTests(unittest.TestCase):
                 self.assertIn("waiting_period_progress.py", remotes)
                 self.assertIn("research_memory/approvals/auto_upgrade_policy.json", remotes)
 
+    def test_backtest_module_is_in_research_and_shadow_bundles(self):
+        for component in ("research", "all"):
+            with self.subTest(target="tencent", component=component):
+                remotes = {remote for _local, remote in self.tool.TENCENT_COMPONENTS[component]["files"]}
+                self.assertIn("backtest_module.py", remotes)
+
+        for component in ("shadow", "all"):
+            with self.subTest(target="aliyun", component=component):
+                remotes = {remote for _local, remote in self.tool.ALIYUN_COMPONENTS[component]["files"]}
+                self.assertIn("backtest_module.py", remotes)
+
     def test_historical_kline_backfill_is_tencent_research_only(self):
         for component in ("research", "all"):
             with self.subTest(target="tencent", component=component):

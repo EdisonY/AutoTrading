@@ -36,7 +36,9 @@ class AttentionApiServerTests(unittest.TestCase):
         self.old_json = self.tool.ATTENTION_JSON
         self.old_reports = self.tool.REPORTS_DIR
         self.old_refresh_script = self.tool.REPORT_REFRESH_SCRIPT
+        self.old_root = self.tool.ROOT
         self.old_refresh_state = dict(self.tool._refresh_state)
+        self.tool.ROOT = self.root
         self.tool.EVENT_STORE_DB = self.db
         self.tool.ATTENTION_JSON = self.attention_json
         self.tool.REPORTS_DIR = self.root / "reports"
@@ -56,6 +58,7 @@ class AttentionApiServerTests(unittest.TestCase):
         self.tool.ATTENTION_JSON = self.old_json
         self.tool.REPORTS_DIR = self.old_reports
         self.tool.REPORT_REFRESH_SCRIPT = self.old_refresh_script
+        self.tool.ROOT = self.old_root
         self.tool._refresh_state.clear()
         self.tool._refresh_state.update(self.old_refresh_state)
         self.tmp.cleanup()
@@ -249,6 +252,33 @@ class AttentionApiServerTests(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertEqual(result["action"], "already_running")
         self.assertEqual(result["safety"], "report_only_no_binance_submit")
+
+    def test_backtest_job_api_uses_report_only_ledger(self):
+        history = self.root / "runtime" / "historical_kline_backfill_latest.json"
+        history.parent.mkdir(parents=True, exist_ok=True)
+        history.write_text(
+            json.dumps(
+                {
+                    "status": "complete",
+                    "progress": {"pending_tasks": 0, "percent": 100.0, "written_rows": 1602051},
+                    "quality": {"covered_symbol_count": 26, "covered_symbol_interval_count": 104},
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+
+        result = self.tool.backtest_module.create_job(
+            {"strategy": "A/v11", "symbols": "BTCUSDT", "interval": "1h", "params": {}},
+            root=self.root,
+            user="test",
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["status"], "replay_adapter_pending")
+        self.assertFalse(result["safety"]["binance_requests_enabled"])
+        self.assertFalse(result["safety"]["paper_or_real_orders"])
+        self.assertTrue((self.root / "runtime" / "backtest_module_latest.json").exists())
 
 
 if __name__ == "__main__":

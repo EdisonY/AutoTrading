@@ -53,6 +53,10 @@ HISTORICAL_INCREMENTAL_JSON = ROOT / "runtime" / "historical_kline_incremental_l
 HISTORICAL_INCREMENTAL_MD = REPORTS_DIR / "historical_kline_incremental_latest.md"
 MIRROR_HISTORICAL_INCREMENTAL_JSON = SERVER_MIRROR_DIR / "runtime" / "historical_kline_incremental_latest.json"
 MIRROR_HISTORICAL_INCREMENTAL_MD = SERVER_MIRROR_DIR / "reports" / "historical_kline_incremental_latest.md"
+BACKTEST_MODULE_JSON = ROOT / "runtime" / "backtest_module_latest.json"
+BACKTEST_MODULE_MD = REPORTS_DIR / "backtest_module_latest.md"
+MIRROR_BACKTEST_MODULE_JSON = SERVER_MIRROR_DIR / "runtime" / "backtest_module_latest.json"
+MIRROR_BACKTEST_MODULE_MD = SERVER_MIRROR_DIR / "reports" / "backtest_module_latest.md"
 DEPTH_BACKFILL_JSON = ROOT / "runtime" / "research_depth_backfill_latest.json"
 DEPTH_BACKFILL_MD = REPORTS_DIR / "research_depth_backfill_latest.md"
 RESEARCH_RETENTION_JSON = ROOT / "runtime" / "research_store_retention_latest.json"
@@ -804,6 +808,62 @@ def historical_kline_backfill_summary(
         "quality": payload.get("quality") if isinstance(payload.get("quality"), dict) else {},
         "last_task": payload.get("last_task") if isinstance(payload.get("last_task"), dict) else {},
         "errors": payload.get("errors") if isinstance(payload.get("errors"), list) else [],
+    }
+
+
+def historical_baseline_complete(summary: dict[str, Any]) -> bool:
+    progress = summary.get("progress") if isinstance(summary.get("progress"), dict) else {}
+    return str(summary.get("status") or "") == "complete" and int(progress.get("pending_tasks") or 0) == 0
+
+
+def backtest_module_summary(*paths: Path | None) -> dict[str, Any]:
+    empty = {
+        "available": False,
+        "path": BACKTEST_MODULE_MD,
+        "age": "无历史回测模块状态",
+        "fresh": False,
+        "status": "missing",
+        "frontend_callable": False,
+        "historical_baseline": {},
+        "capabilities": {},
+        "anti_overfit": {},
+        "latest_job": {},
+    }
+    candidates: list[tuple[float, dict[str, Any], Path]] = []
+    for path in paths:
+        if not path:
+            continue
+        payload = read_json(path)
+        if not isinstance(payload, dict):
+            continue
+        try:
+            mtime = path.stat().st_mtime
+        except Exception:
+            mtime = 0.0
+        candidates.append((mtime, payload, path))
+    if not candidates:
+        return empty
+    candidates.sort(key=lambda item: item[0], reverse=True)
+    _mtime, payload, source_path = candidates[0]
+    generated_at = parse_dt(payload.get("generated_at"))
+    report_path = BACKTEST_MODULE_MD
+    if source_path == MIRROR_BACKTEST_MODULE_JSON and MIRROR_BACKTEST_MODULE_MD.exists():
+        report_path = MIRROR_BACKTEST_MODULE_MD
+    return {
+        "available": True,
+        "path": report_path,
+        "age": age_text(generated_at),
+        "fresh": bool(generated_at and (datetime.now(CST) - generated_at).total_seconds() < 4 * 3600),
+        "status": payload.get("status") or "unknown",
+        "module": payload.get("module") or "historical_backtest",
+        "frontend_callable": bool(payload.get("frontend_callable")),
+        "compute_node": payload.get("compute_node") or "tencent_planned",
+        "storage_policy": payload.get("storage_policy") or "",
+        "historical_baseline": payload.get("historical_baseline") if isinstance(payload.get("historical_baseline"), dict) else {},
+        "capabilities": payload.get("capabilities") if isinstance(payload.get("capabilities"), dict) else {},
+        "anti_overfit": payload.get("anti_overfit") if isinstance(payload.get("anti_overfit"), dict) else {},
+        "latest_job": payload.get("latest_job") if isinstance(payload.get("latest_job"), dict) else {},
+        "next_steps": payload.get("next_steps") if isinstance(payload.get("next_steps"), list) else [],
     }
 
 
@@ -2189,6 +2249,12 @@ def function_status_cards(data: dict[str, Any]) -> list[dict[str, str]]:
     historical_incremental = data.get("historical_kline_incremental") or {}
     historical_incremental_progress = historical_incremental.get("progress") or {}
     historical_incremental_config = historical_incremental.get("config") or {}
+    historical_done = historical_baseline_complete(historical_kline)
+    backtest_module = data.get("backtest_module") or {}
+    backtest_caps = backtest_module.get("capabilities") or {}
+    backtest_hist = backtest_module.get("historical_baseline") or {}
+    backtest_latest = backtest_module.get("latest_job") or {}
+    backtest_latest_result = backtest_latest.get("result") if isinstance(backtest_latest.get("result"), dict) else {}
     depth_backfill = data.get("depth_backfill") or {}
     depth_backfill_plan = (depth_backfill.get("plan") or {}).get("summary") or {}
     depth_backfill_submit = depth_backfill.get("submit") or {}
@@ -2415,33 +2481,49 @@ def function_status_cards(data: dict[str, Any]) -> list[dict[str, str]]:
                 else "K线长历史补数计划尚未生成；30日覆盖缺口只能先从现有 research_store 判断。"
             ),
         },
-        {
-            "level": (
-                "ok"
-                if historical_kline.get("fresh") and historical_kline.get("status") in {"complete", "planned"}
-                else "warn"
-                if historical_kline.get("available")
-                else "warn"
-            ),
-            "name": "Top30一年历史K线",
-            "value": (
-                f"{float(historical_progress.get('percent') or 0):.1f}%"
-                if historical_kline.get("available")
-                else "未生成"
-            ),
-            "body": (
-                f"状态 {historical_kline.get('status', '-')}; "
-                f"{int(historical_progress.get('completed_requests') or 0)}/{int(historical_progress.get('total_tasks') or 0)} 请求；"
-                f"已写 {int(historical_progress.get('written_rows') or 0)} 行；"
-                f"覆盖 {int(historical_quality.get('covered_symbol_count') or 0)}/{int(historical_quality.get('target_symbol_count') or 0)} 币、"
-                f"{int(historical_quality.get('covered_symbol_interval_count') or 0)}/{int(historical_quality.get('target_symbol_interval_count') or 0)} 币种周期；"
-                f"限速 {historical_config.get('max_rps', '-')} req/s；"
-                f"live影响 {historical_kline.get('live_scanner_impact', 'none')}；"
-                f"私有/下单请求 {historical_kline.get('binance_requests_enabled')}。"
-                if historical_kline.get("available")
-                else "Top30一年历史K线进度尚未生成；首页刷新只读进度文件，不打历史API。"
-            ),
-        },
+        (
+            {
+                "level": "ok" if backtest_module.get("fresh") or backtest_module.get("available") else "warn",
+                "name": "历史回测模块",
+                "value": str(backtest_module.get("status") or "phase1_job_api_ready"),
+                "body": (
+                    f"历史基线完成；覆盖 {int(backtest_hist.get('covered_symbol_count') or historical_quality.get('covered_symbol_count') or 0)}/"
+                    f"{int(backtest_hist.get('target_symbol_count') or historical_quality.get('target_symbol_count') or 0)} 币、"
+                    f"{int(backtest_hist.get('covered_symbol_interval_count') or historical_quality.get('covered_symbol_interval_count') or 0)}/"
+                    f"{int(backtest_hist.get('target_symbol_interval_count') or historical_quality.get('target_symbol_interval_count') or 0)} 币种周期。"
+                    f"前端任务API {backtest_caps.get('job_submit_api', False)}；反拟合门控 {backtest_caps.get('anti_overfit_gate', False)}；"
+                    f"replay/PnL {backtest_caps.get('strategy_replay_adapter', False)}，不生成假收益。"
+                ),
+            }
+            if historical_done
+            else {
+                "level": (
+                    "ok"
+                    if historical_kline.get("fresh") and historical_kline.get("status") in {"complete", "planned"}
+                    else "warn"
+                    if historical_kline.get("available")
+                    else "warn"
+                ),
+                "name": "Top30一年历史K线",
+                "value": (
+                    f"{float(historical_progress.get('percent') or 0):.1f}%"
+                    if historical_kline.get("available")
+                    else "未生成"
+                ),
+                "body": (
+                    f"状态 {historical_kline.get('status', '-')}; "
+                    f"{int(historical_progress.get('completed_requests') or 0)}/{int(historical_progress.get('total_tasks') or 0)} 请求；"
+                    f"已写 {int(historical_progress.get('written_rows') or 0)} 行；"
+                    f"覆盖 {int(historical_quality.get('covered_symbol_count') or 0)}/{int(historical_quality.get('target_symbol_count') or 0)} 币、"
+                    f"{int(historical_quality.get('covered_symbol_interval_count') or 0)}/{int(historical_quality.get('target_symbol_interval_count') or 0)} 币种周期；"
+                    f"限速 {historical_config.get('max_rps', '-')} req/s；"
+                    f"live影响 {historical_kline.get('live_scanner_impact', 'none')}；"
+                    f"私有/下单请求 {historical_kline.get('binance_requests_enabled')}。"
+                    if historical_kline.get("available")
+                    else "Top30一年历史K线进度尚未生成；首页刷新只读进度文件，不打历史API。"
+                ),
+            }
+        ),
         {
             "level": "ok" if historical_incremental.get("fresh") and historical_incremental.get("available") else "warn",
             "name": "每日历史增量",
@@ -3366,6 +3448,9 @@ def build_data() -> dict[str, Any]:
     )
     data["historical_kline_incremental"] = historical_incremental_summary
     data["historical_kline_incremental_html"] = historical_incremental_summary.get("path") or HISTORICAL_INCREMENTAL_MD
+    backtest_summary = backtest_module_summary(BACKTEST_MODULE_JSON, MIRROR_BACKTEST_MODULE_JSON)
+    data["backtest_module"] = backtest_summary
+    data["backtest_module_html"] = backtest_summary.get("path") or BACKTEST_MODULE_MD
     data["depth_backfill"] = depth_backfill_summary(DEPTH_BACKFILL_JSON)
     data["depth_backfill_html"] = DEPTH_BACKFILL_MD
     data["research_retention"] = research_retention_summary(RESEARCH_RETENTION_JSON)
@@ -3458,6 +3543,7 @@ def render_html(out_dir: Path) -> str:
     account_positions = int(realtime_account.get("open_positions") or 0)
     paper_upnl = float(paper_exchange.get("total_unrealized_pnl") or 0)
     paper_positions = int(paper_exchange.get("open_positions") or 0)
+    historical_done = historical_baseline_complete(data.get("historical_kline_backfill") or {})
     attention = data.get("attention") or {}
     attention_summary_data = attention.get("summary") or {}
     attention_counts = attention_summary_data.get("counts") or {}
@@ -4431,13 +4517,24 @@ def render_html(out_dir: Path) -> str:
             "看补数计划",
             "slate",
         ),
-        route_card(
-            "Top30一年历史K线",
-            "离线拉取进度",
-            "看市值Top30一年期K线回填进度、覆盖质量、供应商/上市缺口和最近任务。首页刷新只读进度文件，不会打历史API或影响三策略扫描。",
-            data["historical_kline_backfill_html"],
-            "看历史K线进度",
-            "blue",
+        (
+            route_card(
+                "历史回测模块",
+                "前端发起回测",
+                "看 A/B/C 策略、币种、分时、参数任务入口状态；当前只接 job/spec/参数审计，replay 未接前不显示假收益。",
+                data["backtest_module_html"],
+                "看历史回测模块",
+                "blue",
+            )
+            if historical_done
+            else route_card(
+                "Top30一年历史K线",
+                "离线拉取进度",
+                "看市值Top30一年期K线回填进度、覆盖质量、供应商/上市缺口和最近任务。首页刷新只读进度文件，不会打历史API或影响三策略扫描。",
+                data["historical_kline_backfill_html"],
+                "看历史K线进度",
+                "blue",
+            )
         ),
         route_card(
             "每日历史增量",

@@ -36,6 +36,10 @@ class ShadowSyncFromTencentTests(unittest.TestCase):
 
         self.assertEqual(cmd, "trap \"rm -rf '/tmp/autotrading_shadow_sync_123'\" EXIT")
 
+    def test_backtest_module_small_files_are_mirrored(self):
+        self.assertIn("reports/backtest_module_latest.md", self.tool.REPORT_FILES)
+        self.assertIn("runtime/backtest_module_latest.json", self.tool.REPORT_FILES)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -3,8 +3,10 @@ import json
 import sqlite3
 import sys
 import tempfile
+import threading
 import unittest
 from pathlib import Path
+from urllib.request import Request, urlopen
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -285,6 +287,45 @@ class AttentionApiServerTests(unittest.TestCase):
         self.assertTrue(jobs["full_history_retained"])
         self.assertEqual(jobs["jobs"][0]["job_id"], result["job_id"])
         self.assertEqual(jobs["jobs"][0]["engine_parity"], "research_adapter")
+
+    def test_backtest_job_delete_api_removes_job_record_only(self):
+        history = self.root / "runtime" / "historical_kline_backfill_latest.json"
+        history.parent.mkdir(parents=True, exist_ok=True)
+        history.write_text(
+            json.dumps(
+                {
+                    "status": "complete",
+                    "progress": {"pending_tasks": 0, "percent": 100.0, "written_rows": 1602051},
+                    "quality": {"covered_symbol_count": 26, "covered_symbol_interval_count": 104},
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        job = self.tool.backtest_module.create_job(
+            {"strategy": "A/v11", "symbols": "BTCUSDT", "interval": "1h", "params": {}},
+            root=self.root,
+            user="test",
+        )
+        server = self.tool.AttentionHTTPServer(("127.0.0.1", 0), self.tool.AttentionHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            port = server.server_address[1]
+            req = Request(f"http://127.0.0.1:{port}/api/backtest/job?id={job['job_id']}", method="DELETE")
+            with urlopen(req, timeout=10) as resp:
+                payload = json.loads(resp.read().decode("utf-8"))
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
+
+        self.assertTrue(payload["ok"])
+        self.assertTrue(payload["deleted"])
+        self.assertEqual(payload["job_id"], job["job_id"])
+        self.assertTrue(payload["safety"]["deleted_only_job_file"])
+        self.assertFalse(payload["safety"]["deleted_historical_warehouse"])
+        self.assertFalse((self.root / "runtime" / "backtest_jobs" / f"{job['job_id']}.json").exists())
 
 
 if __name__ == "__main__":

@@ -426,6 +426,11 @@ class DecisionPortalTests(unittest.TestCase):
         self.assertIn("权益 / PnL 曲线", html)
         self.assertIn("详细开平仓记录", html)
         self.assertIn("take_profit", html)
+        self.assertIn('class="backtest-history-collapse"', html)
+        self.assertIn("<details", html)
+        self.assertIn("历史任务列表（1）", html)
+        self.assertIn("deleteBacktestJob", html)
+        self.assertIn("删除只删", html)
         self.assertIn("历史任务不是只保留一个", html)
         self.assertIn("可调参数", html)
         self.assertIn("entry_threshold", html)
@@ -436,6 +441,10 @@ class DecisionPortalTests(unittest.TestCase):
 
         self.assertIn("submitBacktestJob", html)
         self.assertIn("/api/backtest/jobs", html)
+        self.assertIn("estimateBacktestRuntime", html)
+        self.assertIn("已耗时", html)
+        self.assertIn("不显示假进度", html)
+        self.assertIn("/api/backtest/job?id=", html)
 
     def test_strategy_detail_shows_position_pnl_and_fee_without_funding(self):
         account = {

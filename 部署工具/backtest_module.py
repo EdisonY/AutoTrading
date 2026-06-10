@@ -57,6 +57,7 @@ ALLOWED_INTERVALS = {"15m", "30m", "1h", "4h"}
 ALLOWED_DIRECTIONS = {"long", "short", "both", "strategy_default"}
 SYMBOL_RE = re.compile(r"^[A-Z0-9]{2,30}USDT$")
 PARAM_RE = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
+JOB_ID_RE = re.compile(r"^bt-\d{8}-\d{6}-[A-Fa-f0-9]{10}$")
 MAX_SYMBOLS_PER_JOB = 30
 MAX_TUNED_PARAMETERS = 3
 MAX_PARAMETER_VARIANTS = 24
@@ -448,6 +449,11 @@ def job_id_for(spec: dict[str, Any], created_at: str) -> str:
     return f"bt-{stamp}-{digest}"
 
 
+def normalize_job_id(job_id: Any) -> str:
+    safe = str(job_id or "").strip()
+    return safe if JOB_ID_RE.fullmatch(safe) else ""
+
+
 def anti_overfit_payload() -> dict[str, Any]:
     return {
         "enabled": True,
@@ -520,7 +526,11 @@ def compact_job_summary(job: dict[str, Any]) -> dict[str, Any]:
 
 def list_jobs(*, root: Path = ROOT, limit: int = 20, latest_job: dict[str, Any] | None = None) -> dict[str, Any]:
     directory = jobs_dir(root)
-    paths = sorted(directory.glob("bt-*.json"), reverse=True) if directory.exists() else []
+    paths = (
+        sorted(directory.glob("bt-*.json"), key=lambda path: (path.stat().st_mtime, path.name), reverse=True)
+        if directory.exists()
+        else []
+    )
     rows: list[dict[str, Any]] = []
     for path in paths[: max(0, limit)]:
         payload = read_json(path)
@@ -623,7 +633,12 @@ def load_latest_job(root: Path = ROOT) -> dict[str, Any]:
     latest = read_json(latest_json_path(root))
     job = latest.get("latest_job") if isinstance(latest.get("latest_job"), dict) else {}
     if job:
-        return job
+        job_id = normalize_job_id(job.get("job_id"))
+        if not job_id:
+            return job
+        persisted = read_json(jobs_dir(root) / f"{job_id}.json")
+        if persisted:
+            return persisted
     candidates = sorted(jobs_dir(root).glob("bt-*.json"), reverse=True) if jobs_dir(root).exists() else []
     for path in candidates[:1]:
         payload = read_json(path)
@@ -633,10 +648,55 @@ def load_latest_job(root: Path = ROOT) -> dict[str, Any]:
 
 
 def load_job(job_id: str, *, root: Path = ROOT) -> dict[str, Any]:
-    safe = re.sub(r"[^A-Za-z0-9_.-]", "", str(job_id or ""))
+    safe = normalize_job_id(job_id)
     if not safe:
         return {}
     return read_json(jobs_dir(root) / f"{safe}.json")
+
+
+def delete_job(job_id: str, *, root: Path = ROOT) -> dict[str, Any]:
+    safe = normalize_job_id(job_id)
+    if not safe:
+        return {
+            "ok": False,
+            "status": "rejected",
+            "error": "invalid_job_id",
+            "safety": {
+                "deleted_historical_warehouse": False,
+                "deleted_only_job_file": False,
+                "allowed_path": "runtime/backtest_jobs/bt-*.json",
+            },
+        }
+    path = jobs_dir(root) / f"{safe}.json"
+    if not path.exists() or not path.is_file():
+        return {"ok": False, "status": "not_found", "error": "job_not_found", "job_id": safe}
+    try:
+        resolved = path.resolve()
+        directory = jobs_dir(root).resolve()
+        if directory not in resolved.parents:
+            return {"ok": False, "status": "rejected", "error": "unsafe_job_path", "job_id": safe}
+    except Exception:
+        return {"ok": False, "status": "rejected", "error": "unsafe_job_path", "job_id": safe}
+
+    path.unlink()
+    latest = status_payload(root=root, latest_job=None)
+    write_json(latest_json_path(root), latest)
+    write_markdown(latest, root=root)
+    latest_job = latest.get("latest_job") if isinstance(latest.get("latest_job"), dict) else {}
+    recent = latest.get("recent_jobs") if isinstance(latest.get("recent_jobs"), dict) else {}
+    return {
+        "ok": True,
+        "status": "deleted",
+        "deleted": True,
+        "job_id": safe,
+        "remaining_jobs": int(recent.get("total_jobs") or 0),
+        "latest_job_id": latest_job.get("job_id") or "",
+        "safety": {
+            "deleted_historical_warehouse": False,
+            "deleted_only_job_file": True,
+            "allowed_path": "runtime/backtest_jobs/bt-*.json",
+        },
+    }
 
 
 def status_payload(*, root: Path = ROOT, latest_job: dict[str, Any] | None = None) -> dict[str, Any]:

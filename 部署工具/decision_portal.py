@@ -1750,25 +1750,33 @@ def render_backtest_recent_jobs(backtest: dict[str, Any]) -> str:
     for job in jobs[:20]:
         if not isinstance(job, dict):
             continue
+        job_id = str(job.get("job_id") or "-")
         rows.append(
             f"""
 <tr>
-  <td>{h(job.get('job_id') or '-')}<small>{h(job.get('created_at') or '-')}</small></td>
+  <td>{h(job_id)}<small>{h(job.get('created_at') or '-')}</small></td>
   <td>{h(job.get('strategy') or '-')} / {h(job.get('interval') or '-')}<small>{h(', '.join(job.get('symbols') or []) or '-')}</small></td>
   <td>{h(job.get('status') or '-')}<small>{h(job.get('engine_parity') or 'research_adapter')}</small></td>
   <td>{h(backtest_fmt(job.get('net_profit_usdt'), 2, signed=True))}<small>交易 {h(job.get('trades') or 0)}；回撤 {h(backtest_fmt(job.get('max_drawdown_pct'), 2))}%；PF {h(backtest_fmt(job.get('profit_factor'), 2))}</small></td>
   <td>{h(job.get('recommendation_reason') or '-')}<small>OOS {h(job.get('anti_overfit_status') or '-')}</small></td>
+  <td><button class="mini-btn danger" type="button" onclick="deleteBacktestJob('{h(job_id)}')">删除</button></td>
 </tr>
 """.strip()
         )
+    total = int(recent.get("total_jobs") or len(jobs))
+    display_limit = int(recent.get("display_limit") or 20)
     return f"""
-<div class="table-scroll">
+<details class="backtest-history-collapse">
+  <summary>历史任务列表（{h(total)}）<span>默认收起；展开后可查看最近 {h(display_limit)} 条并删除单条任务记录。</span></summary>
+  <div class="table-scroll">
   <table class="backtest-table">
-    <thead><tr><th>任务</th><th>策略/周期</th><th>状态</th><th>结果</th><th>建议</th></tr></thead>
+    <thead><tr><th>任务</th><th>策略/周期</th><th>状态</th><th>结果</th><th>建议</th><th>操作</th></tr></thead>
     <tbody>{''.join(rows)}</tbody>
   </table>
-</div>
-<p class="backtest-note">历史任务不是只保留一个：服务端保留 job 文件，首页只展示最近 {h(recent.get('display_limit') or 20)} 条；当前总数 {h(recent.get('total_jobs') or len(jobs))}。</p>
+  </div>
+  <p class="backtest-note">删除只删 `runtime/backtest_jobs` 里的任务记录，不删 Tencent 历史 K线仓。</p>
+</details>
+<p class="backtest-note">历史任务不是只保留一个：服务端保留 job 文件，首页只展示最近 {h(display_limit)} 条；当前总数 {h(total)}。</p>
 """.strip()
 
 
@@ -2067,6 +2075,13 @@ h1 {{ margin:0; font-size:30px; letter-spacing:0; font-weight:850; }}
 .position-facts b {{ display:block; margin-bottom:8px; }}
 .position-facts p {{ margin:0 0 8px; color:var(--muted); }}
 .mini-btn {{ border:1px solid var(--line); background:#101827; color:#bfe8ff; border-radius:8px; padding:6px 9px; cursor:pointer; }}
+.mini-btn.danger {{ color:#ffd0d6; border-color:rgba(255,91,110,.45); background:#25111a; }}
+.backtest-history-collapse {{ border:1px solid var(--line); border-radius:8px; background:#0b1320; padding:10px 12px; }}
+.backtest-history-collapse summary {{ cursor:pointer; color:#f7fbff; font-weight:800; list-style:none; }}
+.backtest-history-collapse summary::-webkit-details-marker {{ display:none; }}
+.backtest-history-collapse summary span {{ display:block; color:var(--muted); font-size:12px; font-weight:500; margin-top:2px; }}
+.backtest-history-collapse .table-scroll {{ margin-top:10px; }}
+.backtest-progress-line {{ color:#bfe8ff; }}
 .grid {{ display:grid; grid-template-columns:minmax(0, 1.62fr) minmax(360px, .38fr); gap:16px; align-items:start; }}
 .table-scroll {{ width:100%; overflow-x:auto; border:1px solid var(--line); border-radius:8px; background:#0a111c; }}
 table {{ width:100%; border-collapse:collapse; }}
@@ -2393,6 +2408,17 @@ function initBacktestParamControls() {{
   }});
   renderBacktestParamControls();
 }}
+function estimateBacktestRuntime(payload) {{
+  const symbols = String(payload.symbols || '').split(',').map((x) => x.trim()).filter(Boolean).length || 1;
+  const days = Number(payload.period_days || 365);
+  const interval = String(payload.interval || '1h');
+  const variants = Math.max(1, Number(payload.parameter_variants || 1));
+  const intervalFactor = interval === '15m' ? 4 : interval === '30m' ? 2 : interval === '4h' ? 0.35 : 1;
+  const load = symbols * Math.max(1, days / 90) * intervalFactor * variants;
+  if (load <= 2) return '预计几十秒内';
+  if (load <= 12) return '预计 1-3 分钟';
+  return '预计 3-8 分钟；币种多、15m、参数变体多会更慢';
+}}
 async function submitBacktestJob(evt) {{
   evt.preventDefault();
   const form = evt.target;
@@ -2402,7 +2428,6 @@ async function submitBacktestJob(evt) {{
     btn.disabled = true;
     btn.textContent = '创建中';
   }}
-  if (status) status.textContent = '正在执行研究级回测；只读历史仓，不下单。';
   const fd = new FormData(form);
   let params = {{}};
   try {{
@@ -2441,6 +2466,17 @@ async function submitBacktestJob(evt) {{
     parameter_variants: fd.get('parameter_variants'),
     params: params
   }};
+  const startedAt = Date.now();
+  const estimate = estimateBacktestRuntime(payload);
+  let progressTimer = null;
+  if (status) {{
+    status.classList.add('backtest-progress-line');
+    status.textContent = '创建中：同步执行 research adapter；' + estimate + '；已耗时 0 秒。当前没有分阶段百分比，不显示假进度。';
+    progressTimer = setInterval(() => {{
+      const elapsed = Math.floor((Date.now() - startedAt) / 1000);
+      status.textContent = '创建中：同步执行 research adapter；' + estimate + '；已耗时 ' + elapsed + ' 秒。只读历史仓，不下单。';
+    }}, 1000);
+  }}
   try {{
     const resp = await fetch('/api/backtest/jobs', {{
       method: 'POST',
@@ -2449,15 +2485,33 @@ async function submitBacktestJob(evt) {{
     }});
     const data = await resp.json();
     if (!data.ok) throw new Error((data.errors || [data.error || '创建失败']).join('；'));
+    if (progressTimer) clearInterval(progressTimer);
     const summary = (data.result && data.result.summary) || {{}};
-    if (status) status.textContent = '回测完成：' + data.job_id + '；状态 ' + data.status + '；净收益 ' + (summary.net_profit_usdt ?? '-') + '；交易 ' + (summary.trades ?? 0) + '。结果只做研究建议，不自动改策略。';
+    const elapsed = Math.floor((Date.now() - startedAt) / 1000);
+    if (status) status.textContent = '回测完成：' + data.job_id + '；耗时 ' + elapsed + ' 秒；状态 ' + data.status + '；净收益 ' + (summary.net_profit_usdt ?? '-') + '；交易 ' + (summary.trades ?? 0) + '。结果只做研究建议，不自动改策略。';
     setTimeout(() => window.location.reload(), 5000);
   }} catch (err) {{
+    if (progressTimer) clearInterval(progressTimer);
     if (status) status.textContent = '创建失败：' + (err.message || err);
     if (btn) {{
       btn.disabled = false;
       btn.textContent = '创建回测任务';
     }}
+  }}
+}}
+async function deleteBacktestJob(jobId) {{
+  if (!jobId || jobId === '-') return;
+  if (!confirm('删除这条回测任务记录？只删除任务 JSON，不删除历史K线仓。')) return;
+  const status = document.getElementById('backtestStatus');
+  if (status) status.textContent = '正在删除回测任务记录：' + jobId;
+  try {{
+    const resp = await fetch('/api/backtest/job?id=' + encodeURIComponent(jobId), {{method: 'DELETE'}});
+    const data = await resp.json();
+    if (!data.ok) throw new Error(data.error || '删除失败');
+    if (status) status.textContent = '已删除：' + jobId + '；剩余任务 ' + (data.remaining_jobs ?? '-') + '。历史K线仓未删除。';
+    setTimeout(() => window.location.reload(), 800);
+  }} catch (err) {{
+    if (status) status.textContent = '删除失败：' + (err.message || err);
   }}
 }}
 function showPaperStrategy(name) {{

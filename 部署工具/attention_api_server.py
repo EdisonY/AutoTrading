@@ -12,6 +12,7 @@ Endpoints:
   GET  /api/backtest/job     - Read a backtest job by id
   GET  /api/backtest/jobs    - List retained backtest job summaries
   POST /api/backtest/jobs    - Create an audited backtest job
+  DELETE /api/backtest/job   - Delete one retained backtest job record
   GET  /api/report/refresh   - Read safe report-refresh status
   POST /api/report/refresh   - Start safe report-only refresh
   GET  /api/health           - Health check
@@ -595,11 +596,25 @@ class AttentionHandler(BaseHTTPRequestHandler):
         else:
             self._json_response({"error": "Not found"}, 404)
 
+    def do_DELETE(self):
+        parsed = urlparse(self.path)
+        if parsed.path == "/api/backtest/job":
+            job_id = (parse_qs(parsed.query).get("id") or [""])[0]
+            result = backtest_module.delete_job(job_id, root=ROOT)
+            if result.get("ok"):
+                self._json_response(result)
+            elif result.get("error") == "job_not_found":
+                self._json_response(result, 404)
+            else:
+                self._json_response(result, 400)
+            return
+        self._json_response({"error": "Not found"}, 404)
+
     def _json_response(self, data: dict, status: int = 200):
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
         self.end_headers()
         self.wfile.write(json.dumps(data, ensure_ascii=False, default=str).encode("utf-8"))
@@ -626,7 +641,7 @@ class AttentionHandler(BaseHTTPRequestHandler):
     def do_OPTIONS(self):
         self.send_response(204)
         self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
         self.end_headers()
 

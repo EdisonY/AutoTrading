@@ -154,6 +154,31 @@ class BacktestModuleTests(unittest.TestCase):
             self.assertEqual(jobs["jobs"][0]["job_id"], second["job_id"])
             self.assertEqual(jobs["jobs"][1]["job_id"], first["job_id"])
 
+    def test_delete_job_removes_only_job_file_and_refreshes_latest(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write_complete_history(root)
+
+            first = self.tool.create_job({"strategy": "A/v11", "symbols": "BTCUSDT", "interval": "1h"}, root=root, user="test")
+            second = self.tool.create_job({"strategy": "B/v16", "symbols": "ETHUSDT", "interval": "1h"}, root=root, user="test")
+
+            result = self.tool.delete_job(second["job_id"], root=root)
+
+            self.assertTrue(result["ok"])
+            self.assertTrue(result["deleted"])
+            self.assertEqual(result["latest_job_id"], first["job_id"])
+            self.assertEqual(result["remaining_jobs"], 1)
+            self.assertTrue(result["safety"]["deleted_only_job_file"])
+            self.assertFalse(result["safety"]["deleted_historical_warehouse"])
+            self.assertFalse((root / "runtime" / "backtest_jobs" / f"{second['job_id']}.json").exists())
+            self.assertTrue((root / "runtime" / "backtest_jobs" / f"{first['job_id']}.json").exists())
+            latest = json.loads((root / "runtime" / "backtest_module_latest.json").read_text(encoding="utf-8"))
+            self.assertEqual(latest["latest_job"]["job_id"], first["job_id"])
+
+            invalid = self.tool.delete_job("../runtime/event_store.sqlite3", root=root)
+            self.assertFalse(invalid["ok"])
+            self.assertEqual(invalid["error"], "invalid_job_id")
+
     def test_valid_job_runs_research_adapter_with_numeric_metrics(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

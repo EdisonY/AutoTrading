@@ -5,6 +5,7 @@ import tempfile
 import unittest
 from datetime import datetime, timedelta
 from pathlib import Path
+from pathlib import PurePosixPath
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -207,6 +208,8 @@ class BacktestModuleTests(unittest.TestCase):
                 self.tool.os.environ.pop("BACKTEST_DISABLE_REMOTE_DELEGATE", None)
                 self.assertTrue(self.tool.should_delegate_to_tencent(root))
                 self.write_synthetic_kline_store(root)
+                self.assertTrue(self.tool.should_delegate_to_tencent(root))
+                self.tool.os.environ.pop("BACKTEST_REMOTE_DELEGATE", None)
                 self.assertFalse(self.tool.should_delegate_to_tencent(root))
             finally:
                 if old_remote is None:
@@ -217,6 +220,23 @@ class BacktestModuleTests(unittest.TestCase):
                     self.tool.os.environ.pop("BACKTEST_DISABLE_REMOTE_DELEGATE", None)
                 else:
                     self.tool.os.environ["BACKTEST_DISABLE_REMOTE_DELEGATE"] = old_disable
+
+    def test_aliyun_shadow_root_always_delegates_even_if_residual_store_exists(self):
+        old_remote = self.tool.os.environ.get("BACKTEST_REMOTE_DELEGATE")
+        old_disable = self.tool.os.environ.get("BACKTEST_DISABLE_REMOTE_DELEGATE")
+        try:
+            self.tool.os.environ.pop("BACKTEST_REMOTE_DELEGATE", None)
+            self.tool.os.environ.pop("BACKTEST_DISABLE_REMOTE_DELEGATE", None)
+            self.assertTrue(self.tool.should_delegate_to_tencent(PurePosixPath("/opt/crypto-shadow-lab")))
+        finally:
+            if old_remote is None:
+                self.tool.os.environ.pop("BACKTEST_REMOTE_DELEGATE", None)
+            else:
+                self.tool.os.environ["BACKTEST_REMOTE_DELEGATE"] = old_remote
+            if old_disable is None:
+                self.tool.os.environ.pop("BACKTEST_DISABLE_REMOTE_DELEGATE", None)
+            else:
+                self.tool.os.environ["BACKTEST_DISABLE_REMOTE_DELEGATE"] = old_disable
 
 
 if __name__ == "__main__":

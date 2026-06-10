@@ -829,22 +829,24 @@ def backtest_module_summary(*paths: Path | None) -> dict[str, Any]:
         "anti_overfit": {},
         "latest_job": {},
     }
-    candidates: list[tuple[float, dict[str, Any], Path]] = []
+    candidates: list[tuple[float, float, dict[str, Any], Path]] = []
     for path in paths:
         if not path:
             continue
         payload = read_json(path)
         if not isinstance(payload, dict):
             continue
+        generated_at = parse_dt(payload.get("generated_at"))
+        generated_ts = generated_at.timestamp() if generated_at else 0.0
         try:
             mtime = path.stat().st_mtime
         except Exception:
             mtime = 0.0
-        candidates.append((mtime, payload, path))
+        candidates.append((generated_ts, mtime, payload, path))
     if not candidates:
         return empty
-    candidates.sort(key=lambda item: item[0], reverse=True)
-    _mtime, payload, source_path = candidates[0]
+    candidates.sort(key=lambda item: (item[0], item[1]), reverse=True)
+    _generated_ts, _mtime, payload, source_path = candidates[0]
     generated_at = parse_dt(payload.get("generated_at"))
     report_path = BACKTEST_MODULE_MD
     if source_path == MIRROR_BACKTEST_MODULE_JSON and MIRROR_BACKTEST_MODULE_MD.exists():

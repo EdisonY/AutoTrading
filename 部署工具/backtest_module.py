@@ -144,8 +144,6 @@ def local_historical_store_available(root: Path = ROOT) -> bool:
 def should_delegate_to_tencent(root: Path = ROOT) -> bool:
     if os.environ.get("BACKTEST_DISABLE_REMOTE_DELEGATE", "").strip() in {"1", "true", "TRUE"}:
         return False
-    if local_historical_store_available(root):
-        return False
     if os.environ.get("BACKTEST_REMOTE_DELEGATE", "").strip() in {"1", "true", "TRUE"}:
         return True
     return str(root).rstrip("/") == "/opt/crypto-shadow-lab"

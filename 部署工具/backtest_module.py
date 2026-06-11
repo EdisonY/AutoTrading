@@ -202,6 +202,31 @@ def should_delegate_to_tencent(root: Path = ROOT) -> bool:
     return str(root).rstrip("/") == "/opt/crypto-shadow-lab"
 
 
+def execution_policy(root: Path = ROOT) -> dict[str, Any]:
+    store_path = root / "research_store" / "historical_klines"
+    local_store = local_historical_store_available(root)
+    delegated = should_delegate_to_tencent(root)
+    if delegated:
+        compute_node = "delegated_to_tencent_read_only"
+        storage_policy = "shadow_without_authoritative_local_warehouse_delegates_to_tencent"
+    elif local_store:
+        compute_node = "local_historical_warehouse_read_only"
+        storage_policy = "heavy_historical_backtests_use_local_historical_warehouse"
+    else:
+        compute_node = "local_read_only_waiting_for_historical_warehouse"
+        storage_policy = "local_historical_warehouse_missing_or_not_refreshed"
+    return {
+        "policy": "heavy_historical_backtests_must_use_local_store_when_available",
+        "compute_node": compute_node,
+        "storage_policy": storage_policy,
+        "local_store_path": str(store_path),
+        "local_store_available": local_store,
+        "remote_delegate_enabled": delegated,
+        "remote_delegate_override_env": "BACKTEST_REMOTE_DELEGATE",
+        "remote_delegate_disable_env": "BACKTEST_DISABLE_REMOTE_DELEGATE",
+    }
+
+
 def mirrored_status_payload(root: Path = ROOT) -> dict[str, Any]:
     if not should_delegate_to_tencent(root):
         return {}
@@ -740,13 +765,15 @@ def status_payload(*, root: Path = ROOT, latest_job: dict[str, Any] | None = Non
     hist_progress = hist.get("progress") if isinstance(hist.get("progress"), dict) else {}
     hist_quality = hist.get("quality") if isinstance(hist.get("quality"), dict) else {}
     job = latest_job if isinstance(latest_job, dict) else load_latest_job(root)
+    policy = execution_policy(root)
     status = {
         "generated_at": now_iso(),
         "status": "backtest_engine_ready",
         "module": "historical_backtest",
         "frontend_callable": True,
-        "compute_node": "tencent_or_local_read_only",
-        "storage_policy": "historical_warehouse_stays_on_tencent; engine_reads_local_or_tencent_warehouse_only",
+        "compute_node": policy["compute_node"],
+        "storage_policy": policy["storage_policy"],
+        "execution_policy": policy,
         "historical_baseline": {
             "status": hist.get("status") or "missing",
             "complete": historical_complete(root),
@@ -775,7 +802,7 @@ def status_payload(*, root: Path = ROOT, latest_job: dict[str, Any] | None = Non
         "recent_jobs": list_jobs(root=root, limit=20, latest_job=job),
         "next_steps": [
             "harden_live_scanner_byte_for_byte_parity",
-            "add_async_tencent_job_queue_for_large_runs",
+            "add_async_local_job_queue_for_large_runs",
             "add_depth_snapshot_replay_when_available",
             "feed_research_results_into_governance_without_auto_apply",
         ],
@@ -789,6 +816,7 @@ def write_markdown(payload: dict[str, Any], *, root: Path = ROOT) -> None:
     caps = payload.get("capabilities") if isinstance(payload.get("capabilities"), dict) else {}
     recent = payload.get("recent_jobs") if isinstance(payload.get("recent_jobs"), dict) else {}
     schema = payload.get("parameter_schema") if isinstance(payload.get("parameter_schema"), dict) else parameter_schema()
+    policy = payload.get("execution_policy") if isinstance(payload.get("execution_policy"), dict) else {}
 
     def md_value(value: Any, digits: int = 2, signed: bool = False) -> str:
         try:
@@ -820,6 +848,8 @@ def write_markdown(payload: dict[str, Any], *, root: Path = ROOT) -> None:
         f"- 历史基线: `{hist.get('status', '-')}` / `{hist.get('percent', 0):.2f}%` / `{hist.get('written_rows', 0)}` 行",
         f"- 覆盖: `{hist.get('covered_symbol_count', 0)}/{hist.get('target_symbol_count', 0)}` 币，`{hist.get('covered_symbol_interval_count', 0)}/{hist.get('target_symbol_interval_count', 0)}` 币种周期",
         f"- 任务历史: 保留在 `runtime/backtest_jobs/*.json`；报告默认展示最近 `{((payload.get('recent_jobs') or {}).get('display_limit') if isinstance(payload.get('recent_jobs'), dict) else 20)}` 条",
+        f"- 执行策略: `{policy.get('policy', '-')}`；计算节点 `{payload.get('compute_node', '-')}`",
+        f"- 本地历史仓: `{policy.get('local_store_path', '-')}` / available `{policy.get('local_store_available', False)}`；远端委托 `{policy.get('remote_delegate_enabled', False)}`",
         "",
         "## 已落地",
         "",

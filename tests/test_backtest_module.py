@@ -105,6 +105,22 @@ class BacktestModuleTests(unittest.TestCase):
             self.assertTrue((root / "runtime" / "backtest_module_latest.json").exists())
             self.assertTrue((root / "reports" / "backtest_module_latest.md").exists())
 
+    def test_status_prefers_local_historical_warehouse_when_available(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write_complete_history(root)
+            self.write_synthetic_kline_store(root)
+
+            payload = self.tool.refresh_status_files(root=root)
+            markdown = (root / "reports" / "backtest_module_latest.md").read_text(encoding="utf-8")
+
+            self.assertEqual(payload["compute_node"], "local_historical_warehouse_read_only")
+            self.assertEqual(payload["storage_policy"], "heavy_historical_backtests_use_local_historical_warehouse")
+            self.assertTrue(payload["execution_policy"]["local_store_available"])
+            self.assertFalse(payload["execution_policy"]["remote_delegate_enabled"])
+            self.assertIn("heavy_historical_backtests_must_use_local_store_when_available", markdown)
+            self.assertIn("research_store", markdown)
+
     def test_valid_job_without_bars_returns_data_unavailable_without_fake_pnl(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

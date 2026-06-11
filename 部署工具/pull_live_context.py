@@ -51,6 +51,7 @@ MAIN_FILES = [
     ("reports/historical_kline_backfill_latest.md", "reports/historical_kline_backfill_latest.md", False),
     ("reports/historical_kline_incremental_latest.md", "reports/historical_kline_incremental_latest.md", False),
     ("reports/backtest_module_latest.md", "reports/backtest_module_latest.md", False),
+    ("reports/alpha_discovery_latest.html", "reports/alpha_discovery_latest.html", False),
     ("reports/research_depth_backfill_latest.md", "reports/research_depth_backfill_latest.md", False),
     ("reports/external_replay_data_ingest_latest.md", "reports/external_replay_data_ingest_latest.md", False),
     ("reports/research_store_retention_latest.md", "reports/research_store_retention_latest.md", False),
@@ -88,6 +89,7 @@ MAIN_FILES = [
     ("runtime/historical_kline_backfill_latest.json", "runtime/historical_kline_backfill_latest.json", False),
     ("runtime/historical_kline_incremental_latest.json", "runtime/historical_kline_incremental_latest.json", False),
     ("runtime/backtest_module_latest.json", "runtime/backtest_module_latest.json", False),
+    ("runtime/alpha_discovery_latest.json", "runtime/alpha_discovery_latest.json", False),
     ("runtime/research_depth_backfill_latest.json", "runtime/research_depth_backfill_latest.json", False),
     ("runtime/external_replay_data_ingest_latest.json", "runtime/external_replay_data_ingest_latest.json", False),
     ("runtime/research_store_retention_latest.json", "runtime/research_store_retention_latest.json", False),
@@ -212,6 +214,7 @@ waiting_progress = read_json(root / "runtime" / "waiting_period_progress_latest.
 historical_kline = read_json(root / "runtime" / "historical_kline_backfill_latest.json")
 historical_kline_incremental = read_json(root / "runtime" / "historical_kline_incremental_latest.json")
 backtest_module = read_json(root / "runtime" / "backtest_module_latest.json")
+alpha_discovery = read_json(root / "runtime" / "alpha_discovery_latest.json")
 backtest_latest = backtest_module.get("latest_job") if isinstance(backtest_module.get("latest_job"), dict) else {}
 backtest_latest_result = backtest_latest.get("result") if isinstance(backtest_latest.get("result"), dict) else {}
 backtest_latest_summary = backtest_latest_result.get("summary") if isinstance(backtest_latest_result.get("summary"), dict) else {}
@@ -343,6 +346,33 @@ print(json.dumps({
             "trades": backtest_latest_summary.get("trades"),
             "anti_overfit_status": backtest_latest_oos.get("status"),
         } if backtest_latest else {},
+    },
+    "alpha_discovery_summary": {
+        "status": alpha_discovery.get("status"),
+        "module": alpha_discovery.get("module"),
+        "engine_parity": alpha_discovery.get("engine_parity"),
+        "operator_summary": {
+            "overall_action": (alpha_discovery.get("operator_summary") or {}).get("overall_action")
+            if isinstance(alpha_discovery.get("operator_summary"), dict) else None,
+            "plain_advice": (alpha_discovery.get("operator_summary") or {}).get("plain_advice")
+            if isinstance(alpha_discovery.get("operator_summary"), dict) else None,
+        },
+        "diagnostic_takeaway": ((alpha_discovery.get("diagnostics") or {}).get("plain_takeaway"))
+        if isinstance(alpha_discovery.get("diagnostics"), dict) else None,
+        "strategy_summaries": {
+            key: {
+                "strategy": value.get("strategy"),
+                "candidate_net_profit_usdt": (value.get("portfolio_summary") or {}).get("candidate_net_profit_usdt")
+                if isinstance(value.get("portfolio_summary"), dict) else None,
+                "robust_candidate_intervals": (value.get("portfolio_summary") or {}).get("robust_candidate_intervals")
+                if isinstance(value.get("portfolio_summary"), dict) else None,
+                "paper_shadow_allowed": (value.get("portfolio_summary") or {}).get("paper_shadow_allowed")
+                if isinstance(value.get("portfolio_summary"), dict) else False,
+            }
+            for key, value in (alpha_discovery.get("strategies") or {}).items()
+            if isinstance(value, dict)
+        },
+        "safety": alpha_discovery.get("safety", {}),
     },
 }, ensure_ascii=False))
 """
@@ -634,6 +664,7 @@ def main(argv: list[str] | None = None) -> int:
                 "historical_kline_backfill": live.get("historical_kline_backfill_summary"),
                 "historical_kline_incremental": live.get("historical_kline_incremental_summary"),
                 "backtest_module": live.get("backtest_module_summary"),
+                "alpha_discovery": live.get("alpha_discovery_summary"),
                 "output": str(ROOT / "runtime" / "live_context_summary_latest.json"),
             },
             ensure_ascii=False,

@@ -2247,6 +2247,7 @@ tr:hover td {{ background:#101827; }}
           <a href="/reports/strategy_candidate_governance_latest.md">候选治理</a>
           <a href="/reports/waiting_period_progress_latest.md">等待期推进</a>
           <a href="/reports/paper_real_calibration_plan_latest.md">纸实校准计划</a>
+          <a href="/reports/alpha_discovery_latest.html">Alpha发现/GHI研究</a>
           <a href="/reports/waiting_period_optimization_latest.html">等待期优化</a>
           <a href="/reports/market_review_latest.html">市场复盘日报</a>
           <a href="/reports/long_term_skeleton_latest.md">长期目标骨架</a>

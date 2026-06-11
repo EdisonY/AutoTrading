@@ -57,6 +57,10 @@ BACKTEST_MODULE_JSON = ROOT / "runtime" / "backtest_module_latest.json"
 BACKTEST_MODULE_MD = REPORTS_DIR / "backtest_module_latest.md"
 MIRROR_BACKTEST_MODULE_JSON = SERVER_MIRROR_DIR / "runtime" / "backtest_module_latest.json"
 MIRROR_BACKTEST_MODULE_MD = SERVER_MIRROR_DIR / "reports" / "backtest_module_latest.md"
+ALPHA_DISCOVERY_JSON = ROOT / "runtime" / "alpha_discovery_latest.json"
+ALPHA_DISCOVERY_HTML = REPORTS_DIR / "alpha_discovery_latest.html"
+MIRROR_ALPHA_DISCOVERY_JSON = SERVER_MIRROR_DIR / "runtime" / "alpha_discovery_latest.json"
+MIRROR_ALPHA_DISCOVERY_HTML = SERVER_MIRROR_DIR / "reports" / "alpha_discovery_latest.html"
 DEPTH_BACKFILL_JSON = ROOT / "runtime" / "research_depth_backfill_latest.json"
 DEPTH_BACKFILL_MD = REPORTS_DIR / "research_depth_backfill_latest.md"
 RESEARCH_RETENTION_JSON = ROOT / "runtime" / "research_store_retention_latest.json"
@@ -865,6 +869,69 @@ def backtest_module_summary(*paths: Path | None) -> dict[str, Any]:
         "anti_overfit": payload.get("anti_overfit") if isinstance(payload.get("anti_overfit"), dict) else {},
         "latest_job": payload.get("latest_job") if isinstance(payload.get("latest_job"), dict) else {},
         "next_steps": payload.get("next_steps") if isinstance(payload.get("next_steps"), list) else [],
+    }
+
+
+def alpha_discovery_summary(*paths: Path | None) -> dict[str, Any]:
+    empty = {
+        "available": False,
+        "path": ALPHA_DISCOVERY_HTML,
+        "age": "无 Alpha 发现报告",
+        "fresh": False,
+        "status": "missing",
+        "operator_summary": {},
+        "diagnostic_takeaway": "",
+        "strategy_summaries": {},
+        "safety": {},
+    }
+    candidates: list[tuple[float, float, dict[str, Any], Path]] = []
+    for path in paths:
+        if not path:
+            continue
+        payload = read_json(path)
+        if not isinstance(payload, dict):
+            continue
+        generated_at = parse_dt(payload.get("generated_at"))
+        generated_ts = generated_at.timestamp() if generated_at else 0.0
+        try:
+            mtime = path.stat().st_mtime
+        except Exception:
+            mtime = 0.0
+        candidates.append((generated_ts, mtime, payload, path))
+    if not candidates:
+        return empty
+    candidates.sort(key=lambda item: (item[0], item[1]), reverse=True)
+    _generated_ts, _mtime, payload, source_path = candidates[0]
+    generated_at = parse_dt(payload.get("generated_at"))
+    report_path = ALPHA_DISCOVERY_HTML
+    if source_path == MIRROR_ALPHA_DISCOVERY_JSON and MIRROR_ALPHA_DISCOVERY_HTML.exists():
+        report_path = MIRROR_ALPHA_DISCOVERY_HTML
+    strategies = payload.get("strategies") if isinstance(payload.get("strategies"), dict) else {}
+    summaries = {}
+    for key, value in strategies.items():
+        if not isinstance(value, dict):
+            continue
+        portfolio = value.get("portfolio_summary") if isinstance(value.get("portfolio_summary"), dict) else {}
+        summaries[key] = {
+            "strategy": value.get("strategy"),
+            "candidate_net_profit_usdt": portfolio.get("candidate_net_profit_usdt"),
+            "candidate_trades": portfolio.get("candidate_trades"),
+            "robust_candidate_intervals": portfolio.get("robust_candidate_intervals"),
+            "paper_shadow_allowed": portfolio.get("paper_shadow_allowed"),
+            "paper_shadow_review_candidate": portfolio.get("paper_shadow_review_candidate"),
+        }
+    diagnostics = payload.get("diagnostics") if isinstance(payload.get("diagnostics"), dict) else {}
+    return {
+        "available": True,
+        "path": report_path,
+        "age": age_text(generated_at),
+        "fresh": bool(generated_at and (datetime.now(CST) - generated_at).total_seconds() < 24 * 3600),
+        "status": payload.get("status") or "unknown",
+        "module": payload.get("module") or "alpha_discovery",
+        "operator_summary": payload.get("operator_summary") if isinstance(payload.get("operator_summary"), dict) else {},
+        "diagnostic_takeaway": diagnostics.get("plain_takeaway") or "",
+        "strategy_summaries": summaries,
+        "safety": payload.get("safety") if isinstance(payload.get("safety"), dict) else {},
     }
 
 
@@ -2261,6 +2328,11 @@ def function_status_cards(data: dict[str, Any]) -> list[dict[str, str]]:
     backtest_latest_summary = backtest_latest_result.get("summary") if isinstance(backtest_latest_result.get("summary"), dict) else {}
     backtest_latest_sweep = backtest_latest_result.get("parameter_sweep") if isinstance(backtest_latest_result.get("parameter_sweep"), dict) else {}
     backtest_latest_oos = backtest_latest_sweep.get("anti_overfit_review") if isinstance(backtest_latest_sweep.get("anti_overfit_review"), dict) else {}
+    alpha_discovery = data.get("alpha_discovery") or {}
+    alpha_strategy_summaries = alpha_discovery.get("strategy_summaries") or {}
+    alpha_operator = alpha_discovery.get("operator_summary") or {}
+    alpha_total_net = sum(float((row or {}).get("candidate_net_profit_usdt") or 0.0) for row in alpha_strategy_summaries.values())
+    alpha_robust = sum(int((row or {}).get("robust_candidate_intervals") or 0) for row in alpha_strategy_summaries.values())
     depth_backfill = data.get("depth_backfill") or {}
     depth_backfill_plan = (depth_backfill.get("plan") or {}).get("summary") or {}
     depth_backfill_submit = depth_backfill.get("submit") or {}
@@ -2532,6 +2604,21 @@ def function_status_cards(data: dict[str, Any]) -> list[dict[str, str]]:
                 ),
             }
         ),
+        {
+            "level": "ok" if alpha_discovery.get("fresh") else "warn" if alpha_discovery.get("available") else "warn",
+            "name": "Alpha发现/GHI研究",
+            "value": (
+                f"{alpha_total_net:+.2f} USDT"
+                if alpha_discovery.get("available")
+                else "未生成"
+            ),
+            "body": (
+                f"G/H/I 稳健周期 {alpha_robust}；结论 {alpha_operator.get('overall_action', '-')}; "
+                f"{alpha_discovery.get('diagnostic_takeaway') or '等待 alpha 诊断'}；不自动改策略。"
+                if alpha_discovery.get("available")
+                else "新 alpha 研究报告尚未生成；D/F 已拒绝，E 仅 4h 人工复核，G/H/I 待历史研究。"
+            ),
+        },
         {
             "level": "ok" if historical_incremental.get("fresh") and historical_incremental.get("available") else "warn",
             "name": "每日历史增量",
@@ -3452,6 +3539,9 @@ def build_data() -> dict[str, Any]:
     backtest_summary = backtest_module_summary(BACKTEST_MODULE_JSON, MIRROR_BACKTEST_MODULE_JSON)
     data["backtest_module"] = backtest_summary
     data["backtest_module_html"] = backtest_summary.get("path") or BACKTEST_MODULE_MD
+    alpha_summary = alpha_discovery_summary(ALPHA_DISCOVERY_JSON, MIRROR_ALPHA_DISCOVERY_JSON)
+    data["alpha_discovery"] = alpha_summary
+    data["alpha_discovery_html"] = alpha_summary.get("path") or ALPHA_DISCOVERY_HTML
     data["depth_backfill"] = depth_backfill_summary(DEPTH_BACKFILL_JSON)
     data["depth_backfill_html"] = DEPTH_BACKFILL_MD
     data["research_retention"] = research_retention_summary(RESEARCH_RETENTION_JSON)
@@ -4534,6 +4624,14 @@ def render_html(out_dir: Path) -> str:
                 "看历史K线进度",
                 "blue",
             )
+        ),
+        route_card(
+            "Alpha发现/GHI研究",
+            "找新策略结构",
+            "看 A 保留、B 冻结、C/D/F 拒绝、E 4h 人工候选，以及 G/H/I 的一年期研究和起涨/起跌阶段诊断。",
+            data["alpha_discovery_html"],
+            "看Alpha发现",
+            "amber",
         ),
         route_card(
             "每日历史增量",

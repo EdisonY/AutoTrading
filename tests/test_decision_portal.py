@@ -573,7 +573,7 @@ class DecisionPortalTests(unittest.TestCase):
             },
             "mover_diagnostics": {
                 "NOENTERUSDT": {
-                    "strategy_filter": "挡：A/v11、C/v14；未扫：B/v16",
+                    "strategy_filter": "挡：A/v11；未扫：B/v16",
                     "no_entry_reason": "还没达到策略阈值，属于正常筛选。 阶段：阈值；筛选层：策略。",
                     "raw_no_entry_reason": "threshold score below gate",
                 }
@@ -598,7 +598,7 @@ class DecisionPortalTests(unittest.TestCase):
         self.assertNotIn("方向关系", html)
         self.assertNotIn("当前结果", html)
         self.assertNotIn("未进场 +0.0000", html)
-        self.assertIn("挡：A/v11、C/v14", html)
+        self.assertIn("挡：A/v11；未扫：B/v16", html)
         self.assertNotIn("策略挡住(阈值/策略)", html)
         self.assertIn("还没达到策略阈值", html)
         self.assertIn("原始原因：threshold score below gate", html)
@@ -654,7 +654,7 @@ class DecisionPortalTests(unittest.TestCase):
             },
         ])
 
-        self.assertEqual("挡：A/v11、C/v14；未扫：B/v16", summary["strategy_filter"])
+        self.assertEqual("挡：A/v11；未扫：B/v16", summary["strategy_filter"])
         self.assertIn("15分钟确认没有跟上", summary["no_entry_reason"])
         self.assertNotIn("A/v11:", summary["strategy_filter"])
 

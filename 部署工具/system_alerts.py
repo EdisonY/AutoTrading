@@ -50,10 +50,13 @@ SERVICES = [
     "crypto-market-data-cache.service",
     "crypto-account-snapshot.service",
     "crypto-scanner.service",
-    "crypto-scanner-v14.service",
     "crypto-scanner-v16.service",
     "crypto-market-microstructure.service",
 ]
+
+RETIRED_SERVICES = {
+    "crypto-scanner-v14.service": "C/v14 retired after one-year research failed OOS gates",
+}
 
 TIMERS = [
     "crypto-data-maintenance.timer",
@@ -79,7 +82,7 @@ def construction_pause_body(unit: str, state: str, *, is_timer: bool) -> str:
     if unit == "crypto-data-maintenance.timer":
         return (
             f"systemd 状态为 {state}；数据维护定时器仍按 staged validation 暂停。"
-            "这是维护/长期任务提示，不影响当前 A/B/C 自建模拟账本运行；"
+            "这是维护/长期任务提示，不影响当前 A/v11 现役与 B/v16 冻结观察；"
             "自动回滚/自动调参仍等 replay/data 与样本门控。"
         )
     unit_label = "timer" if is_timer else "服务"
@@ -437,6 +440,7 @@ def recent_failed_close_alerts(now: datetime) -> list[dict[str, str]]:
 def collect_alerts() -> dict[str, Any]:
     now = datetime.now(CST)
     alerts: list[dict[str, str]] = []
+    notices: list[dict[str, str]] = []
     states = service_states()
     construction_mode = read_construction_mode()
     paper_mainline = paper_mainline_active()
@@ -454,8 +458,8 @@ def collect_alerts() -> dict[str, Any]:
             if paper_mainline and service == REAL_ACCOUNT_SNAPSHOT_SERVICE:
                 continue
             if construction_mode.get("enabled") and service in CONSTRUCTION_PAUSED_SERVICES:
-                alerts.append({
-                    "level": "warn",
+                notices.append({
+                    "level": "info",
                     "title": f"施工暂停：{service}",
                     "body": construction_pause_body(service, state, is_timer=False),
                 })
@@ -473,8 +477,8 @@ def collect_alerts() -> dict[str, Any]:
     for timer, state in timers.items():
         if state != "active":
             if construction_mode.get("enabled") and timer in CONSTRUCTION_PAUSED_TIMERS:
-                alerts.append({
-                    "level": "warn",
+                notices.append({
+                    "level": "info",
                     "title": f"施工暂停：{timer}",
                     "body": construction_pause_body(timer, state, is_timer=True),
                 })
@@ -683,8 +687,10 @@ def collect_alerts() -> dict[str, Any]:
         "status": "ok" if not alerts else "bad" if any(a["level"] == "bad" for a in alerts) else "warn",
         "alert_count": len(alerts),
         "alerts": alerts,
+        "notices": notices,
         "services": states,
         "timers": timers,
+        "retired_services": RETIRED_SERVICES,
         "disk": disk_payload,
         "memory": memory_payload,
         "api_rate_limits": api_rate_limits,
@@ -707,6 +713,11 @@ def write_outputs(payload: dict[str, Any]) -> None:
             lines.append(f"- [{alert['level']}] {alert['title']}: {alert['body']}")
     else:
         lines.append("- 当前无告警。")
+    notices = payload.get("notices") or []
+    if notices:
+        lines.extend(["", "## 提示"])
+        for notice in notices:
+            lines.append(f"- [{notice.get('level')}] {notice.get('title')}: {notice.get('body')}")
     ALERT_MD.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 

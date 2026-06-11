@@ -40,7 +40,13 @@ EVENT_DB = MIRROR_DB if MIRROR_DB.exists() else LOCAL_DB
 CST = timezone(timedelta(hours=8))
 DEFAULT_TAKER_FEE_RATE = 0.0004
 REPORT_REFRESH_SECONDS = 60
-STRATEGY_NAMES = ("A/v11", "B/v16", "C/v14")
+STRATEGY_NAMES = ("A/v11", "B/v16")
+RETIRED_STRATEGY_NAMES = ("C/v14",)
+STRATEGY_LIFECYCLE = {
+    "A/v11": "active",
+    "B/v16": "frozen_observe",
+    "C/v14": "retired",
+}
 
 
 def h(value: Any) -> str:
@@ -682,11 +688,10 @@ def strategy_rows(
     service_map = {
         "A/v11": "crypto-scanner.service",
         "B/v16": "crypto-scanner-v16.service",
-        "C/v14": "crypto-scanner-v14.service",
     }
     by_name = {row["name"]: row for row in event.get("strategies") or [] if isinstance(row, dict)}
     rows = []
-    for name in ("A/v11", "B/v16", "C/v14"):
+    for name in STRATEGY_NAMES:
         item = by_name.get(name, {})
         service = services.get(service_map[name], "unknown")
         open_failed = int(item.get("open_failed") or 0)
@@ -1913,10 +1918,10 @@ def render_backtest_module(state: dict[str, Any]) -> str:
     <div><span>历史基线</span><b>已完成</b><small>{int(quality.get('covered_symbol_count') or 0)}/{int(quality.get('target_symbol_count') or 0)} 币；{int(quality.get('covered_symbol_interval_count') or 0)}/{int(quality.get('target_symbol_interval_count') or 0)} 币种周期；质量 {h(plain_status(quality.get('status') or '-'))}</small></div>
     <div><span>每日增量</span><b>{h(plain_status(incremental.get('status') or 'missing'))}</b><small>最近写入 {int(incremental_progress.get('written_rows') or 0)} 行；只跑 Tencent 低速 timer。</small></div>
     <div><span>前端任务</span><b>{h(plain_status(caps.get('job_submit_api', True)))}</b><small>提交后执行只读历史仓回测；Aliyun 会委托 Tencent 历史仓。</small></div>
-    <div><span>策略收益计算</span><b>{h(plain_status(caps.get('strategy_replay_adapter', False)))}</b><small>A/B/C research adapter 可用；不是 live scanner 逐行完全复刻。</small></div>
+    <div><span>策略收益计算</span><b>{h(plain_status(caps.get('strategy_replay_adapter', False)))}</b><small>A/B research adapter 可用；C/v14 已退役；D/E/F 使用独立研究报告，不自动改策略。</small></div>
   </div>
   <form class="backtest-form" onsubmit="submitBacktestJob(event)">
-    <label><span>策略</span><select name="strategy"><option>A/v11</option><option>B/v16</option><option>C/v14</option></select></label>
+    <label><span>策略</span><select name="strategy"><option>A/v11</option><option>B/v16</option></select></label>
     <label><span>币种</span><input name="symbols" value="BTCUSDT" maxlength="260"></label>
     <label><span>分时</span><select name="interval"><option>15m</option><option>30m</option><option selected>1h</option><option>4h</option></select></label>
     <label><span>周期</span><select name="period_days"><option value="90">90天</option><option value="180">180天</option><option value="365" selected>365天</option></select></label>

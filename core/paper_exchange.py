@@ -28,6 +28,14 @@ DEFAULT_ORDER_BOOK_LIQUIDITY_FACTOR = 1.0
 DEFAULT_ORDER_BOOK_QUEUE_AHEAD_QUANTITY = 0.0
 DEFAULT_DUST_NOTIONAL_USDT = 1e-6
 STRATEGIES = ("A/v11", "B/v16", "C/v14")
+ACTIVE_STRATEGIES = ("A/v11",)
+FROZEN_STRATEGIES = ("B/v16",)
+RETIRED_STRATEGIES = ("C/v14",)
+STRATEGY_LIFECYCLE = {
+    "A/v11": "active",
+    "B/v16": "frozen_observe",
+    "C/v14": "retired",
+}
 
 
 def utc_now() -> str:
@@ -354,6 +362,10 @@ class PaperExchange:
             "positions": positions,
             "recent_fills": list(state.get("fills", []))[-50:],
             "source": str(self.path),
+            "strategy_lifecycle": STRATEGY_LIFECYCLE,
+            "active_strategies": list(ACTIVE_STRATEGIES),
+            "frozen_strategies": list(FROZEN_STRATEGIES),
+            "retired_strategies": list(RETIRED_STRATEGIES),
         }
 
     @staticmethod

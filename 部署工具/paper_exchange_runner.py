@@ -33,7 +33,7 @@ os.environ.setdefault("OKX_MARKET_DATA_MAX_PER_MIN", "60")
 from core.event_store import EventStoreWriter
 from core.external_market_data import fetch_okx_klines, okx_symbol_supported
 from core.kline_cache import load_latest_cached_close, save_cached_klines
-from core.paper_exchange import PaperExchange, STRATEGIES, safe_float
+from core.paper_exchange import ACTIVE_STRATEGIES, PaperExchange, STRATEGY_LIFECYCLE, safe_float
 
 
 CST = timezone(timedelta(hours=8))
@@ -231,11 +231,11 @@ def open_bootstrap_positions(root: Path, exchange: PaperExchange, target_per_str
     state = exchange.load()
     open_by_strategy = {
         strategy: [p for p in state.get("positions", {}).values() if p.get("strategy") == strategy]
-        for strategy in STRATEGIES
+        for strategy in STRATEGY_LIFECYCLE
     }
     created = 0
     writer = EventStoreWriter(root / "runtime" / "event_store.sqlite3")
-    for strategy in STRATEGIES:
+    for strategy in ACTIVE_STRATEGIES:
         need = max(0, target_per_strategy - len(open_by_strategy.get(strategy, [])))
         if need <= 0:
             continue
@@ -426,6 +426,9 @@ def run(root: Path, target_per_strategy: int, margin_usdt: float, leverage: int,
         "opened_this_run": opened,
         "closed_this_run": closed,
         "target_per_strategy": target_per_strategy,
+        "target_open_strategies": list(ACTIVE_STRATEGIES),
+        "strategy_lifecycle": STRATEGY_LIFECYCLE,
+        "lifecycle_note": "A/v11 active; B/v16 frozen observe only; C/v14 retired and no longer bootstraps new paper positions.",
         "safety": "paper_exchange_only_no_binance_order_no_signed_request",
     })
     exchange.latest_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")

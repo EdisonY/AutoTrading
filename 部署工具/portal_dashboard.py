@@ -247,8 +247,7 @@ def age_text(dt: datetime | None) -> str:
 def strategy_status() -> list[dict[str, Any]]:
     specs = [
         ("A/v11", SERVER_MIRROR_DIR / "logs" / "system.jsonl", "heartbeats", 120, "15m + 30m", "心跳按若干轮写一次，不代表每轮都上报"),
-        ("B/v16", SERVER_MIRROR_DIR / "logs_v16" / "system.jsonl", "SCAN_STATS", 120, "1h 入场，15m 确认", "SCAN_STATS 是每轮扫描结束后写的统计"),
-        ("C/v14", SERVER_MIRROR_DIR / "logs_v14" / "system.jsonl", "heartbeat", 120, "1h 入场，15m 确认", "心跳按若干轮写一次，不代表每轮都上报"),
+        ("B/v16", SERVER_MIRROR_DIR / "logs_v16" / "system.jsonl", "SCAN_STATS", 120, "冻结观察：1h 入场，15m 确认", "SCAN_STATS 是每轮扫描结束后写的统计；冻结后不再作为升级候选"),
     ]
     out: list[dict[str, Any]] = []
     for name, path, marker, scan_interval_sec, period, cadence_note in specs:
@@ -1844,8 +1843,7 @@ def sqlite_strategy_status() -> list[dict[str, Any]]:
         return []
     specs = {
         "A/v11": ("120 秒", "15m + 30m", "SQLite system 双写"),
-        "B/v16": ("120 秒", "1h 入场，15m 确认", "SQLite SCAN_STATS/system 双写"),
-        "C/v14": ("120 秒", "1h 入场，15m 确认", "SQLite system 双写"),
+        "B/v16": ("120 秒", "冻结观察：1h 入场，15m 确认", "SQLite SCAN_STATS/system 双写；冻结后不再作为升级候选"),
     }
     try:
         conn = sqlite3.connect(EVENT_STORE_DB)
@@ -1924,10 +1922,12 @@ def paper_exchange_summary() -> dict[str, Any]:
     age_seconds = (datetime.now(CST) - ts).total_seconds() if ts else None
     by_strategy = payload.get("by_strategy") if isinstance(payload.get("by_strategy"), dict) else {}
     strategy_bits = []
+    lifecycle = payload.get("strategy_lifecycle") if isinstance(payload.get("strategy_lifecycle"), dict) else {}
     for name in ("A/v11", "B/v16", "C/v14"):
         row = by_strategy.get(name) if isinstance(by_strategy.get(name), dict) else {}
+        status = lifecycle.get(name) or ("retired" if name == "C/v14" else "active")
         strategy_bits.append(
-            f"{name} {int(row.get('positions') or 0)}仓 {float(row.get('unrealized_pnl') or 0):+.2f}"
+            f"{name}({status}) {int(row.get('positions') or 0)}仓 {float(row.get('unrealized_pnl') or 0):+.2f}"
         )
     return {
         "available": True,
@@ -1938,6 +1938,7 @@ def paper_exchange_summary() -> dict[str, Any]:
         "total_unrealized_pnl": float(payload.get("total_unrealized_pnl") or 0),
         "total_equity": float(payload.get("total_equity") or 0),
         "by_strategy": by_strategy,
+        "strategy_lifecycle": lifecycle,
         "fidelity": payload.get("fidelity") if isinstance(payload.get("fidelity"), dict) else {},
         "note": "；".join(strategy_bits),
     }
@@ -2339,9 +2340,9 @@ def function_status_cards(data: dict[str, Any]) -> list[dict[str, str]]:
         },
         {
             "level": "bad" if scanner_bad else "ok",
-            "name": "三策略服务",
+            "name": "策略服务",
             "value": "异常" if scanner_bad else "运行中",
-            "body": "过久未更新：" + ", ".join(scanner_bad) if scanner_bad else "A/v11、B/v16、C/v14 均有近期心跳或扫描统计。",
+            "body": "过久未更新：" + ", ".join(scanner_bad) if scanner_bad else "A/v11 现役、B/v16 冻结观察均有近期心跳或扫描统计；C/v14 已退役，不再作为在线服务要求。",
         },
         {
             "level": "warn" if int(sig.get("http400") or 0) else "ok",
@@ -3146,7 +3147,7 @@ def build_findings(data: dict[str, Any]) -> list[dict[str, str]]:
         {
             "level": "bad" if stale else "ok",
             "title": "P0 服务器策略运行状态" if stale else "P2 服务器策略运行状态",
-            "body": "过久未更新：" + ", ".join(stale) if stale else "A/v11、B/v16、C/v14 最近都有镜像心跳或扫描统计，入口判定为运行中。",
+            "body": "过久未更新：" + ", ".join(stale) if stale else "A/v11 现役、B/v16 冻结观察最近都有镜像心跳或扫描统计；C/v14 退役不再参与运行判定。",
         }
     )
     if int(sig.get("http400") or 0):
@@ -3166,15 +3167,8 @@ def build_findings(data: dict[str, Any]) -> list[dict[str, str]]:
                 "body": "现在可以看见哪些策略扫了哨兵币、在哪层候选、开仓、确认过滤、策略否决或无信号。",
             }
         )
-    c_row = next((r for r in sig.get("strategies") or [] if r.get("name") == "C/v14"), None)
-    if c_row and int(c_row.get("signals") or 0) > 10000:
-        findings.append(
-            {
-                "level": "warn",
-                "title": "P1 C/v14 信号量异常偏大",
-                "body": f"C/v14 信号 {c_row.get('signals')}、开仓 {c_row.get('opens')}，首页建议优先看确认层和低分开仓，不要只看总信号数。",
-            }
-        )
+    # C/v14 is retired. Keep old rows in drilldowns, but do not raise
+    # current-state warnings from stale historical signal volume.
     research = data.get("research_summary") or {}
     if int(research.get("small_live") or 0):
         findings.append(
@@ -3257,11 +3251,11 @@ def build_executive_summary(data: dict[str, Any]) -> dict[str, Any]:
             decision = "稳态监控"
             reason = "不继续放宽，守住100 USDT尺寸、同币禁叠和替换保护。"
         elif name == "B/v16":
-            decision = "观察全量候选"
-            reason = "已放开ATR分档止损和85过热封顶，重点看新样本PnL与硬止损率。"
+            decision = "冻结观察"
+            reason = "保留历史/上下文观察，不扩张、不自动调参、不进入升级候选。"
         else:
-            decision = "受控扩样"
-            reason = "已放宽确认与赛道/周期上限，先看转化率和PF，不再立刻二次放宽。"
+            decision = "退役审计"
+            reason = "一年期研究未过OOS，停止在线服务和新样本补仓；旧记录只作复盘审计。"
         return {
             "name": name,
             "decision": decision,
@@ -3335,7 +3329,7 @@ def build_executive_summary(data: dict[str, Any]) -> dict[str, Any]:
             f"门禁硬化：{gate_hardening.get('status') or 'unknown'}；P0/P1候选 {int(gate_hardening.get('priority_items') or 0)}，"
             f"放开后就绪窗口 {int(gate_hardening.get('post_approval_ready_windows') or 0)}；自动升级/回滚关闭。"
         ),
-        "扩样决策：不再全局盲目放宽。A/v11保持稳定，B/v16观察已批准全量候选，C/v14维持当前受控扩样窗口。",
+        "生命周期：A/v11 保留现役；B/v16 冻结观察；C/v14 退役；D/E/F 仅研究回测，未过 OOS 不进 paper/live。",
     ]
     bullets = [b for b in bullets if b]
 
@@ -3343,7 +3337,7 @@ def build_executive_summary(data: dict[str, Any]) -> dict[str, Any]:
     if level == "bad":
         next_actions.append("先处理P0/告警/尺寸/强平闭环，不新增策略风险。")
     if positions < 8 and not (alert_count or risk_count or sizing_count):
-        next_actions.append("允许B/v16与C/v14按当前规则继续收集样本，不额外加仓位尺寸。")
+        next_actions.append("仓位少也不补 B/C 样本；只让 A/v11 按现有规则运行。")
     if actionable_evo:
         next_actions.append("查看策略进化门禁最高项，确认是否进入灰度或回滚。")
     if a_v11_rollout_decision.get("priority") in {"P0", "P1"}:
@@ -3526,7 +3520,6 @@ def render_html(out_dir: Path) -> str:
     scanner_services = {
         "crypto-scanner.service",
         "crypto-scanner-v16.service",
-        "crypto-scanner-v14.service",
     }
     scanner_service_states = {
         name: state for name, state in alert_services.items()
@@ -3543,7 +3536,6 @@ def render_html(out_dir: Path) -> str:
 
     a_interval = next((s["interval"] for s in data["strategies"] if s["name"] == "A/v11"), "暂无")
     b_interval = next((s["interval"] for s in data["strategies"] if s["name"] == "B/v16"), "暂无")
-    c_interval = next((s["interval"] for s in data["strategies"] if s["name"] == "C/v14"), "暂无")
     live_pnl = sum(float(r.get("pnl") or 0) for r in data.get("decision_summary", []))
     live_trades = sum(int(r.get("closed") or 0) for r in data.get("decision_summary", []))
     account_upnl = float(realtime_account.get("unrealized_pnl_usdt") or 0)

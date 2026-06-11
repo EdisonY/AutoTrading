@@ -525,3 +525,8 @@
 - Added a read-only C/v14 one-year historical research report runner following the A/v11 and B/v16 pattern.
 - Scope remains research-only: no live config mutation, no scanner restart, no Binance/order path, and no automatic tuning/rollback/upgrade.
 - Next step is Tencent execution to produce the final C/v14 HTML report.
+
+## 2026-06-11 15:58 CST - C/v14 historical research completed
+- Ran the C/v14 Tencent-only one-year Top30 historical research over `15m/30m/1h/4h`; report output is `reports/c_v14_historical_research_latest.html` on Tencent and mirrored to Aliyun under `/reports/c_v14_historical_research_latest.html`.
+- Final result: coverage `27/30` symbols and `106/120` symbol-intervals; baseline `-17748.532576 USDT`; best robust-score limited params `-13321.463911 USDT`; `robust_candidate_intervals=0`; conclusion `no_live_parameter_change`.
+- Do not write these C/v14 parameter variants to `config/v14.toml`. Every interval looked better in full-window loss reduction but failed OOS/anti-fit checks. Automatic tuning, rollback, and upgrade stay disabled.

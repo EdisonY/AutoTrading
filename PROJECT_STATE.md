@@ -1,12 +1,12 @@
 # AutoTrading Project State
 
-Last updated: 2026-06-10 Asia/Shanghai
+Last updated: 2026-06-11 Asia/Shanghai
 
 This file is the long-lived project memory for multi-location development. Daily reports may roll forward, but this file records the current architecture, what is done, what is not done, and what must not be forgotten.
 
 ## Current Architecture
 
-- 2026-06-11 C/v14 full-universe research report rule: operator-driven C/v14 one-year full-symbol/full-timeframe parameter research runs through `c_v14_historical_research_report.py` on Tencent only. It mirrors the A/v11 and B/v16 report pattern, uses the historical Kline research adapter, tests registered C/v14 threshold/score_max/ATR stop variants, writes `runtime/c_v14_historical_research_latest.json` and `reports/c_v14_historical_research_latest.html`, and must not mutate `config/v14.toml`, restart scanners, call Binance, place orders, or enable automatic tuning/rollback/upgrade.
+- 2026-06-11 C/v14 full-universe research report rule: operator-driven C/v14 one-year full-symbol/full-timeframe parameter research runs through `c_v14_historical_research_report.py` on Tencent only. It mirrors the A/v11 and B/v16 report pattern, uses the historical Kline research adapter, tests registered C/v14 threshold/score_max/ATR stop variants, writes `runtime/c_v14_historical_research_latest.json` and `reports/c_v14_historical_research_latest.html`, and must not mutate `config/v14.toml`, restart scanners, call Binance, place orders, or enable automatic tuning/rollback/upgrade. The 2026-06-11 C/v14 full research outcome is explicitly `no_live_parameter_change`: coverage `27/30` symbols and `106/120` symbol-intervals; baseline across `15m/30m/1h/4h` was `-17748.532576 USDT`; best robust-score limited params improved to `-13321.463911 USDT` but `robust_candidate_intervals=0`, so no parameter passed OOS/anti-fit promotion. The generated report is `reports/c_v14_historical_research_latest.html` on Tencent and mirrored to Aliyun under `/reports/c_v14_historical_research_latest.html`.
 - Main live node: Tencent CVM, `/opt/crypto-auto-trader`.
 - Shadow/review node: Aliyun, `/opt/crypto-shadow-lab`.
 - Local workspace: `F:\AutoTrading`.

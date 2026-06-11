@@ -6,6 +6,7 @@ This file is the long-lived project memory for multi-location development. Daily
 
 ## Current Architecture
 
+- 2026-06-11 C/v14 full-universe research report rule: operator-driven C/v14 one-year full-symbol/full-timeframe parameter research runs through `c_v14_historical_research_report.py` on Tencent only. It mirrors the A/v11 and B/v16 report pattern, uses the historical Kline research adapter, tests registered C/v14 threshold/score_max/ATR stop variants, writes `runtime/c_v14_historical_research_latest.json` and `reports/c_v14_historical_research_latest.html`, and must not mutate `config/v14.toml`, restart scanners, call Binance, place orders, or enable automatic tuning/rollback/upgrade.
 - Main live node: Tencent CVM, `/opt/crypto-auto-trader`.
 - Shadow/review node: Aliyun, `/opt/crypto-shadow-lab`.
 - Local workspace: `F:\AutoTrading`.

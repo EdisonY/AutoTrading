@@ -520,3 +520,8 @@
 - B/v16 and C/v14 must not directly trust raw Binance testnet `positionSide`; exchange-side count, restored positions, duplicate-position display, hard-stop loss calculation, and close direction must use `core.position_utils.infer_position_side()` / `leveraged_loss_pct()`.
 - Aliyun daily shadow-review must run `daily_market_review.py` so `market_review_latest.md/html` does not stay on an old date.
 - Final 2026-05-29 noon verification: all six Tencent live services were active and command-center attention P0 was cleared after approved A/v11 trailing candidates were resolved from the attention ledger. System alert remains bad because B/v16 legacy `BCHUSDT` long, `ETHUSDT` long, and `FHEUSDT` short still reject close attempts with Binance Testnet `-4061`; this is an exposed unresolved live-risk item, not a silent local-state issue.
+
+## 2026-06-11 11:26 CST - C/v14 historical research runner prepared
+- Added a read-only C/v14 one-year historical research report runner following the A/v11 and B/v16 pattern.
+- Scope remains research-only: no live config mutation, no scanner restart, no Binance/order path, and no automatic tuning/rollback/upgrade.
+- Next step is Tencent execution to produce the final C/v14 HTML report.

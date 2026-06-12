@@ -190,6 +190,14 @@ def command_env() -> tuple[dict[str, str], str]:
     return env, proxy
 
 
+def apply_rate_budget_env(args: argparse.Namespace) -> dict[str, int]:
+    bybit_max = max(1, int(getattr(args, "bybit_max_per_min", 240)))
+    okx_max = max(1, int(getattr(args, "okx_max_per_min", 180)))
+    os.environ["BYBIT_MARKET_DATA_MAX_PER_MIN"] = str(bybit_max)
+    os.environ["OKX_MARKET_DATA_MAX_PER_MIN"] = str(okx_max)
+    return {"bybit_max_per_min": bybit_max, "okx_max_per_min": okx_max}
+
+
 def save_state(phase: str, status: str, log_path: Path, extra: dict[str, Any] | None = None) -> dict[str, Any]:
     payload = state_payload(phase, status, log_path, extra)
     write_json_atomic(PIPELINE_JSON, payload)
@@ -255,6 +263,8 @@ def make_download_cmd(args: argparse.Namespace, providers: str | None = None) ->
         str(args.request_timeout),
         "--flush-requests",
         str(args.flush_requests),
+        "--workers",
+        str(getattr(args, "workers", 1)),
         "--output-prefix",
         args.download_prefix,
     ]
@@ -301,9 +311,13 @@ def latest_backtest_summary() -> dict[str, Any]:
 
 def run_download_stage(args: argparse.Namespace, log_path: Path, phase: str, providers: str, proxy: str) -> tuple[dict[str, Any], dict[str, Any]]:
     loops = 0
+    rate_budget = {
+        "bybit_max_per_min": max(1, int(getattr(args, "bybit_max_per_min", 240))),
+        "okx_max_per_min": max(1, int(getattr(args, "okx_max_per_min", 180))),
+    }
     while True:
         loops += 1
-        save_state(phase, "running_batch", log_path, {"loop": loops, "proxy": proxy or "", "providers": providers})
+        save_state(phase, "running_batch", log_path, {"loop": loops, "proxy": proxy or "", "providers": providers, "rate_budget": rate_budget})
         code = run_logged(make_download_cmd(args, providers=providers), log_path, timeout_sec=args.batch_runtime_sec + 120)
         progress_payload = latest_progress(args.download_prefix)
         progress = progress_payload.get("progress") if isinstance(progress_payload.get("progress"), dict) else {}
@@ -332,8 +346,9 @@ def run_download_stage(args: argparse.Namespace, log_path: Path, phase: str, pro
 def run_pipeline(args: argparse.Namespace) -> int:
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     log_path = LOG_DIR / f"pipeline_{datetime.now(CST).strftime('%Y%m%d_%H%M%S')}.log"
+    rate_budget = apply_rate_budget_env(args)
     _env, proxy = command_env()
-    save_state("download", "starting", log_path, {"proxy": proxy or "", "providers": args.providers})
+    save_state("download", "starting", log_path, {"proxy": proxy or "", "providers": args.providers, "rate_budget": rate_budget})
     try:
         progress, quality = run_download_stage(args, log_path, "download", args.providers, proxy)
         gap_providers = str(args.gap_providers or "").strip()
@@ -378,6 +393,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--batch-runtime-sec", type=int, default=1200)
     parser.add_argument("--request-timeout", type=float, default=8.0)
     parser.add_argument("--flush-requests", type=int, default=10)
+    parser.add_argument("--workers", type=int, default=1)
+    parser.add_argument("--bybit-max-per-min", type=int, default=240)
+    parser.add_argument("--okx-max-per-min", type=int, default=180)
     parser.add_argument("--sleep-sec", type=int, default=30)
     parser.add_argument("--download-prefix", default="historical_kline_backfill_2y_local")
     parser.add_argument("--backtest-stage", default="full-2y-v1")

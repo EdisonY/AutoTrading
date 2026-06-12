@@ -201,6 +201,17 @@ class HistoricalKlineBackfillTests(unittest.TestCase):
         self.assertEqual(len(tasks), 1)
         self.assertEqual(tasks[0]["expected_bars"], 24)
 
+    def test_task_planning_respects_symbol_start_bounds(self):
+        start_ms = ms("2026-06-01T00:00:00")
+        end_ms = ms("2026-06-03T00:00:00") - 1
+        launch_ms = ms("2026-06-02T12:00:00")
+
+        tasks = self.tool.chunk_tasks(["NEWUSDT"], ["1h"], start_ms, end_ms, limit=24, symbol_start_bounds={"NEWUSDT": launch_ms})
+
+        self.assertEqual(len(tasks), 1)
+        self.assertEqual(self.tool.ms_to_iso(tasks[0]["start_ms"]), "2026-06-02T20:00:00+08:00")
+        self.assertEqual(tasks[0]["expected_bars"], 12)
+
     def test_task_windows_align_to_kline_open_times(self):
         start_ms = ms("2026-06-08T16:07:13")
         end_ms = ms("2026-06-08T17:14:59")

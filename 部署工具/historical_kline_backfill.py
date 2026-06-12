@@ -11,8 +11,10 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import sys
 import time
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -169,6 +171,13 @@ def normalize_symbol(value: Any) -> str:
     return str(value or "").upper().strip().replace("/", "").replace("-", "")
 
 
+def normalize_epoch_ms(value: Any) -> int:
+    epoch = to_int(value)
+    if 0 < epoch < 10_000_000_000:
+        return epoch * 1000
+    return epoch
+
+
 def base_asset(symbol: str) -> str:
     symbol = normalize_symbol(symbol)
     return symbol[:-4] if symbol.endswith("USDT") else symbol
@@ -241,14 +250,48 @@ def choose_top_symbols(runtime_dir: Path, explicit: list[str], top_n: int) -> tu
     }
 
 
-def chunk_tasks(symbols: list[str], intervals: list[str], start_ms: int, end_ms: int, limit: int) -> list[dict[str, Any]]:
+def bybit_launch_start_bounds(symbols: list[str], timeout: float = 8.0) -> dict[str, int]:
+    wanted = {normalize_symbol(item) for item in symbols}
+    bounds: dict[str, int] = {}
+    cursor = ""
+    for _page in range(5):
+        params: dict[str, Any] = {"category": "linear", "limit": 1000}
+        if cursor:
+            params["cursor"] = cursor
+        payload = bybit_public_get("/v5/market/instruments-info", params, timeout=timeout)
+        result = payload.get("result") if isinstance(payload.get("result"), dict) else {}
+        for item in result.get("list") or []:
+            if not isinstance(item, dict):
+                continue
+            symbol = normalize_symbol(item.get("symbol"))
+            if symbol not in wanted:
+                continue
+            launch_ms = normalize_epoch_ms(item.get("launchTime") or item.get("createdTime"))
+            if launch_ms > 0:
+                bounds[symbol] = launch_ms
+        cursor = str(result.get("nextPageCursor") or "").strip()
+        if not cursor or wanted.issubset(bounds):
+            break
+    return bounds
+
+
+def chunk_tasks(
+    symbols: list[str],
+    intervals: list[str],
+    start_ms: int,
+    end_ms: int,
+    limit: int,
+    symbol_start_bounds: dict[str, int] | None = None,
+) -> list[dict[str, Any]]:
     tasks: list[dict[str, Any]] = []
+    symbol_start_bounds = symbol_start_bounds or {}
     for symbol in symbols:
+        symbol_start_ms = max(start_ms, int(symbol_start_bounds.get(normalize_symbol(symbol), 0) or 0))
         for interval in intervals:
             step = INTERVAL_MS.get(interval)
             if not step:
                 continue
-            interval_start_ms = align_start_ms(start_ms, step)
+            interval_start_ms = align_start_ms(symbol_start_ms, step)
             interval_end_ms = align_end_ms(end_ms, step)
             if interval_start_ms > interval_end_ms:
                 continue
@@ -730,6 +773,10 @@ def progress_payload(
             "max_requests": int(args.max_requests),
             "max_runtime_sec": int(args.max_runtime_sec),
             "request_timeout": float(getattr(args, "request_timeout", 15.0)),
+            "workers": int(getattr(args, "workers", 1)),
+            "provider_launch_filter": bool(getattr(args, "provider_launch_filter", True)),
+            "bybit_max_per_min": int(os.environ.get("BYBIT_MARKET_DATA_MAX_PER_MIN", "60")),
+            "okx_max_per_min": int(os.environ.get("OKX_MARKET_DATA_MAX_PER_MIN", "90")),
             "format": args.format,
         },
         "universe": {
@@ -869,7 +916,27 @@ def run_backfill(args: argparse.Namespace) -> dict[str, Any]:
     provider_order = csv_values(args.providers)
     task_limit = effective_task_limit(provider_order, int(args.limit))
     setattr(args, "task_limit", task_limit)
-    tasks = chunk_tasks(symbols, intervals, dt_to_ms(start_dt), dt_to_ms(end_dt) - 1, task_limit)
+    symbol_start_bounds: dict[str, int] = {}
+    if (
+        args.apply
+        and bool(getattr(args, "provider_launch_filter", True))
+        and int(args.days) >= 30
+        and provider_order == ["bybit"]
+    ):
+        try:
+            symbol_start_bounds = bybit_launch_start_bounds(symbols, timeout=float(getattr(args, "request_timeout", 8.0)))
+            universe_meta["provider_launch_filter"] = {
+                "provider": "bybit",
+                "enabled": True,
+                "known_symbols": len(symbol_start_bounds),
+            }
+        except Exception as exc:
+            universe_meta["provider_launch_filter"] = {
+                "provider": "bybit",
+                "enabled": False,
+                "error": str(exc),
+            }
+    tasks = chunk_tasks(symbols, intervals, dt_to_ms(start_dt), dt_to_ms(end_dt) - 1, task_limit, symbol_start_bounds)
     task_scope = task_bounds(tasks)
     existing = read_existing_keys(store, args.format)
     statuses = read_task_statuses(store)
@@ -917,6 +984,7 @@ def run_backfill(args: argparse.Namespace) -> dict[str, Any]:
     max_runtime_sec = max(1, int(args.max_runtime_sec))
     request_gap = 1.0 / max(float(args.max_rps), 0.01)
     flush_requests = max(1, int(args.flush_requests))
+    workers = max(1, min(8, int(getattr(args, "workers", 1))))
     completed = 0
     failed = 0
     marked_unavailable = 0
@@ -928,33 +996,69 @@ def run_backfill(args: argparse.Namespace) -> dict[str, Any]:
     last_task: dict[str, Any] | None = None
     deadline = time.monotonic() + max_runtime_sec
     status = "running"
-    for task in pending:
-        if str(task["symbol"]) in marked_symbols_unavailable:
-            append_unavailable_task(store, task, "symbol_unavailable_after_prior_provider_result")
-            marked_unavailable += 1
-            skipped_unavailable += 1
-            last_task = {
-                "symbol": task["symbol"],
-                "interval": task["interval"],
-                "start": ms_to_iso(int(task["start_ms"])),
-                "end": ms_to_iso(int(task["end_ms"])),
-                "provider": "unavailable_symbol",
-                "rows": 0,
-            }
-            continue
-        attempted = completed + failed + marked_unavailable
-        if max_requests and attempted >= max_requests:
-            status = "paused_request_budget"
-            break
-        if time.monotonic() >= deadline:
-            status = "paused_time_budget"
-            break
-        rows, provider, error, terminal_unavailable = fetch_task(
-            task,
-            provider_order,
-            int(args.limit),
-            request_timeout=float(getattr(args, "request_timeout", 15.0)),
+
+    def flush_buffer() -> None:
+        nonlocal buffer, buffer_statuses, existing, stored_rows
+        if not buffer:
+            return
+        merge_write_rows(store, "historical_klines", buffer, args.format)
+        existing = read_existing_keys(store, args.format)
+        stored_rows = count_existing_keys_for_tasks(existing, tasks)
+        for item_task, item_status, item_provider, item_rows, item_error in buffer_statuses:
+            append_task_status(store, item_task, item_status, provider=item_provider, rows=item_rows, error=item_error)
+            statuses[task_key(item_task)] = item_status
+        buffer = []
+        buffer_statuses = []
+
+    def current_payload() -> dict[str, Any]:
+        return progress_payload(
+            args=args,
+            status=status,
+            symbols=symbols,
+            universe_meta=universe_meta,
+            total_tasks=len(tasks),
+            pending_tasks=max(0, len(pending) - completed - failed - marked_unavailable),
+            completed_requests=completed,
+            failed_requests=failed,
+            skipped_existing=skipped_existing,
+            skipped_unavailable=skipped_unavailable,
+            skipped_partial=skipped_partial,
+            fetched_rows=fetched_rows,
+            written_rows=stored_rows,
+            errors=errors,
+            started_at=started_at,
+            existing_keys=existing,
+            task_statuses=statuses,
+            task_bounds_filter=task_scope,
+            last_task=last_task,
         )
+
+    def write_current_progress() -> None:
+        write_progress(runtime_dir, reports_dir, current_payload(), args.output_prefix)
+
+    def mark_symbol_task_unavailable(task: dict[str, Any]) -> None:
+        nonlocal marked_unavailable, skipped_unavailable, last_task
+        append_unavailable_task(store, task, "symbol_unavailable_after_prior_provider_result")
+        statuses[task_key(task)] = "unavailable"
+        marked_unavailable += 1
+        skipped_unavailable += 1
+        last_task = {
+            "symbol": task["symbol"],
+            "interval": task["interval"],
+            "start": ms_to_iso(int(task["start_ms"])),
+            "end": ms_to_iso(int(task["end_ms"])),
+            "provider": "unavailable_symbol",
+            "rows": 0,
+        }
+
+    def record_fetch_result(
+        task: dict[str, Any],
+        rows: list[dict[str, Any]],
+        provider: str,
+        error: str,
+        terminal_unavailable: bool,
+    ) -> None:
+        nonlocal completed, failed, marked_unavailable, skipped_unavailable, fetched_rows, last_task
         if rows:
             buffer.extend(rows)
             task_status = "complete" if len(rows) >= int(task.get("expected_bars") or 0) else "partial_available"
@@ -998,71 +1102,88 @@ def run_backfill(args: argparse.Namespace) -> dict[str, Any]:
                 "provider": "",
                 "rows": 0,
             }
-        if buffer and (completed % flush_requests == 0):
-            write_result = merge_write_rows(store, "historical_klines", buffer, args.format)
-            existing = read_existing_keys(store, args.format)
-            stored_rows = count_existing_keys_for_tasks(existing, tasks)
-            for item_task, item_status, item_provider, item_rows, item_error in buffer_statuses:
-                append_task_status(store, item_task, item_status, provider=item_provider, rows=item_rows, error=item_error)
-                statuses[task_key(item_task)] = item_status
-            buffer = []
-            buffer_statuses = []
-        payload = progress_payload(
-            args=args,
-            status=status,
-            symbols=symbols,
-            universe_meta=universe_meta,
-            total_tasks=len(tasks),
-            pending_tasks=max(0, len(pending) - completed - failed - marked_unavailable),
-            completed_requests=completed,
-            failed_requests=failed,
-            skipped_existing=skipped_existing,
-            skipped_unavailable=skipped_unavailable,
-            skipped_partial=skipped_partial,
-            fetched_rows=fetched_rows,
-            written_rows=stored_rows,
-            errors=errors,
-            started_at=started_at,
-            existing_keys=existing,
-            task_statuses=statuses,
-            task_bounds_filter=task_scope,
-            last_task=last_task,
-        )
-        write_progress(runtime_dir, reports_dir, payload, args.output_prefix)
-        if request_gap > 0:
-            time.sleep(request_gap)
+
+    if workers <= 1:
+        for task in pending:
+            if str(task["symbol"]) in marked_symbols_unavailable:
+                mark_symbol_task_unavailable(task)
+                continue
+            attempted = completed + failed + marked_unavailable
+            if max_requests and attempted >= max_requests:
+                status = "paused_request_budget"
+                break
+            if time.monotonic() >= deadline:
+                status = "paused_time_budget"
+                break
+            rows, provider, error, terminal_unavailable = fetch_task(
+                task,
+                provider_order,
+                int(args.limit),
+                request_timeout=float(getattr(args, "request_timeout", 15.0)),
+            )
+            record_fetch_result(task, rows, provider, error, terminal_unavailable)
+            if buffer and (completed % flush_requests == 0):
+                flush_buffer()
+            write_current_progress()
+            if request_gap > 0:
+                time.sleep(request_gap)
+    else:
+        task_iter = iter(pending)
+        in_flight: dict[Future[tuple[list[dict[str, Any]], str, str, bool]], dict[str, Any]] = {}
+        next_submit_at = time.monotonic()
+        exhausted = False
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            while True:
+                while not exhausted and len(in_flight) < workers:
+                    attempted = completed + failed + marked_unavailable + len(in_flight)
+                    if max_requests and attempted >= max_requests:
+                        status = "paused_request_budget"
+                        break
+                    if time.monotonic() >= deadline:
+                        status = "paused_time_budget"
+                        break
+                    try:
+                        task = next(task_iter)
+                    except StopIteration:
+                        exhausted = True
+                        break
+                    if str(task["symbol"]) in marked_symbols_unavailable:
+                        mark_symbol_task_unavailable(task)
+                        continue
+                    wait_for_slot = next_submit_at - time.monotonic()
+                    if wait_for_slot > 0:
+                        time.sleep(wait_for_slot)
+                    future = executor.submit(
+                        fetch_task,
+                        task,
+                        provider_order,
+                        int(args.limit),
+                        float(getattr(args, "request_timeout", 15.0)),
+                    )
+                    in_flight[future] = task
+                    next_submit_at = time.monotonic() + request_gap
+                if not in_flight:
+                    break
+                done, _pending_futures = wait(in_flight, timeout=1.0, return_when=FIRST_COMPLETED)
+                if not done:
+                    write_current_progress()
+                    continue
+                for future in done:
+                    task = in_flight.pop(future)
+                    try:
+                        rows, provider, error, terminal_unavailable = future.result()
+                    except Exception as exc:
+                        rows, provider, error, terminal_unavailable = [], "", str(exc), False
+                    record_fetch_result(task, rows, provider, error, terminal_unavailable)
+                if len(buffer_statuses) >= flush_requests:
+                    flush_buffer()
+                write_current_progress()
+        flush_buffer()
     if buffer:
-        write_result = merge_write_rows(store, "historical_klines", buffer, args.format)
-        existing = read_existing_keys(store, args.format)
-        stored_rows = count_existing_keys_for_tasks(existing, tasks)
-        for item_task, item_status, item_provider, item_rows, item_error in buffer_statuses:
-            append_task_status(store, item_task, item_status, provider=item_provider, rows=item_rows, error=item_error)
-            statuses[task_key(item_task)] = item_status
-        buffer = []
-        buffer_statuses = []
+        flush_buffer()
     if status == "running":
         status = "complete" if completed + failed + marked_unavailable >= len(pending) else "paused"
-    payload = progress_payload(
-        args=args,
-        status=status,
-        symbols=symbols,
-        universe_meta=universe_meta,
-        total_tasks=len(tasks),
-        pending_tasks=max(0, len(pending) - completed - failed - marked_unavailable),
-        completed_requests=completed,
-        failed_requests=failed,
-        skipped_existing=skipped_existing,
-        skipped_unavailable=skipped_unavailable,
-        skipped_partial=skipped_partial,
-        fetched_rows=fetched_rows,
-        written_rows=stored_rows,
-        errors=errors,
-        started_at=started_at,
-        existing_keys=existing,
-        task_statuses=statuses,
-        task_bounds_filter=task_scope,
-        last_task=last_task,
-    )
+    payload = current_payload()
     write_progress(runtime_dir, reports_dir, payload, args.output_prefix)
     return payload
 
@@ -1084,6 +1205,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--max-runtime-sec", type=int, default=900)
     parser.add_argument("--request-timeout", type=float, default=15.0)
     parser.add_argument("--flush-requests", type=int, default=10)
+    parser.add_argument("--workers", type=int, default=1)
+    parser.add_argument("--no-provider-launch-filter", dest="provider_launch_filter", action="store_false")
+    parser.set_defaults(provider_launch_filter=True)
     parser.add_argument("--format", choices=["parquet", "jsonl"], default="parquet")
     parser.add_argument("--output-prefix", default="historical_kline_backfill_latest")
     parser.add_argument("--apply", action="store_true", help="Actually request public Bybit/OKX data. Omit for plan/progress only.")

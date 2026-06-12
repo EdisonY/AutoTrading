@@ -2,6 +2,15 @@
 
 This is the durable reason-and-outcome ledger for every material design, code, configuration, deployment, rollback, optimization, or live operational change.
 
+## 2026-06-13 00:25 CST - Add indicator candidate stress review
+- Trigger / reason: User asked to follow the next step after the full local indicator-factory run found one singularity candidate and many near misses.
+- Completed: Added `部署工具/indicator_candidate_stress_review.py`, a local-only candidate audit tool. It reloads the singularity candidate from SQLite, replays the full local Kline warehouse for all trades, verifies train/validation/test summaries, applies extra roundtrip cost stress, and renders symbol/month/side/exit/regime breakdowns to local ignored JSON/HTML.
+- Result: The only singularity candidate `cf-4-d0b34f201a9483dd` (`BB/KC Squeeze Release + Donchian Breakout + Ichimoku Cross + Bollinger Width Low`, `1h`) reproduced the original full result exactly: `+43.34145 USDT`, PF `2.10124`, `123` trades. It survives 10bps extra roundtrip cost (`+18.753163 USDT`, PF `1.381706`) but fails at 20bps (`-5.835124 USDT`, PF `0.904679`). It is classified as `research_watch_only` because the test PF is much stronger than the full sample, which may indicate a favorable recent regime. No paper/live promotion is allowed from this result.
+- Not completed / remaining: The review uses simple trade-level regime buckets, not a full BTC/market-state classifier. Next useful step is to build the broader regime classifier/module lab and use this candidate as one structure clue, not as a deployable strategy.
+- Verification: Ran `python -B 部署工具\indicator_candidate_stress_review.py --days 730`; generated `runtime/indicator_candidate_stress_latest.json` and `research_lab/indicator_factory/indicator_candidate_stress_latest.html`; confirmed local-only safety flags and no Binance/cloud/live/order actions.
+- Live impact / deployment: Local research source/docs only. No Tencent/Aliyun deploy, no cloud compute, no live scanner restart, no market-data restart, no strategy config mutation, no scan-frequency change, no Binance/API queue request, no signed/private request, no paper/real order, no automatic tuning, no automatic rollback, and no automatic upgrade.
+- Files / release / commit: `部署工具/indicator_candidate_stress_review.py`, `PROJECT_STATE.md`, `记忆文档/MEMORY.md`, `CHANGELOG.md`; commit/release to follow.
+
 ## 2026-06-12 19:00 CST - Record post-indicator-factory research direction
 - Trigger / reason: User asked for an honest next-direction plan after discussing whether public indicator-combination sweeps are likely to produce an eye-catching backtest.
 - Completed: Updated `记忆文档/FUTURE_EXECUTION_PLAN.md` with the next research phase: use the current full indicator-factory run as a direction/filter screen, then shift primary work to regime classification, strategy-module contribution testing, and three research-only lines: J1 early momentum, J2 4h trend breakout, and J3 compression breakout. Updated durable state and memory with the same rule.

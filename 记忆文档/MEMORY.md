@@ -524,6 +524,7 @@
 - 2026-06-11：策略生命周期重置。A/B/C 一年期全量研究后，只有 A/v11 暂保留为现役旧策略；B/v16 冻结为 `frozen_observe`，只收微结构/样本，不扩张、不自动调参、不升级；C/v14 退役，历史报告保留但不再要求 `crypto-scanner-v14.service` active，也不再给 C 账本补新仓。新增 D/E/F 研究线：D=低频 Donchian/ATR 趋势突破，E=Top30 横截面强弱组合，F=预注册币对均值回归。D/E/F 只跑 `d_e_f_historical_research_report.py`，不过 train/validation/test/PF/回撤/OOS 门槛不得进 paper shadow，更不能进实盘。
 - 2026-06-11：回测数据本地化规则。Tencent 一年历史 K线仓实际约 `494M`、`368` 个 jsonl 文件，可压成 `historical_klines_YYYYMMDD.tar.gz` 下载到本地并解压为 `F:\AutoTrading\research_store\historical_klines`。后续重型回测以后都默认本地跑，节省服务器 CPU/RAM；但本地仓要按 Tencent 每日增量刷新，否则不能宣称结果覆盖最新数据。
 - 2026-06-11：Alpha 发现模式第一版落地。`alpha_discovery_research_report.py` 只读本地/腾讯一年历史 K线，记录 A 保留、B 冻结、C/D/F 拒绝、E 仅 4h 人工复核，并同时做涨跌阶段 forward-return 诊断和 G/H/I 研究线：G=起涨/起跌早段动量，H=波动收缩后突破，I=A/v11 派生过滤。首轮本地一年期结果仍不理想：G `-615.829379 USDT`、H `-271.806537 USDT`、I `-37.522333 USDT`，三者 `robust_candidate_intervals=0`，不进 paper shadow。诊断提示当前“早段”定义太松：末段 6 根 K 后方向收益不弱于早段，下一步应先收紧早段/尾段识别与行情 regime 特征，而不是继续堆策略数量。
+- 2026-06-13：本地 indicator factory 全量二次复核落地。唯一 singularity candidate `cf-4-d0b34f201a9483dd`（`BB/KC Squeeze Release + Donchian Breakout + Ichimoku Cross + Bollinger Width Low`，`1h`）通过 `indicator_candidate_stress_review.py` 重放：全样本 `+43.34145 USDT`、PF `2.10124`、`123` 笔；额外 10bps roundtrip 仍正，20bps 转负；test PF 明显强于全样本。结论固定为 `research_watch_only`：保留“波动压缩 + 突破 + 趋势确认”结构线索，不能进 paper/live，不能触发自动调参/回滚/升级。
 
 ---
 ## 2026-05-29 全局运行自检与账户方向口径修复

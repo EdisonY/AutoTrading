@@ -498,7 +498,7 @@ def symbol_unavailable_error(message: str) -> bool:
     return any(marker in text for marker in SYMBOL_UNAVAILABLE_MARKERS)
 
 
-def bybit_kline_window(symbol: str, interval: str, start_ms: int, end_ms: int, limit: int) -> list[list[Any]]:
+def bybit_kline_window(symbol: str, interval: str, start_ms: int, end_ms: int, limit: int, timeout: float = 15.0) -> list[list[Any]]:
     payload = bybit_public_get(
         "/v5/market/kline",
         {
@@ -509,7 +509,7 @@ def bybit_kline_window(symbol: str, interval: str, start_ms: int, end_ms: int, l
             "end": int(end_ms),
             "limit": int(limit),
         },
-        timeout=15,
+        timeout=timeout,
     )
     rows = []
     step_ms = INTERVAL_MS.get(interval, 60_000)
@@ -531,7 +531,7 @@ def bybit_kline_window(symbol: str, interval: str, start_ms: int, end_ms: int, l
     return rows
 
 
-def okx_kline_window(symbol: str, interval: str, start_ms: int, end_ms: int, limit: int) -> list[list[Any]]:
+def okx_kline_window(symbol: str, interval: str, start_ms: int, end_ms: int, limit: int, timeout: float = 15.0) -> list[list[Any]]:
     if not okx_symbol_supported(symbol):
         return []
     payload = okx_public_get(
@@ -542,7 +542,7 @@ def okx_kline_window(symbol: str, interval: str, start_ms: int, end_ms: int, lim
             "after": int(end_ms + 1),
             "limit": min(max(1, int(limit)), 300),
         },
-        timeout=15,
+        timeout=timeout,
     )
     rows = []
     step_ms = INTERVAL_MS.get(interval, 60_000)
@@ -593,7 +593,7 @@ def raw_rows_to_records(symbol: str, interval: str, raw_rows: list[list[Any]], s
     return records
 
 
-def fetch_task(task: dict[str, Any], provider_order: list[str], limit: int) -> tuple[list[dict[str, Any]], str, str, bool]:
+def fetch_task(task: dict[str, Any], provider_order: list[str], limit: int, request_timeout: float = 15.0) -> tuple[list[dict[str, Any]], str, str, bool]:
     symbol = str(task["symbol"])
     interval = str(task["interval"])
     start_ms = int(task["start_ms"])
@@ -604,9 +604,9 @@ def fetch_task(task: dict[str, Any], provider_order: list[str], limit: int) -> t
     for provider in provider_order:
         try:
             if provider == "bybit":
-                raw = bybit_kline_window(symbol, interval, start_ms, end_ms, limit)
+                raw = bybit_kline_window(symbol, interval, start_ms, end_ms, limit, timeout=request_timeout)
             elif provider == "okx":
-                raw = okx_kline_window(symbol, interval, start_ms, end_ms, min(limit, 300))
+                raw = okx_kline_window(symbol, interval, start_ms, end_ms, min(limit, 300), timeout=request_timeout)
             else:
                 continue
             if raw:
@@ -729,6 +729,7 @@ def progress_payload(
             "max_rps": float(args.max_rps),
             "max_requests": int(args.max_requests),
             "max_runtime_sec": int(args.max_runtime_sec),
+            "request_timeout": float(getattr(args, "request_timeout", 15.0)),
             "format": args.format,
         },
         "universe": {
@@ -948,7 +949,12 @@ def run_backfill(args: argparse.Namespace) -> dict[str, Any]:
         if time.monotonic() >= deadline:
             status = "paused_time_budget"
             break
-        rows, provider, error, terminal_unavailable = fetch_task(task, provider_order, int(args.limit))
+        rows, provider, error, terminal_unavailable = fetch_task(
+            task,
+            provider_order,
+            int(args.limit),
+            request_timeout=float(getattr(args, "request_timeout", 15.0)),
+        )
         if rows:
             buffer.extend(rows)
             task_status = "complete" if len(rows) >= int(task.get("expected_bars") or 0) else "partial_available"
@@ -1076,6 +1082,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--max-rps", type=float, default=0.5)
     parser.add_argument("--max-requests", type=int, default=60)
     parser.add_argument("--max-runtime-sec", type=int, default=900)
+    parser.add_argument("--request-timeout", type=float, default=15.0)
     parser.add_argument("--flush-requests", type=int, default=10)
     parser.add_argument("--format", choices=["parquet", "jsonl"], default="parquet")
     parser.add_argument("--output-prefix", default="historical_kline_backfill_latest")

@@ -54,6 +54,7 @@ class LocalResearchPipelineTests(unittest.TestCase):
             max_rps=0.2,
             batch_requests=240,
             batch_runtime_sec=1200,
+            request_timeout=8.0,
             flush_requests=10,
             download_prefix="historical_kline_backfill_2y_local",
             backtest_stage="full-2y-v1",
@@ -66,6 +67,8 @@ class LocalResearchPipelineTests(unittest.TestCase):
         self.assertIn("historical_kline_backfill.py", " ".join(download))
         self.assertIn("--providers", download)
         self.assertIn("bybit,okx", download)
+        self.assertIn("--request-timeout", download)
+        self.assertIn("8.0", download)
         self.assertNotIn("binance", " ".join(download).lower())
         self.assertIn("--all-combos", backtest)
         self.assertIn("indicator_factory.py", " ".join(backtest))

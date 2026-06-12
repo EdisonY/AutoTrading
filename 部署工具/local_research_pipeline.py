@@ -251,6 +251,8 @@ def make_download_cmd(args: argparse.Namespace) -> list[str]:
         str(args.batch_requests),
         "--max-runtime-sec",
         str(args.batch_runtime_sec),
+        "--request-timeout",
+        str(args.request_timeout),
         "--flush-requests",
         str(args.flush_requests),
         "--output-prefix",
@@ -354,6 +356,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--max-rps", type=float, default=0.2)
     parser.add_argument("--batch-requests", type=int, default=240)
     parser.add_argument("--batch-runtime-sec", type=int, default=1200)
+    parser.add_argument("--request-timeout", type=float, default=8.0)
     parser.add_argument("--flush-requests", type=int, default=10)
     parser.add_argument("--sleep-sec", type=int, default=30)
     parser.add_argument("--download-prefix", default="historical_kline_backfill_2y_local")

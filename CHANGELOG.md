@@ -2,6 +2,15 @@
 
 This is the durable reason-and-outcome ledger for every material design, code, configuration, deployment, rollback, optimization, or live operational change.
 
+## 2026-06-12 19:00 CST - Record post-indicator-factory research direction
+- Trigger / reason: User asked for an honest next-direction plan after discussing whether public indicator-combination sweeps are likely to produce an eye-catching backtest.
+- Completed: Updated `记忆文档/FUTURE_EXECUTION_PLAN.md` with the next research phase: use the current full indicator-factory run as a direction/filter screen, then shift primary work to regime classification, strategy-module contribution testing, and three research-only lines: J1 early momentum, J2 4h trend breakout, and J3 compression breakout. Updated durable state and memory with the same rule.
+- Result: The canonical next direction is no longer "keep stacking generic public indicators." The next useful work after the running sweep finishes is to extract structural clues, build `regime_classifier.py` / `strategy_module_lab.py`, and only then test J1/J2/J3 as research-only hypotheses.
+- Not completed / remaining: No code for the new research phase is implemented in this change. The current local full run is still running and should finish before finalizing the first extraction report.
+- Verification: Documentation-only change; confirmed the current indicator-factory run was still active before editing (`progress_pct` about `22.28%`, `candidate_count=18`). No tests required beyond Git guard for this planning update.
+- Live impact / deployment: Documentation and planning only. No Tencent/Aliyun deploy, no cloud compute, no live scanner restart, no market-data restart, no strategy config mutation, no scan-frequency change, no Binance/API queue request, no signed/private request, no paper/real order, no automatic tuning, no automatic rollback, and no automatic upgrade.
+- Files / release / commit: `记忆文档/FUTURE_EXECUTION_PLAN.md`, `PROJECT_STATE.md`, `记忆文档/MEMORY.md`, `CHANGELOG.md`; commit/release to follow.
+
 ## 2026-06-12 17:05 CST - Persist full indicator combo statistics before full run
 - Trigger / reason: User asked whether every strategy/indicator combination has complete summary statistics before running the full local backtest. Review showed the first indicator-factory version was enough for screening but not complete enough for later forensic review because the SQLite main table stored only full/test headline metrics while train/validation detail lived mainly in transient run JSON.
 - Completed: Added `combo_result_details` to `indicator_factory.py` so every combo/interval now persists full, train, validation, and test summary JSON, robust score, decision, anti-fit reasons, indicator ids, and params in SQLite. Added `run_progress` plus `runtime/indicator_factory_progress_latest.json` so a long local run has visible progress without reading logs. Added regression coverage that a smoke run writes detail rows and completed progress.

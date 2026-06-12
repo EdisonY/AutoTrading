@@ -2,6 +2,54 @@
 
 ## 2026-05-31 下一阶段目标：从调参系统升级为策略进化系统
 
+## 2026-06-12 研究路线重置：从公开指标组合转向市场状态与交易行为
+
+当前本地 `indicator_factory.py` 全量组合回测继续跑完，但它的定位改为“筛方向、找过滤器、淘汰无效指标堆叠”，不是直接寻找可上线神策略。公开指标组合的预期产出是结构线索：哪些 regime 适合趋势、哪些过滤器减少假信号、哪些策略族应放弃。任何单个漂亮回测都不能直接进入 paper/live，必须过多币种、多周期、walk-forward/OOS、样本数、回撤和 paper 校准。
+
+### 下一阶段核心原则
+
+1. 不再把主要精力放在继续堆 RSI/MACD/EMA/Bollinger/ADX 这类公开指标组合。
+2. 先判断市场状态，再决定策略启用；一个策略不能硬套趋势、震荡、压缩、极端波动和末端行情。
+3. 研究对象从“整套策略参数”拆成模块：入场、过滤器、出场、仓位、市场状态。
+4. 胜率只作辅助；优先看最大回撤、Profit Factor、单笔期望、OOS 稳定、交易数和盈亏比。
+5. 自动调参/自动回滚/自动升级继续关闭；当前阶段只做 research-only 证据，不改实盘、不改 paper 主线。
+
+### 新研究主线
+
+1. **Regime classifier**
+   - 给每根 K线/每个交易窗口打标签：趋势扩张、震荡均值回归、波动压缩、突破爆发、末端冲高/杀跌、极端高波动、流动性异常。
+   - 输出应进入本地 research lab 和 HTML 报告，作为后续策略分层回测的前置条件。
+   - 验收：同一策略在不同 regime 下的 PF、回撤、交易数、胜率差异清楚可见。
+
+2. **Strategy module lab**
+   - 不再只测完整策略，改为测模块贡献：某个过滤器/出场/仓位规则加入前后，PF、回撤、交易数、亏损尾部是否改善。
+   - 候选模块包括 ADX/volume filter、low-ADX no-trade filter、BTC/ETH market beta filter、ATR expansion/compression filter、time-in-trade cap、trailing/partial take-profit variants。
+   - 验收：能回答“这个模块是提升收益、降低回撤、减少交易，还是只是过拟合”。
+
+3. **J1 early momentum**
+   - 目标：抓起涨/起跌早段，不追中段/尾端。
+   - 研究输入：1m/5m/15m 成交额突增、短窗价格突破、24h change delta、volume delta、离日内高低点距离、盘口/微结构可用时加入确认。
+   - 风控原则：快止损、盈利 trailing、尾端禁追、流动性过滤。
+
+4. **J2 4h trend breakout**
+   - 目标：低频趋势突破，减少噪声交易。
+   - 研究输入：Donchian/Ichimoku/EMA 只做结构确认，ATR 扩张确认，BTC/ETH 同向过滤，高波动乱杀时禁入。
+   - 验收：不看单次大赚，要求多 split 正收益、PF 稳定、交易数足够。
+
+5. **J3 compression breakout**
+   - 目标：低波动压缩后爆发。
+   - 研究输入：Bollinger width / ATR percentile / range compression、成交量恢复、区间突破、假突破过滤。
+   - 验收：压缩状态下的突破显著优于普通突破，不靠少数极端币贡献。
+
+### 执行顺序
+
+1. 等待当前 `full-2y-v1-clean27` indicator factory 全量回测完成。
+2. 从结果中只提炼三类信息：可复用过滤器、值得保留的 regime 线索、应放弃的指标族。
+3. 生成一份本地 research 总结 HTML：候选、near miss、失败族群、胜率/PF/回撤分布、下一步模块假设。
+4. 开发 `regime_classifier.py` 和 `strategy_module_lab.py`，先跑本地回测，不接 paper/live。
+5. 基于模块结果再实现 J1/J2/J3 research-only runners。
+6. 只有当某条主线跨 split、跨币种、跨 regime 稳定，才进入 paper-shadow 提案；仍需人工审批。
+
 ## 2026-06-02 当前长期任务 P 级执行队列（canonical）
 
 本节是后续自动推进的优先级来源。这里的 P 级是长期工程优先级，不是入口页 attention priority。旧阶段清单仍保留历史上下文；如冲突，以本节顺序为准。

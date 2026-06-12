@@ -242,7 +242,7 @@ def make_download_cmd(args: argparse.Namespace) -> list[str]:
         "--intervals",
         args.intervals,
         "--providers",
-        "bybit,okx",
+        args.providers,
         "--format",
         "jsonl",
         "--max-rps",
@@ -352,6 +352,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run local 2y data backfill, then full indicator-factory backtest")
     parser.add_argument("--days", type=int, default=730)
     parser.add_argument("--intervals", default="15m,30m,1h,4h")
+    parser.add_argument("--providers", default="bybit,okx")
     parser.add_argument("--top-n", type=int, default=30)
     parser.add_argument("--max-rps", type=float, default=0.2)
     parser.add_argument("--batch-requests", type=int, default=240)

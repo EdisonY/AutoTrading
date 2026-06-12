@@ -2,6 +2,15 @@
 
 This is the durable reason-and-outcome ledger for every material design, code, configuration, deployment, rollback, optimization, or live operational change.
 
+## 2026-06-13 02:35 CST - Reject J3 v2 after full strategy rebuild
+- Trigger / reason: User asked to start the next step after P1-P4 found one weak J3 v2 signal-edge candidate.
+- Completed: Added `部署工具/j3_v2_strategy_research.py`, a local-only full strategy rebuild for `J3_compression_breakout_v2 / 4h`. It reuses the P1-P4 signal definition, applies P3 no-trade filters, simulates ATR/time/trailing exits, runs train/validation/test, adds 0/5/10/20bps cost stress, and renders symbol/month/side/regime/exit breakdowns.
+- Result: Full local two-year run `python -B 部署工具\j3_v2_strategy_research.py --days 730` completed and rejected all `5` variants. The best variant by robust score was `j3v2_edge_3bar_p3_filter`, but full result was `-12.412739 USDT`, PF `0.899716`, `152` trades; test was `-12.664320 USDT`, PF `0.460639`; 10bps stress was `-42.846241 USDT`. A no-filter variant was positive full sample (`+42.496267 USDT`) but failed validation (`-1.046668`), test (`-25.203953`), and 10bps stress (`-53.432685`), so it is not robust.
+- Not completed / remaining: No J3 v2 research candidate is promoted. The next research step should return to signal-edge discovery or add matched/random baselines and stricter structural filters before another full strategy rebuild.
+- Verification: `python -B -m py_compile 部署工具\j3_v2_strategy_research.py`; `python -B 部署工具\j3_v2_strategy_research.py --days 120`; `python -B 部署工具\j3_v2_strategy_research.py --days 730`. Generated `runtime/j3_v2_strategy_research_latest.json` and `reports/j3_v2_strategy_research_latest.html`.
+- Live impact / deployment: Local research source/docs only. No Tencent/Aliyun deploy, no cloud compute, no live scanner restart, no market-data restart, no strategy config mutation, no scan-frequency change, no Binance/API queue request, no signed/private request, no paper/real order, no automatic tuning, no automatic rollback, and no automatic upgrade.
+- Files / release / commit: `部署工具/j3_v2_strategy_research.py`, `记忆文档/FUTURE_EXECUTION_PLAN.md`, `PROJECT_STATE.md`, `记忆文档/MEMORY.md`, `CHANGELOG.md`; commit/release to follow.
+
 ## 2026-06-13 02:00 CST - Land local P1-P4 signal edge phase
 - Trigger / reason: User asked to combine the current research plan with the long-term plan, set P1-P4 as the next-stage goal, run everything locally, reduce mid-work divergence, record optimization points, and commit once at the end.
 - Completed: Added `部署工具/signal_edge_lab.py`, a local-only P1-P4 runner. P1 measures forward-return edge for pre-registered signals instead of full strategy PnL. P2 adds percentile-based regime labels and a regime edge matrix. P3 discovers no-trade filters from negative edge regimes. P4 screens J1/J2/J3 v2 candidates from signal edge evidence only.

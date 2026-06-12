@@ -14,9 +14,10 @@
 - [x] 首轮两年全量结果：J1/J2/J3 共 `15` 个变体周期全部 rejected，无 paper/live 候选。
 - [x] P1-P4 `signal_edge_lab.py`：信号预测力、percentile regime edge matrix、no-trade filters、J v2 候选筛选已落地，输出 `runtime/signal_edge_lab_latest.json` 与 `reports/signal_edge_lab_latest.html`。
 - [x] P1-P4 首轮两年全量结果：`577390` 信号样本、`96` 条 no-trade filter、`1` 个弱 J v2 研究候选。候选为 `J3_compression_breakout_v2 / 4h / 3bar`，均值 `+0.422392%`，中位 `+0.237816%`，胜率 `54.827%`，P10 `-3.288573%`。这只允许进入完整策略重建研究，不允许 paper/live。
+- [x] J3 v2 完整策略重建：`j3_v2_strategy_research.py` 已落地并跑完两年全量，5 个变体全部 rejected。最佳 P3 filter 变体 full/test/10bps 全失败；no-filter 变体全样本为正但 validation/test/cost stress 失败。J3 v2 当前停止，不继续围绕它调参拟合。
 - [ ] 下一轮：校准 regime 阈值，尤其 `compression_watch` 首版占比 `70.65%` 过宽；把模块实验从“完整小策略”进一步拆成 entry-only forward return、filter ablation、exit attribution。
 - [ ] 下一轮：为 J3 做 compression breakout 的更严格定义，要求普通突破对照组明显更差、分币种不集中、月份不集中、test 不塌。
-- [ ] 下一轮：围绕唯一 P4 候选做 J3 v2 完整策略重建，必须加入 no-trade filters、成本压力、train/validation/test、分币种/月度贡献和随机/匹配基准；未通过前不得进入 paper shadow。
+- [ ] 下一轮：不要继续对 J3 v2 做参数拟合；先增加随机/匹配基准和更严格结构过滤，再决定是否重开新的 full-strategy rebuild。
 
 ### 下一阶段核心原则
 

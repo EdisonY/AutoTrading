@@ -527,6 +527,7 @@
 - 2026-06-13：本地 indicator factory 全量二次复核落地。唯一 singularity candidate `cf-4-d0b34f201a9483dd`（`BB/KC Squeeze Release + Donchian Breakout + Ichimoku Cross + Bollinger Width Low`，`1h`）通过 `indicator_candidate_stress_review.py` 重放：全样本 `+43.34145 USDT`、PF `2.10124`、`123` 笔；额外 10bps roundtrip 仍正，20bps 转负；test PF 明显强于全样本。结论固定为 `research_watch_only`：保留“波动压缩 + 突破 + 趋势确认”结构线索，不能进 paper/live，不能触发自动调参/回滚/升级。
 - 2026-06-13：下一阶段本地研究骨架已落地。`regime_classifier.py` 对本地两年 K线做行情状态分类，`strategy_module_lab.py` 对 J1 起涨/起跌早段、J2 4h 趋势突破、J3 压缩突破做预注册模块实验。首轮两年全量：分型覆盖 `108` 个币种周期，但 `compression_watch=70.65%` 说明首版压缩阈值偏宽；J1/J2/J3 共 `15` 个变体周期全部 rejected，最佳 J3 full 仅 `+1.248671 USDT` 且 test `-51.614277 USDT`。结论：框架可用，策略仍不行；后续先校准 regime 与模块贡献，不要为了好看继续拟合参数。
 - 2026-06-13：P1-P4 信号预测力阶段已落地。`signal_edge_lab.py` 不做完整交易，先测信号后未来 1/3/6/12 根 K 是否顺方向走，并输出 regime edge matrix、no-trade filters、J1/J2/J3 v2 候选。两年全量样本 `577390`，发现 `96` 条 no-trade filter；唯一 J v2 弱候选是 `J3_compression_breakout_v2 / 4h / 3bar`：`549` 样本、均值 `+0.422392%`、中位 `+0.237816%`、胜率 `54.827%`、P10 `-3.288573%`。结论：回测数据不是没用，它把大多数 impulse/trend 信号判为弱或负边，只留下一个 J3 方向进入“完整策略重建 + 成本压力 + train/validation/test”的下一关；仍不能 paper/live。
+- 2026-06-13：J3 v2 完整策略重建已淘汰唯一 P4 弱候选。`j3_v2_strategy_research.py` 对 `J3_compression_breakout_v2 / 4h` 做完整入场/出场/成本/分段回测，5 个变体全部 rejected。最佳 `j3v2_edge_3bar_p3_filter` full `-12.412739 USDT`、PF `0.899716`、test `-12.664320`、10bps stress `-42.846241`；no-filter 虽 full `+42.496267`，但 validation/test/10bps 全失败。结论：forward edge 不等于可交易 alpha，J3 v2 不进 research_candidate，更不能 paper/live。
 
 ---
 ## 2026-05-29 全局运行自检与账户方向口径修复

@@ -106,6 +106,24 @@ class V11HistoricalResearchReportTests(unittest.TestCase):
             self.assertIn("自动应用", html)
             self.assertIn("详细开平仓记录", html)
 
+    def test_universe_symbols_prefers_clean_research_universe(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write_history(root, symbol="PAXGUSDT")
+            universe_path = root / "runtime" / "historical_kline_research_universe_latest.json"
+            universe_path.write_text(
+                json.dumps(
+                    {
+                        "policy": "test_clean_universe",
+                        "eligible_symbols": ["btcusdt", " ETHUSDT ", ""],
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+
+            self.assertEqual(self.tool.universe_symbols(root), ["BTCUSDT", "ETHUSDT"])
+
 
 if __name__ == "__main__":
     unittest.main()

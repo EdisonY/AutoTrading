@@ -134,6 +134,12 @@ def historical_payload(root: Path = ROOT) -> dict[str, Any]:
 def universe_symbols(root: Path = ROOT, explicit: list[str] | None = None) -> list[str]:
     if explicit:
         return [item.upper() for item in explicit if item.strip()]
+    research_universe_path = root / "runtime" / "historical_kline_research_universe_latest.json"
+    payload = read_json(research_universe_path)
+    eligible = payload.get("eligible_symbols") if isinstance(payload.get("eligible_symbols"), list) else []
+    clean_eligible = [str(item).upper().strip() for item in eligible if str(item).strip()]
+    if clean_eligible:
+        return clean_eligible
     hist = historical_payload(root)
     universe = hist.get("universe") if isinstance(hist.get("universe"), dict) else {}
     symbols = universe.get("symbols") if isinstance(universe.get("symbols"), list) else []

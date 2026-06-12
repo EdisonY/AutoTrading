@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import sqlite3
 import sys
 import tempfile
 import unittest
@@ -122,6 +123,16 @@ class IndicatorFactoryTests(unittest.TestCase):
             html = root / "research_lab" / "indicator_factory" / "indicator_factory_latest.html"
             self.assertTrue(db.exists())
             self.assertTrue(html.exists())
+            conn = sqlite3.connect(db)
+            detail_count = conn.execute("select count(*) from combo_result_details").fetchone()[0]
+            progress = conn.execute("select status, completed_combos, total_combos from run_progress where run_id=?", (payload["run_id"],)).fetchone()
+            detail_json = conn.execute("select full_json, train_json, validation_json, test_json from combo_result_details limit 1").fetchone()
+            conn.close()
+            self.assertEqual(detail_count, 3)
+            self.assertEqual(progress, ("completed", 3, 3))
+            self.assertTrue(all(json.loads(item) for item in detail_json))
+            progress_path = root / "runtime" / "indicator_factory_progress_latest.json"
+            self.assertEqual(json.loads(progress_path.read_text(encoding="utf-8"))["status"], "completed")
             html_text = html.read_text(encoding="utf-8")
             self.assertIn("本地指标工厂", html_text)
             self.assertIn("指标注册库", html_text)

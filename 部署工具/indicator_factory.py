@@ -272,6 +272,45 @@ def init_db(db_path: Path = DB_PATH) -> sqlite3.Connection:
     )
     conn.execute(
         """
+        create table if not exists combo_result_details (
+            run_id text not null,
+            combo_id text not null,
+            combo_name text not null,
+            interval text not null,
+            indicator_ids_json text not null,
+            full_json text not null,
+            train_json text not null,
+            validation_json text not null,
+            test_json text not null,
+            robust_score real not null,
+            decision text not null,
+            anti_fit_reasons_json text not null,
+            params_json text not null,
+            updated_at text not null,
+            primary key (run_id, combo_id, interval)
+        )
+        """
+    )
+    conn.execute(
+        """
+        create table if not exists run_progress (
+            run_id text primary key,
+            stage text not null,
+            status text not null,
+            completed_combos integer not null,
+            total_combos integer not null,
+            completed_combo_intervals integer not null,
+            total_combo_intervals integer not null,
+            candidate_count integer not null,
+            latest_combo_id text not null,
+            latest_interval text not null,
+            updated_at text not null,
+            progress_json text not null
+        )
+        """
+    )
+    conn.execute(
+        """
         create table if not exists candidates (
             run_id text not null,
             combo_id text not null,
@@ -811,6 +850,60 @@ def anti_fit_decision(row: dict[str, Any]) -> tuple[str, list[str]]:
     return "rejected", reasons
 
 
+def write_progress(
+    *,
+    paths: dict[str, Path],
+    conn: sqlite3.Connection,
+    run_id: str,
+    stage: str,
+    status: str,
+    completed_combos: int,
+    total_combos: int,
+    completed_combo_intervals: int,
+    total_combo_intervals: int,
+    candidate_count: int,
+    latest_combo_id: str = "",
+    latest_interval: str = "",
+) -> None:
+    payload = {
+        "generated_at": now_iso(),
+        "module": "indicator_factory_progress",
+        "run_id": run_id,
+        "stage": stage,
+        "status": status,
+        "completed_combos": completed_combos,
+        "total_combos": total_combos,
+        "completed_combo_intervals": completed_combo_intervals,
+        "total_combo_intervals": total_combo_intervals,
+        "candidate_count": candidate_count,
+        "latest_combo_id": latest_combo_id,
+        "latest_interval": latest_interval,
+        "progress_pct": round((completed_combo_intervals / total_combo_intervals) * 100.0, 4) if total_combo_intervals else 0.0,
+        "safety": safety_payload(),
+    }
+    write_json_atomic(paths["runtime"] / "indicator_factory_progress_latest.json", payload)
+    conn.execute(
+        """
+        insert or replace into run_progress(run_id,stage,status,completed_combos,total_combos,completed_combo_intervals,total_combo_intervals,candidate_count,latest_combo_id,latest_interval,updated_at,progress_json)
+        values(?,?,?,?,?,?,?,?,?,?,?,?)
+        """,
+        (
+            run_id,
+            stage,
+            status,
+            int(completed_combos),
+            int(total_combos),
+            int(completed_combo_intervals),
+            int(total_combo_intervals),
+            int(candidate_count),
+            latest_combo_id,
+            latest_interval,
+            payload["generated_at"],
+            jdump(payload),
+        ),
+    )
+
+
 def data_coverage_plan(root: Path, target_days: int = 730) -> dict[str, Any]:
     table = root / "research_store" / "historical_klines"
     days: list[str] = []
@@ -883,6 +976,21 @@ def run_factory(root: Path, *, days: int, intervals: list[str], max_combos: int,
     result_rows: list[dict[str, Any]] = []
     candidate_rows: list[dict[str, Any]] = []
     trades_out = paths["trades"] / f"{run_id}.jsonl"
+    total_combo_intervals = len(selected) * len(intervals)
+    completed_combo_intervals = 0
+    write_progress(
+        paths=paths,
+        conn=conn,
+        run_id=run_id,
+        stage=stage,
+        status="running",
+        completed_combos=0,
+        total_combos=len(selected),
+        completed_combo_intervals=0,
+        total_combo_intervals=total_combo_intervals,
+        candidate_count=0,
+    )
+    conn.commit()
     for pos, combo in enumerate(selected, start=1):
         print(f"[{now_iso()}] combo {pos}/{len(selected)} {combo['combo_id']} {combo['name']}", file=sys.stderr, flush=True)
         variant_params = {"combo": combo, "common": common}
@@ -929,6 +1037,28 @@ def run_factory(root: Path, *, days: int, intervals: list[str], max_combos: int,
                     jdump(variant_params),
                 ),
             )
+            conn.execute(
+                """
+                insert or replace into combo_result_details(run_id,combo_id,combo_name,interval,indicator_ids_json,full_json,train_json,validation_json,test_json,robust_score,decision,anti_fit_reasons_json,params_json,updated_at)
+                values(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                """,
+                (
+                    run_id,
+                    combo["combo_id"],
+                    combo["name"],
+                    interval,
+                    jdump(combo["indicator_ids"]),
+                    jdump(compact["full"]),
+                    jdump(compact["train"]),
+                    jdump(compact["validation"]),
+                    jdump(compact["test"]),
+                    compact["robust_score"],
+                    decision,
+                    jdump(reasons),
+                    jdump(variant_params),
+                    now_iso(),
+                ),
+            )
             for trade in (row.get("trades") or [])[-60:]:
                 trades_out.parent.mkdir(parents=True, exist_ok=True)
                 with trades_out.open("a", encoding="utf-8") as fh:
@@ -943,11 +1073,57 @@ def run_factory(root: Path, *, days: int, intervals: list[str], max_combos: int,
                     (run_id, combo["combo_id"], interval, decision, compact["robust_score"], jdump(compact), now_iso()),
                 )
                 (paths["candidates"] / f"{run_id}_{combo['combo_id']}_{interval}.json").write_text(jdump(compact), encoding="utf-8")
+            completed_combo_intervals += 1
+            if completed_combo_intervals == total_combo_intervals or completed_combo_intervals % max(1, len(intervals) * 10) == 0:
+                write_progress(
+                    paths=paths,
+                    conn=conn,
+                    run_id=run_id,
+                    stage=stage,
+                    status="running",
+                    completed_combos=pos - 1,
+                    total_combos=len(selected),
+                    completed_combo_intervals=completed_combo_intervals,
+                    total_combo_intervals=total_combo_intervals,
+                    candidate_count=len(candidate_rows),
+                    latest_combo_id=combo["combo_id"],
+                    latest_interval=interval,
+                )
+        conn.commit()
+        write_progress(
+            paths=paths,
+            conn=conn,
+            run_id=run_id,
+            stage=stage,
+            status="running",
+            completed_combos=pos,
+            total_combos=len(selected),
+            completed_combo_intervals=completed_combo_intervals,
+            total_combo_intervals=total_combo_intervals,
+            candidate_count=len(candidate_rows),
+            latest_combo_id=combo["combo_id"],
+            latest_interval=intervals[-1] if intervals else "",
+        )
         conn.commit()
     summary = summarize_run(registry, combos, selected, result_rows, candidate_rows, coverage, data_coverage_plan(root, 730), run_id, stage, days, intervals)
     conn.execute(
         "insert or replace into runs(run_id,created_at,stage,days,intervals_json,symbols_json,combo_count,status,summary_json) values(?,?,?,?,?,?,?,?,?)",
         (run_id, now_iso(), stage, int(days), jdump(intervals), jdump(symbols), len(selected), "completed", jdump(summary)),
+    )
+    conn.commit()
+    write_progress(
+        paths=paths,
+        conn=conn,
+        run_id=run_id,
+        stage=stage,
+        status="completed",
+        completed_combos=len(selected),
+        total_combos=len(selected),
+        completed_combo_intervals=completed_combo_intervals,
+        total_combo_intervals=total_combo_intervals,
+        candidate_count=len(candidate_rows),
+        latest_combo_id=selected[-1]["combo_id"] if selected else "",
+        latest_interval=intervals[-1] if intervals else "",
     )
     conn.commit()
     payload = {

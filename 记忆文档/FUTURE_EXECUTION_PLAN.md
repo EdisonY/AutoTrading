@@ -6,6 +6,15 @@
 
 当前本地 `indicator_factory.py` 全量组合回测继续跑完，但它的定位改为“筛方向、找过滤器、淘汰无效指标堆叠”，不是直接寻找可上线神策略。公开指标组合的预期产出是结构线索：哪些 regime 适合趋势、哪些过滤器减少假信号、哪些策略族应放弃。任何单个漂亮回测都不能直接进入 paper/live，必须过多币种、多周期、walk-forward/OOS、样本数、回撤和 paper 校准。
 
+### 2026-06-13 落地状态
+
+- [x] `indicator_candidate_stress_review.py`：唯一 indicator-factory singularity candidate 已做二次压力复核，结论 `research_watch_only`，不进 paper/live。
+- [x] `regime_classifier.py`：本地两年 K线行情状态分类已落地，输出 `runtime/regime_classifier_latest.json` 与 `reports/regime_classifier_latest.html`。
+- [x] `strategy_module_lab.py`：J1/J2/J3 预注册模块实验已落地，输出 `runtime/strategy_module_lab_latest.json` 与 `reports/strategy_module_lab_latest.html`。
+- [x] 首轮两年全量结果：J1/J2/J3 共 `15` 个变体周期全部 rejected，无 paper/live 候选。
+- [ ] 下一轮：校准 regime 阈值，尤其 `compression_watch` 首版占比 `70.65%` 过宽；把模块实验从“完整小策略”进一步拆成 entry-only forward return、filter ablation、exit attribution。
+- [ ] 下一轮：为 J3 做 compression breakout 的更严格定义，要求普通突破对照组明显更差、分币种不集中、月份不集中、test 不塌。
+
 ### 下一阶段核心原则
 
 1. 不再把主要精力放在继续堆 RSI/MACD/EMA/Bollinger/ADX 这类公开指标组合。

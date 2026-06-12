@@ -11,6 +11,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import re
+import socket
 import subprocess
 import sys
 import time
@@ -140,6 +143,53 @@ def render_md(payload: dict[str, Any]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def port_open(host: str, port: int, timeout: float = 1.0) -> bool:
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+def detect_local_proxy() -> str:
+    for key in ("HTTPS_PROXY", "HTTP_PROXY", "ALL_PROXY", "https_proxy", "http_proxy", "all_proxy"):
+        value = os.environ.get(key)
+        if value:
+            return value
+    try:
+        proc = subprocess.run(
+            ["netsh", "winhttp", "show", "proxy"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="ignore",
+            timeout=3,
+        )
+        text = proc.stdout or ""
+    except Exception:
+        text = ""
+    match = re.search(r"(127\.0\.0\.1|localhost):(\d+)", text)
+    if match:
+        host = "127.0.0.1" if match.group(1) == "localhost" else match.group(1)
+        port = int(match.group(2))
+        if port_open(host, port):
+            return f"http://{host}:{port}"
+    if port_open("127.0.0.1", 7890):
+        return "http://127.0.0.1:7890"
+    return ""
+
+
+def command_env() -> tuple[dict[str, str], str]:
+    env = os.environ.copy()
+    proxy = detect_local_proxy()
+    if proxy:
+        for key in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"):
+            env[key] = proxy
+        env.setdefault("NO_PROXY", "localhost,127.0.0.1")
+        env.setdefault("no_proxy", "localhost,127.0.0.1")
+    return env, proxy
+
+
 def save_state(phase: str, status: str, log_path: Path, extra: dict[str, Any] | None = None) -> dict[str, Any]:
     payload = state_payload(phase, status, log_path, extra)
     write_json_atomic(PIPELINE_JSON, payload)
@@ -149,15 +199,18 @@ def save_state(phase: str, status: str, log_path: Path, extra: dict[str, Any] | 
 
 def run_logged(cmd: list[str], log_path: Path, *, timeout_sec: int | None = None) -> int:
     log_path.parent.mkdir(parents=True, exist_ok=True)
+    env, proxy = command_env()
     with log_path.open("a", encoding="utf-8", errors="replace") as fh:
         fh.write(f"\n==== {now_iso()} ====\n")
         fh.write(" ".join(cmd) + "\n")
+        fh.write(f"proxy={proxy or '-'}\n")
         fh.flush()
         proc = subprocess.Popen(
             cmd,
             cwd=str(ROOT),
             stdout=fh,
             stderr=subprocess.STDOUT,
+            env=env,
             text=True,
             encoding="utf-8",
             errors="replace",
@@ -247,11 +300,12 @@ def latest_backtest_summary() -> dict[str, Any]:
 def run_pipeline(args: argparse.Namespace) -> int:
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     log_path = LOG_DIR / f"pipeline_{datetime.now(CST).strftime('%Y%m%d_%H%M%S')}.log"
-    save_state("download", "starting", log_path)
+    _env, proxy = command_env()
+    save_state("download", "starting", log_path, {"proxy": proxy or ""})
     loops = 0
     while True:
         loops += 1
-        save_state("download", "running_batch", log_path, {"loop": loops})
+        save_state("download", "running_batch", log_path, {"loop": loops, "proxy": proxy or ""})
         code = run_logged(make_download_cmd(args), log_path, timeout_sec=args.batch_runtime_sec + 120)
         progress_payload = latest_progress(args.download_prefix)
         progress = progress_payload.get("progress") if isinstance(progress_payload.get("progress"), dict) else {}

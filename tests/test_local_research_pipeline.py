@@ -52,6 +52,7 @@ class LocalResearchPipelineTests(unittest.TestCase):
             days=730,
             intervals="15m,30m,1h,4h",
             providers="bybit",
+            gap_providers="bybit,okx",
             max_rps=0.2,
             batch_requests=240,
             batch_runtime_sec=1200,
@@ -73,6 +74,9 @@ class LocalResearchPipelineTests(unittest.TestCase):
         self.assertNotIn("binance", " ".join(download).lower())
         self.assertIn("--all-combos", backtest)
         self.assertIn("indicator_factory.py", " ".join(backtest))
+
+        gap_download = self.tool.make_download_cmd(args, providers=args.gap_providers)
+        self.assertIn("bybit,okx", gap_download)
 
     def test_save_state_writes_json_and_markdown(self):
         with tempfile.TemporaryDirectory() as tmp:

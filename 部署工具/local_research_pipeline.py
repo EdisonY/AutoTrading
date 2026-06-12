@@ -223,7 +223,7 @@ def run_logged(cmd: list[str], log_path: Path, *, timeout_sec: int | None = None
             return 124
 
 
-def make_download_cmd(args: argparse.Namespace) -> list[str]:
+def make_download_cmd(args: argparse.Namespace, providers: str | None = None) -> list[str]:
     return [
         sys.executable,
         "-B",
@@ -242,7 +242,7 @@ def make_download_cmd(args: argparse.Namespace) -> list[str]:
         "--intervals",
         args.intervals,
         "--providers",
-        args.providers,
+        providers or args.providers,
         "--format",
         "jsonl",
         "--max-rps",
@@ -299,25 +299,22 @@ def latest_backtest_summary() -> dict[str, Any]:
     }
 
 
-def run_pipeline(args: argparse.Namespace) -> int:
-    LOG_DIR.mkdir(parents=True, exist_ok=True)
-    log_path = LOG_DIR / f"pipeline_{datetime.now(CST).strftime('%Y%m%d_%H%M%S')}.log"
-    _env, proxy = command_env()
-    save_state("download", "starting", log_path, {"proxy": proxy or ""})
+def run_download_stage(args: argparse.Namespace, log_path: Path, phase: str, providers: str, proxy: str) -> tuple[dict[str, Any], dict[str, Any]]:
     loops = 0
     while True:
         loops += 1
-        save_state("download", "running_batch", log_path, {"loop": loops, "proxy": proxy or ""})
-        code = run_logged(make_download_cmd(args), log_path, timeout_sec=args.batch_runtime_sec + 120)
+        save_state(phase, "running_batch", log_path, {"loop": loops, "proxy": proxy or "", "providers": providers})
+        code = run_logged(make_download_cmd(args, providers=providers), log_path, timeout_sec=args.batch_runtime_sec + 120)
         progress_payload = latest_progress(args.download_prefix)
         progress = progress_payload.get("progress") if isinstance(progress_payload.get("progress"), dict) else {}
         quality = progress_payload.get("quality") if isinstance(progress_payload.get("quality"), dict) else {}
         save_state(
-            "download",
+            phase,
             str(progress_payload.get("status") or f"exit_{code}"),
             log_path,
             {
                 "loop": loops,
+                "providers": providers,
                 "last_exit_code": code,
                 "download_progress": progress,
                 "download_quality": quality,
@@ -325,11 +322,32 @@ def run_pipeline(args: argparse.Namespace) -> int:
             },
         )
         if download_complete(progress_payload):
-            break
+            return progress, quality
         if args.max_loops and loops >= args.max_loops:
-            save_state("download", "stopped_max_loops", log_path, {"loop": loops})
-            return 2
+            save_state(phase, "stopped_max_loops", log_path, {"loop": loops, "providers": providers})
+            raise RuntimeError(f"{phase} stopped after max loops")
         time.sleep(max(0, args.sleep_sec))
+
+
+def run_pipeline(args: argparse.Namespace) -> int:
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    log_path = LOG_DIR / f"pipeline_{datetime.now(CST).strftime('%Y%m%d_%H%M%S')}.log"
+    _env, proxy = command_env()
+    save_state("download", "starting", log_path, {"proxy": proxy or "", "providers": args.providers})
+    try:
+        progress, quality = run_download_stage(args, log_path, "download", args.providers, proxy)
+        gap_providers = str(args.gap_providers or "").strip()
+        if gap_providers and gap_providers != args.providers:
+            save_state(
+                "gap_fill",
+                "starting",
+                log_path,
+                {"proxy": proxy or "", "providers": gap_providers, "download_progress": progress, "download_quality": quality},
+            )
+            progress, quality = run_download_stage(args, log_path, "gap_fill", gap_providers, proxy)
+    except RuntimeError as exc:
+        save_state("download", "failed", log_path, {"error": str(exc)})
+        return 2
 
     save_state("full_backtest", "starting", log_path, {"download_progress": progress, "download_quality": quality})
     backtest_code = run_logged(make_backtest_cmd(args), log_path, timeout_sec=None)
@@ -353,6 +371,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--days", type=int, default=730)
     parser.add_argument("--intervals", default="15m,30m,1h,4h")
     parser.add_argument("--providers", default="bybit,okx")
+    parser.add_argument("--gap-providers", default="")
     parser.add_argument("--top-n", type=int, default=30)
     parser.add_argument("--max-rps", type=float, default=0.2)
     parser.add_argument("--batch-requests", type=int, default=240)

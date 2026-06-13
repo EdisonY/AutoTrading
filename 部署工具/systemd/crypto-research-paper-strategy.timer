@@ -1,0 +1,11 @@
+[Unit]
+Description=Crypto Research Paper Strategy Runner Timer
+
+[Timer]
+OnBootSec=180s
+OnUnitActiveSec=300s
+AccuracySec=20s
+Persistent=true
+
+[Install]
+WantedBy=timers.target

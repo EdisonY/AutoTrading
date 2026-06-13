@@ -1245,6 +1245,7 @@ def build_state() -> dict[str, Any]:
     backtest_module = read_first_json(BACKTEST_MODULE_JSON, MIRROR_BACKTEST_MODULE_JSON)
     depth = read_first_json(RUNTIME_DIR / "research_depth_backfill_latest.json", MIRROR_RUNTIME_DIR / "research_depth_backfill_latest.json")
     paper_exchange = read_live_runtime_json("paper_exchange_latest.json")
+    research_paper = read_live_runtime_json("research_paper_strategy_latest.json")
     market = read_live_runtime_json("market_data_cache.json")
     mover_diagnostics = load_market_mover_diagnostics(market if isinstance(market, dict) else {})
     microstructure = read_live_runtime_json("market_microstructure_latest.json")
@@ -1292,6 +1293,7 @@ def build_state() -> dict[str, Any]:
         "backtest_module": backtest_module,
         "depth": depth,
         "paper_exchange": paper_exchange,
+        "research_paper": research_paper,
         "market": market,
         "mover_diagnostics": mover_diagnostics,
         "microstructure": microstructure,
@@ -1358,13 +1360,23 @@ def render_paper_exchange(state: dict[str, Any]) -> str:
     by_strategy = paper.get("by_strategy") if isinstance(paper.get("by_strategy"), dict) else {}
     paper_ts = parse_dt(paper.get("ts"))
     fidelity = paper.get("fidelity") if isinstance(paper.get("fidelity"), dict) else {}
-    cards = []
-    for idx, name in enumerate(STRATEGY_NAMES):
+    lifecycle = paper.get("strategy_lifecycle") if isinstance(paper.get("strategy_lifecycle"), dict) else {}
+    research_paper = state.get("research_paper") if isinstance(state.get("research_paper"), dict) else {}
+    strategy_names = list(STRATEGY_NAMES)
+    for name in sorted(by_strategy):
         row = by_strategy.get(name) if isinstance(by_strategy.get(name), dict) else {}
+        status = lifecycle.get(name)
+        should_show = name.startswith("R-") or status == "research_paper" or int(row.get("positions") or 0) > 0
+        if name not in strategy_names and should_show:
+            strategy_names.append(name)
+    cards = []
+    for idx, name in enumerate(strategy_names):
+        row = by_strategy.get(name) if isinstance(by_strategy.get(name), dict) else {}
+        status = lifecycle.get(name) or ("research_paper" if name.startswith("R-") else "active")
         cards.append(
             f"""
 <button class="paper-card strategy-tab {'active' if idx == 0 else ''}" type="button" data-strategy="{h(name)}" onclick="showPaperStrategy('{h(name)}')">
-  <span>{h(name)}</span>
+  <span>{h(name)} · {h(report_text(status))}</span>
   <b>{h(row.get('positions', 0))} 仓 / {h(number(row.get('unrealized_pnl'), 4))} USDT</b>
   <p>权益 {h(amount(row.get('equity'), 2))}，已实现 {h(number(row.get('realized_pnl'), 4))}，手续费 {h(amount(row.get('fees_paid'), 4))}</p>
 </button>
@@ -1372,7 +1384,7 @@ def render_paper_exchange(state: dict[str, Any]) -> str:
         )
     positions = paper.get("positions") if isinstance(paper.get("positions"), list) else []
     panels: list[str] = []
-    for idx, name in enumerate(STRATEGY_NAMES):
+    for idx, name in enumerate(strategy_names):
         strategy_positions = [pos for pos in positions if isinstance(pos, dict) and pos.get("strategy") == name]
         body_rows: list[str] = []
         for pos_idx, pos in enumerate(strategy_positions[:80]):
@@ -1423,6 +1435,15 @@ def render_paper_exchange(state: dict[str, Any]) -> str:
 </div>
 """.strip()
         )
+    research_line = ""
+    if research_paper:
+        pressure = research_paper.get("api_pressure") if isinstance(research_paper.get("api_pressure"), dict) else {}
+        research_line = (
+            f"<p class='empty'>研究策略 runner：{h(report_text(research_paper.get('status') or 'waiting'))}"
+            f"；本轮开 {h(research_paper.get('opened_this_run', 0))} / 平 {h(research_paper.get('closed_this_run', 0))}"
+            f"；扫描币 {h(research_paper.get('symbol_count', 0))}"
+            f"；API：{h(report_text(pressure.get('market_data_source') or 'cache only'))}。</p>"
+        )
     return f"""
 <div class="paper-summary">
   <div><span>总权益</span><b>{h(amount(paper.get('total_equity'), 2))} USDT</b></div>
@@ -1432,6 +1453,7 @@ def render_paper_exchange(state: dict[str, Any]) -> str:
 </div>
 <div class="paper-cards">{''.join(cards)}</div>
 <div class="paper-panels">{''.join(panels)}</div>
+{research_line}
 <p class="empty">这是自建模拟账本：不下真实单。价格：{h(report_text(fidelity.get('price') or 'OKX/本地K线'))}；时间：{h(report_text(fidelity.get('time') or '按 runner 刷新'))}；滑点：{h(report_text(fidelity.get('slippage') or '非真实撮合'))}；手续费：{h(report_text(fidelity.get('fees') or '按账本费率'))}。</p>
 """
 
@@ -2060,7 +2082,7 @@ h1 {{ margin:0; font-size:30px; letter-spacing:0; font-weight:850; }}
 .paper-summary {{ display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px; margin-bottom:12px; }}
 .paper-summary div,.paper-card {{ border:1px solid var(--line); border-radius:8px; background:#0b1320; padding:12px; }}
 .paper-summary b,.paper-card b {{ display:block; font-size:21px; margin-top:4px; color:#f7fbff; }}
-.paper-cards {{ display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; margin-bottom:12px; }}
+.paper-cards {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:10px; margin-bottom:12px; }}
 .paper-card {{ width:100%; text-align:left; color:var(--ink); cursor:pointer; font:inherit; }}
 .paper-card.active {{ border-color:var(--cyan); box-shadow:0 0 0 1px rgba(43,212,214,.18), var(--shadow); }}
 .paper-panel {{ display:none; }}

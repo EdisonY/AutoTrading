@@ -1990,7 +1990,13 @@ def paper_exchange_summary() -> dict[str, Any]:
     by_strategy = payload.get("by_strategy") if isinstance(payload.get("by_strategy"), dict) else {}
     strategy_bits = []
     lifecycle = payload.get("strategy_lifecycle") if isinstance(payload.get("strategy_lifecycle"), dict) else {}
-    for name in ("A/v11", "B/v16", "C/v14"):
+    names = ["A/v11", "B/v16", "C/v14"]
+    for name in sorted(by_strategy):
+        status = lifecycle.get(name)
+        row = by_strategy.get(name) if isinstance(by_strategy.get(name), dict) else {}
+        if name not in names and (name.startswith("R-") or status == "research_paper" or int(row.get("positions") or 0) > 0):
+            names.append(name)
+    for name in names:
         row = by_strategy.get(name) if isinstance(by_strategy.get(name), dict) else {}
         status = lifecycle.get(name) or ("retired" if name == "C/v14" else "active")
         strategy_bits.append(

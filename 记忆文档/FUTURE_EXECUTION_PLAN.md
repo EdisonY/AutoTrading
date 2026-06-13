@@ -1,5 +1,13 @@
 # AutoTrading 双服务器架构优化 + 长期执行计划
 
+## 2026-06-13 下一阶段目标：研究账本采样 + 本地 alpha 方法论
+
+- [x] 服务器侧只接独立研究 paper 策略，不接 shadow 层：`R-L1-NEG-JUMP-1H`、`R-J3-RANGE-CHOP-4H`、`R-E-CSMOM-4H` 各自独立记账，A/B 账本不混入这些候选。
+- [x] API 压力规则：新增研究策略必须复用 `market_data_cache`、`kline_cache`、`market_microstructure` 和 paper-fill 模型；直接 Binance 请求为 `0`，直接交易所请求也应为 `0`。若以后新增更多策略，先做中心化信号计算和缓存深度评估，再开账本。
+- [ ] L2 数据采样继续放服务器：只收 compact OFI/CVD/depth/spread/impact 样本，不在服务器跑重型回测；定期拉回本地做验证。
+- [ ] 本地研究继续走预注册方法：论文/书籍/公开策略只转成假设库，先 forward edge + matched baseline，再完整交易重建，再 OOS/walk-forward，再小额 paper 采样；不能看到结果后围绕单条曲线拟合。
+- [ ] 候选进入服务器账本的最低线：全样本正收益或结构性 edge 明确、成本压力不崩、样本数够、validation/test 至少不严重反向；进入后仍标记 `rollout_evidence_eligible=false`，等 fresh paper paired samples 和 paper-vs-small-real 校准后再讨论晋级。
+
 ## 2026-05-31 下一阶段目标：从调参系统升级为策略进化系统
 
 ## 2026-06-12 研究路线重置：从公开指标组合转向市场状态与交易行为

@@ -1,0 +1,22 @@
+[Unit]
+Description=Crypto Research Paper Strategy Runner
+After=network-online.target crypto-market-data-cache.service crypto-paper-exchange-refresh.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+WorkingDirectory=/opt/crypto-auto-trader
+Environment=PYTHONIOENCODING=utf-8
+Environment=RESEARCH_PAPER_SYMBOL_LIMIT=27
+Environment=RESEARCH_PAPER_KLINE_MAX_AGE_SEC=21600
+Environment=RESEARCH_PAPER_PRICE_MAX_AGE_SEC=900
+Environment=RESEARCH_PAPER_EVENT_MARGIN_USDT=25
+Environment=RESEARCH_PAPER_EVENT_LEVERAGE=2
+Environment=RESEARCH_PAPER_E_LEG_MARGIN_USDT=20
+Environment=RESEARCH_PAPER_E_LEVERAGE=1
+Environment=RESEARCH_PAPER_E_MAX_LEGS=6
+Environment=RESEARCH_PAPER_L1_MAX_POSITIONS=2
+Environment=RESEARCH_PAPER_J3_MAX_POSITIONS=2
+ExecStart=/opt/crypto-auto-trader/.venv/bin/python -B /opt/crypto-auto-trader/research_paper_strategy_runner.py --root /opt/crypto-auto-trader
+TimeoutStartSec=180

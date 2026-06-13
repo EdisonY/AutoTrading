@@ -27,7 +27,9 @@ DEFAULT_ORDER_BOOK_MAX_LEVELS = 20
 DEFAULT_ORDER_BOOK_LIQUIDITY_FACTOR = 1.0
 DEFAULT_ORDER_BOOK_QUEUE_AHEAD_QUANTITY = 0.0
 DEFAULT_DUST_NOTIONAL_USDT = 1e-6
-STRATEGIES = ("A/v11", "B/v16", "C/v14")
+BASE_STRATEGIES = ("A/v11", "B/v16", "C/v14")
+RESEARCH_STRATEGIES = ("R-L1-NEG-JUMP-1H", "R-J3-RANGE-CHOP-4H", "R-E-CSMOM-4H")
+STRATEGIES = BASE_STRATEGIES + RESEARCH_STRATEGIES
 ACTIVE_STRATEGIES = ("A/v11",)
 FROZEN_STRATEGIES = ("B/v16",)
 RETIRED_STRATEGIES = ("C/v14",)
@@ -35,6 +37,9 @@ STRATEGY_LIFECYCLE = {
     "A/v11": "active",
     "B/v16": "frozen_observe",
     "C/v14": "retired",
+    "R-L1-NEG-JUMP-1H": "research_paper",
+    "R-J3-RANGE-CHOP-4H": "research_paper",
+    "R-E-CSMOM-4H": "research_paper",
 }
 
 
@@ -66,6 +71,22 @@ def load_json(path: Path) -> dict[str, Any]:
 
 def position_key(strategy: str, symbol: str, side: str) -> str:
     return f"{strategy}|{symbol.upper()}|{side.lower()}"
+
+
+def ordered_strategies(state: dict[str, Any] | None = None) -> list[str]:
+    names: list[str] = list(STRATEGIES)
+    if state:
+        accounts = state.get("accounts") if isinstance(state.get("accounts"), dict) else {}
+        for name in accounts:
+            strategy = str(name)
+            if strategy and strategy not in names:
+                names.append(strategy)
+        positions = state.get("positions") if isinstance(state.get("positions"), dict) else {}
+        for value in positions.values():
+            strategy = str(value.get("strategy") or "") if isinstance(value, dict) else ""
+            if strategy and strategy not in names:
+                names.append(strategy)
+    return names
 
 
 def is_dust_position(pos: dict[str, Any], *, dust_notional_usdt: float = DEFAULT_DUST_NOTIONAL_USDT) -> bool:
@@ -127,7 +148,7 @@ class PaperExchange:
                 "fills": [],
             }
         state.setdefault("accounts", {})
-        for strategy in STRATEGIES:
+        for strategy in ordered_strategies(state):
             account = state["accounts"].setdefault(
                 strategy,
                 {"cash": self.starting_equity, "fees_paid": 0.0, "realized_pnl": 0.0},
@@ -324,7 +345,7 @@ class PaperExchange:
         total_upnl = 0.0
         total_equity = 0.0
         positions = [p for p in state.get("positions", {}).values() if not is_dust_position(p)]
-        for strategy in STRATEGIES:
+        for strategy in ordered_strategies(state):
             account = state.get("accounts", {}).get(strategy, {})
             rows = [p for p in positions if p.get("strategy") == strategy]
             upnl = sum(safe_float(p.get("unrealized_pnl")) for p in rows)
@@ -366,6 +387,7 @@ class PaperExchange:
             "active_strategies": list(ACTIVE_STRATEGIES),
             "frozen_strategies": list(FROZEN_STRATEGIES),
             "retired_strategies": list(RETIRED_STRATEGIES),
+            "research_strategies": list(RESEARCH_STRATEGIES),
         }
 
     @staticmethod

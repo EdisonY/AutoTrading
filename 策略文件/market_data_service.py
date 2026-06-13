@@ -108,12 +108,12 @@ def kline_prefetch_tasks(payload: dict) -> tuple[list[tuple[str, str, int]], dic
     symbol_limit = max(1, env_int("MARKET_KLINE_PREFETCH_SYMBOL_LIMIT", 180))
     hot_limit = max(0, env_int("MARKET_KLINE_PREFETCH_HOT_SYMBOL_LIMIT", 100))
     hot_specs = parse_kline_specs(
-        os.environ.get("MARKET_KLINE_PREFETCH_HOT_SPECS", "15m:100,30m:100,1h:200,4h:100"),
-        [("15m", 100), ("30m", 100), ("1h", 200), ("4h", 100)],
+        os.environ.get("MARKET_KLINE_PREFETCH_HOT_SPECS", "15m:100,30m:100,1h:300,4h:300"),
+        [("15m", 100), ("30m", 100), ("1h", 300), ("4h", 300)],
     )
     warm_specs = parse_kline_specs(
-        os.environ.get("MARKET_KLINE_PREFETCH_WARM_SPECS", "15m:100,1h:200"),
-        [("15m", 100), ("1h", 200)],
+        os.environ.get("MARKET_KLINE_PREFETCH_WARM_SPECS", "15m:100,1h:300"),
+        [("15m", 100), ("1h", 300)],
     )
     symbols = unique_symbols(
         list(payload.get("top_symbols") or []) + list(payload.get("market_mover_symbols") or []),

@@ -100,6 +100,7 @@ MAIN_FILES = [
     ("runtime/replay_readiness_latest.json", "runtime/replay_readiness_latest.json", False),
     ("runtime/waiting_period_optimization_latest.json", "runtime/waiting_period_optimization_latest.json", False),
     ("runtime/paper_exchange_latest.json", "runtime/paper_exchange_latest.json", False),
+    ("runtime/research_paper_strategy_latest.json", "runtime/research_paper_strategy_latest.json", False),
     ("runtime/testnet_data_reset_latest.json", "runtime/testnet_data_reset_latest.json", False),
     ("runtime/long_term_skeleton_latest.json", "runtime/long_term_skeleton_latest.json", False),
     ("runtime/rollback_watch_review_latest.json", "runtime/rollback_watch_review_latest.json", False),
@@ -205,6 +206,7 @@ account = read_json(root / "runtime" / "account_snapshot_latest.json")
 market = read_json(root / "runtime" / "market_data_cache.json")
 micro = read_json(root / "runtime" / "market_microstructure_latest.json")
 paper = read_json(root / "runtime" / "paper_exchange_latest.json")
+research_paper = read_json(root / "runtime" / "research_paper_strategy_latest.json")
 alerts = read_json(root / "runtime" / "alerts_latest.json")
 attention = read_json(root / "research_memory" / "attention" / "open_items.json")
 evolution = read_json(root / "runtime" / "strategy_evolution_latest.json")
@@ -229,6 +231,8 @@ services = {
         "crypto-market-data-cache.service",
         "crypto-market-microstructure.service",
         "crypto-paper-exchange-refresh.timer",
+        "crypto-research-paper-strategy.timer",
+        "crypto-research-paper-strategy.service",
         "crypto-account-snapshot.service",
         "crypto-system-alerts.service",
         "crypto-binance-api-queue.service",
@@ -264,6 +268,17 @@ print(json.dumps({
         "total_unrealized_pnl": paper.get("total_unrealized_pnl"),
         "mark_source": paper.get("mark_source"),
         "fidelity": paper.get("fidelity"),
+        "by_strategy": paper.get("by_strategy", {}),
+    },
+    "research_paper_strategy_summary": {
+        "status": research_paper.get("status"),
+        "generated_at": research_paper.get("generated_at"),
+        "opened_this_run": research_paper.get("opened_this_run"),
+        "closed_this_run": research_paper.get("closed_this_run"),
+        "symbol_count": research_paper.get("symbol_count"),
+        "status_counts": research_paper.get("status_counts", {}),
+        "api_pressure": research_paper.get("api_pressure", {}),
+        "paper_summary": research_paper.get("paper_summary", {}),
     },
     "alert_summary": {
         "ts": alerts.get("ts"),
@@ -657,6 +672,7 @@ def main(argv: list[str] | None = None) -> int:
                 "market": live.get("market_summary"),
                 "microstructure": live.get("microstructure_summary"),
                 "paper_exchange": live.get("paper_exchange_summary"),
+                "research_paper_strategy": live.get("research_paper_strategy_summary"),
                 "attention": live.get("attention_summary"),
                 "auto_upgrade_readiness": live.get("auto_upgrade_readiness_summary"),
                 "strategy_candidate_governance": live.get("strategy_candidate_governance_summary"),

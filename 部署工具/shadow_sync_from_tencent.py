@@ -78,6 +78,7 @@ REPORT_FILES = [
     "runtime/market_microstructure_latest.json",
     "runtime/market_mover_watchlist.json",
     "runtime/paper_exchange_latest.json",
+    "runtime/research_paper_strategy_latest.json",
     "runtime/testnet_data_reset_latest.json",
 ]
 

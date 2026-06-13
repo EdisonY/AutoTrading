@@ -33,7 +33,7 @@ os.environ.setdefault("OKX_MARKET_DATA_MAX_PER_MIN", "60")
 from core.event_store import EventStoreWriter
 from core.external_market_data import fetch_okx_klines, okx_symbol_supported
 from core.kline_cache import load_latest_cached_close, save_cached_klines
-from core.paper_exchange import ACTIVE_STRATEGIES, PaperExchange, STRATEGY_LIFECYCLE, safe_float
+from core.paper_exchange import ACTIVE_STRATEGIES, PaperExchange, RESEARCH_STRATEGIES, STRATEGY_LIFECYCLE, safe_float
 
 
 CST = timezone(timedelta(hours=8))
@@ -74,6 +74,10 @@ def market_rows(root: Path) -> list[dict[str, Any]]:
 
 
 def resolve_price(root: Path, symbol: str, *, live_first: bool = False) -> tuple[float | None, str]:
+    if live_first:
+        cached = load_latest_cached_close(root, symbol, max_age_sec=300)
+        if cached and cached > 0:
+            return float(cached), "local_kline_cache_fresh"
     if live_first and okx_symbol_supported(symbol):
         try:
             rows = fetch_okx_klines(symbol, "15m", 2)
@@ -360,9 +364,11 @@ def close_hit_positions(root: Path, exchange: PaperExchange, take_profit_pct: fl
         if not reason:
             continue
         strategy = str(pos.get("strategy"))
+        context = pos.get("context") if isinstance(pos.get("context"), dict) else {}
+        if strategy in RESEARCH_STRATEGIES or context.get("research_strategy"):
+            continue
         symbol = str(pos.get("symbol"))
         qty = safe_float(pos.get("qty"))
-        context = pos.get("context") if isinstance(pos.get("context"), dict) else {}
         event_timeframe = str(context.get("timeframe") or "paper_exchange")
         order_id = f"PAPERX-CLOSE-{strategy.replace('/', '-')}-{symbol}-{int(datetime.now(CST).timestamp())}"
         summary = exchange.close_market(strategy=strategy, symbol=symbol, side=side, qty=qty, price=mark, order_id=order_id, reason=reason)

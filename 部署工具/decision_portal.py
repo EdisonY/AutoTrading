@@ -85,6 +85,51 @@ def num(value: Any) -> float:
         return 0.0
 
 
+def research_strategy_label(strategy: Any) -> str:
+    text = str(strategy or "").replace("R-", "")
+    if text.startswith("L1-"):
+        return "L1"
+    if text.startswith("J3-"):
+        return "J3"
+    if text.startswith("E-"):
+        return "E/4h"
+    return text or "-"
+
+
+def research_signal_brief(research_paper: dict[str, Any]) -> str:
+    rows = research_paper.get("results") if isinstance(research_paper.get("results"), list) else []
+    parts: list[str] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        label = research_strategy_label(row.get("strategy") or row.get("strategy_id"))
+        signals = row.get("signals") if isinstance(row.get("signals"), list) else []
+        if signals:
+            counts: dict[str, int] = {}
+            for signal in signals:
+                if isinstance(signal, dict):
+                    status = str(signal.get("status") or "-")
+                    counts[status] = counts.get(status, 0) + 1
+            bits = []
+            if counts.get("checked"):
+                bits.append(f"查{counts['checked']}")
+            if counts.get("no_signal"):
+                bits.append(f"无{counts['no_signal']}")
+            if counts.get("data_gap"):
+                bits.append(f"缺{counts['data_gap']}")
+            parts.append(f"{label}:{'/'.join(bits) or '-'}")
+            continue
+        signal = row.get("signal") if isinstance(row.get("signal"), dict) else {}
+        status = str(row.get("status") or signal.get("status") or "-")
+        if status == "data_gap" and signal:
+            need = int(num(signal.get("need_symbols")))
+            times = int(num(signal.get("times")))
+            parts.append(f"{label}:缺横截面{need}币/{times}时点")
+        else:
+            parts.append(f"{label}:{report_text(status)}")
+    return "；".join(parts[:4]) or "等待首轮信号"
+
+
 def read_best_historical_kline_json(*paths: Path) -> dict[str, Any]:
     candidates: list[tuple[tuple[float, float, float, float, str, float], dict[str, Any]]] = []
     mirror_candidates: list[tuple[tuple[float, float, float, float, str, float], dict[str, Any]]] = []
@@ -1442,7 +1487,7 @@ def render_paper_exchange(state: dict[str, Any]) -> str:
     research_line = ""
     if research_paper:
         pressure = research_paper.get("api_pressure") if isinstance(research_paper.get("api_pressure"), dict) else {}
-        status_counts = research_paper.get("status_counts") if isinstance(research_paper.get("status_counts"), dict) else {}
+        signal_brief = research_signal_brief(research_paper)
         research_positions = sum(int((by_strategy.get(name) or {}).get("positions") or 0) for name in research_names)
         research_upnl = sum(num((by_strategy.get(name) or {}).get("unrealized_pnl")) for name in research_names)
         research_open_notional = sum(num((by_strategy.get(name) or {}).get("open_notional")) for name in research_names)
@@ -1457,7 +1502,7 @@ def render_paper_exchange(state: dict[str, Any]) -> str:
             f"<small>{h(strategy_bits)}</small></div>"
             "<div><span>本轮动作</span>"
             f"<b>开 {h(research_paper.get('opened_this_run', 0))} / 平 {h(research_paper.get('closed_this_run', 0))}</b>"
-            f"<small>扫描 {h(research_paper.get('symbol_count', 0))} 币；无信号 {h(status_counts.get('no_signal', 0))}；数据缺口 {h(status_counts.get('data_gap', 0))}</small></div>"
+            f"<small>扫描 {h(research_paper.get('symbol_count', 0))} 币；{h(signal_brief)}</small></div>"
             "<div><span>研究持仓</span>"
             f"<b>{h(research_positions)} 仓 / {h(number(research_upnl, 4))} USDT</b>"
             f"<small>名义价值 {h(number(research_open_notional, 2))} USDT；未触发就不展开空表</small></div>"

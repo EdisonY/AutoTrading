@@ -157,6 +157,51 @@ def num(value: Any) -> float:
         return 0.0
 
 
+def research_strategy_label(strategy: Any) -> str:
+    text = str(strategy or "").replace("R-", "")
+    if text.startswith("L1-"):
+        return "L1"
+    if text.startswith("J3-"):
+        return "J3"
+    if text.startswith("E-"):
+        return "E/4h"
+    return text or "-"
+
+
+def research_signal_brief(research_payload: dict[str, Any]) -> str:
+    rows = research_payload.get("results") if isinstance(research_payload.get("results"), list) else []
+    parts: list[str] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        label = research_strategy_label(row.get("strategy") or row.get("strategy_id"))
+        signals = row.get("signals") if isinstance(row.get("signals"), list) else []
+        if signals:
+            counts = Counter(
+                str(signal.get("status") or "-")
+                for signal in signals
+                if isinstance(signal, dict)
+            )
+            bits = []
+            if counts.get("checked"):
+                bits.append(f"查{counts['checked']}")
+            if counts.get("no_signal"):
+                bits.append(f"无{counts['no_signal']}")
+            if counts.get("data_gap"):
+                bits.append(f"缺{counts['data_gap']}")
+            parts.append(f"{label}:{'/'.join(bits) or '-'}")
+            continue
+        signal = row.get("signal") if isinstance(row.get("signal"), dict) else {}
+        status = str(row.get("status") or signal.get("status") or "-")
+        if status == "data_gap" and signal:
+            need = int(num(signal.get("need_symbols")))
+            times = int(num(signal.get("times")))
+            parts.append(f"{label}:缺横截面{need}币/{times}时点")
+        else:
+            parts.append(f"{label}:{status}")
+    return "；".join(parts[:4]) or "等待首轮信号"
+
+
 def read_jsonl(path: Path) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     if not path.exists():
@@ -2015,12 +2060,14 @@ def paper_exchange_summary() -> dict[str, Any]:
         research_upnl = sum(num((by_strategy.get(name) or {}).get("unrealized_pnl")) for name in research_names)
         direct_requests = 0
         runner_status = "waiting"
+        signal_brief = "等待首轮信号"
         if isinstance(research_payload, dict):
             runner_status = str(research_payload.get("status") or "waiting")
+            signal_brief = research_signal_brief(research_payload)
             pressure = research_payload.get("api_pressure") if isinstance(research_payload.get("api_pressure"), dict) else {}
             direct_requests = int(pressure.get("direct_exchange_requests") or 0)
         strategy_bits.append(
-            f"研究R({runner_status}) {len(research_names)}条/{research_positions}仓 {research_upnl:+.2f}，直连{direct_requests}"
+            f"研究R({runner_status}) {len(research_names)}条/{research_positions}仓 {research_upnl:+.2f}，直连{direct_requests}，{signal_brief}"
         )
     return {
         "available": True,

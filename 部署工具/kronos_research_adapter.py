@@ -298,9 +298,12 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         summary.update({"interval": interval})
         summaries.append(summary)
 
-    status = "research_smoke_ready"
-    if args.backend == "kronos" and backend_status != "kronos_loaded":
+    if args.backend == "kronos" and backend_status == "kronos_loaded":
+        status = "kronos_model_verified_research_only"
+    elif args.backend == "kronos":
         status = "kronos_adapter_ready_model_not_verified"
+    else:
+        status = "research_smoke_ready"
     best = max(summaries, key=lambda row: safe_float(row.get("rank_ic"))) if summaries else {}
     payload = {
         "generated_at": now_iso(),
@@ -333,8 +336,16 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "coverage": coverage,
         "samples": samples,
         "operator_read": {
-            "plain_conclusion": "adapter landed; baseline smoke is only a wiring check, not alpha evidence",
-            "next_action": "install Kronos dependencies and local model weights, then rerun with --backend kronos; compare to baseline and matched random before using as filter",
+            "plain_conclusion": (
+                "real Kronos model inference completed; this is forecasting research only, not alpha approval"
+                if backend_status == "kronos_loaded"
+                else "adapter landed; baseline smoke is only a wiring check, not alpha evidence"
+            ),
+            "next_action": (
+                "compare against baseline, matched random, walk-forward/OOS splits, and transaction-cost gates before using Kronos as a filter"
+                if backend_status == "kronos_loaded"
+                else "install Kronos dependencies and local model weights, then rerun with --backend kronos; compare to baseline and matched random before using as filter"
+            ),
         },
     }
     write_outputs(payload, root)

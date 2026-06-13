@@ -159,8 +159,8 @@ def build_comparison(signal_values: list[float], baseline_values: list[float]) -
     signal = summarize(signal_values)
     baseline = summarize(baseline_values)
     return {
-        "signal": signal,
-        "baseline": baseline,
+        "signal_stats": signal,
+        "baseline_stats": baseline,
         "uplift_avg_pct": round(safe_float(signal.get("avg_pct")) - safe_float(baseline.get("avg_pct")), 6),
         "uplift_median_pct": round(safe_float(signal.get("median_pct")) - safe_float(baseline.get("median_pct")), 6),
         "uplift_win_rate_pct": round(safe_float(signal.get("win_rate_pct")) - safe_float(baseline.get("win_rate_pct")), 6),
@@ -170,8 +170,8 @@ def build_comparison(signal_values: list[float], baseline_values: list[float]) -
 
 def quality_decision(row: dict[str, Any]) -> tuple[str, list[str]]:
     reasons = []
-    signal_count = safe_int((row.get("signal") or {}).get("count"))
-    baseline_count = safe_int((row.get("baseline") or {}).get("count"))
+    signal_count = safe_int((row.get("signal_stats") or {}).get("count"))
+    baseline_count = safe_int((row.get("baseline_stats") or {}).get("count"))
     if signal_count < 100:
         reasons.append("signal_count_low")
     if baseline_count < signal_count:
@@ -386,8 +386,8 @@ def render_html(payload: dict[str, Any]) -> str:
         ("signal", "信号"),
         ("interval", "周期"),
         ("horizon_bars", "未来K"),
-        ("signal.count", "信号样本"),
-        ("baseline.count", "基线样本"),
+        ("signal_stats.count", "信号样本"),
+        ("baseline_stats.count", "基线样本"),
         ("uplift_avg_pct", "均值提升%"),
         ("uplift_median_pct", "中位提升%"),
         ("uplift_win_rate_pct", "胜率提升%"),
@@ -399,7 +399,7 @@ def render_html(payload: dict[str, Any]) -> str:
         ("interval", "周期"),
         ("regime", "Regime"),
         ("horizon_bars", "未来K"),
-        ("signal.count", "信号样本"),
+        ("signal_stats.count", "信号样本"),
         ("uplift_avg_pct", "均值提升%"),
         ("uplift_median_pct", "中位提升%"),
         ("uplift_win_rate_pct", "胜率提升%"),

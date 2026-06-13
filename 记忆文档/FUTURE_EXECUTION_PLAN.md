@@ -15,11 +15,11 @@
 - [x] P1-P4 `signal_edge_lab.py`：信号预测力、percentile regime edge matrix、no-trade filters、J v2 候选筛选已落地，输出 `runtime/signal_edge_lab_latest.json` 与 `reports/signal_edge_lab_latest.html`。
 - [x] P1-P4 首轮两年全量结果：`577390` 信号样本、`96` 条 no-trade filter、`1` 个弱 J v2 研究候选。候选为 `J3_compression_breakout_v2 / 4h / 3bar`，均值 `+0.422392%`，中位 `+0.237816%`，胜率 `54.827%`，P10 `-3.288573%`。这只允许进入完整策略重建研究，不允许 paper/live。
 - [x] J3 v2 完整策略重建：`j3_v2_strategy_research.py` 已落地并跑完两年全量，5 个变体全部 rejected。最佳 P3 filter 变体 full/test/10bps 全失败；no-filter 变体全样本为正但 validation/test/cost stress 失败。J3 v2 当前停止，不继续围绕它调参拟合。
-- [x] `matched_baseline_lab.py`：本地匹配基线验收框架已落地。它把每个信号与同币种、同周期、同月份、同 regime、相近 ATR/成交量分位的随机基线点比较，避免只看信号自身 forward return。45 天 `1h/4h` 冒烟已通过，生成 `runtime/matched_baseline_lab_latest.json` 与 `reports/matched_baseline_lab_latest.html`。
-- [ ] `matched_baseline_lab.py` 两年全量后台运行中：命令为 `python -B 部署工具\matched_baseline_lab.py --days 730 --intervals 15m,30m,1h,4h --controls 5 --progress-every 2`。早上先看 `runtime/matched_baseline_lab_progress_latest.json` 是否 completed，再看 HTML。若没有信号显著优于匹配随机基线，下一轮必须转向微结构、横截面、市场宽度/联动和事件过滤，而不是继续拟合 OHLCV K线指标。
+- [x] `matched_baseline_lab.py`：本地匹配基线验收框架已落地。它把每个信号与同币种、同周期、同月份、同 regime、相近 ATR/成交量分位的随机基线点比较，避免只看信号自身 forward return。已修复信号名被统计字段覆盖的报告 bug。两年全量结果为 `573638` 匹配样本、`2` 个 baseline_outperformer、`16` 个 near_miss、`30` 个 reject。两个 outperformer 都是 `J3_compression_breakout_v2 / 4h` 的 1-bar/3-bar forward edge。
+- [x] J3 matched-baseline 复核：`J3_compression_breakout_v2 / 4h` 的优势主要来自当前 regime 为 `range_chop_v2`，不是 `compression_tight_v2` 本身。`j3_v2_strategy_research.py` 已加入 `range_chop_v2` narrow gate 变体并重跑；最佳 `j3v2_range_chop_1bar_matched_gate` 全样本 `+59.191277 USDT`、PF `1.776237`、`112` 笔，但 validation/test 均亏，仍 rejected。结论：保留结构线索，不进 paper/live，不继续围绕 J3 参数拟合。
 - [ ] 下一轮：校准 regime 阈值，尤其 `compression_watch` 首版占比 `70.65%` 过宽；把模块实验从“完整小策略”进一步拆成 entry-only forward return、filter ablation、exit attribution。
 - [ ] 下一轮：为 J3 做 compression breakout 的更严格定义，要求普通突破对照组明显更差、分币种不集中、月份不集中、test 不塌。
-- [ ] 下一轮：不要继续对 J3 v2 做参数拟合；先增加随机/匹配基准和更严格结构过滤，再决定是否重开新的 full-strategy rebuild。
+- [ ] 下一轮：不要继续对 J3 v2 做参数拟合；优先转向微结构、横截面、市场宽度/联动、事件过滤，或者先证明新信号在 walk-forward/OOS 上稳定后再重开 full-strategy rebuild。
 
 ### 下一阶段核心原则
 

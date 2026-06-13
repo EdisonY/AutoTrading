@@ -93,6 +93,8 @@ def variants(no_trade_rules: set[str]) -> list[dict[str, Any]]:
         {"name": "j3v2_edge_6bar_p3_filter", "use_no_trade": True, "params": {**base, "max_hold_bars": 6, "atr_stop_multiplier": 1.8, "no_trade_regimes": sorted(no_trade_rules)}},
         {"name": "j3v2_tight_stop_3bar_p3_filter", "use_no_trade": True, "params": {**base, "max_hold_bars": 3, "atr_stop_multiplier": 1.2, "no_trade_regimes": sorted(no_trade_rules)}},
         {"name": "j3v2_wide_stop_3bar_p3_filter", "use_no_trade": True, "params": {**base, "max_hold_bars": 3, "atr_stop_multiplier": 2.4, "no_trade_regimes": sorted(no_trade_rules)}},
+        {"name": "j3v2_range_chop_1bar_matched_gate", "use_no_trade": False, "params": {**base, "max_hold_bars": 1, "atr_stop_multiplier": 1.8, "allowed_regimes": ["range_chop_v2"]}},
+        {"name": "j3v2_range_chop_3bar_matched_gate", "use_no_trade": False, "params": {**base, "max_hold_bars": 3, "atr_stop_multiplier": 1.8, "allowed_regimes": ["range_chop_v2"]}},
     ]
 
 
@@ -133,6 +135,7 @@ def simulate_symbol(symbol: str, bars: list[dict[str, Any]], variant: dict[str, 
     params = variant["params"]
     features = signal_edge_lab.build_edge_features(bars)
     no_trade = set(params.get("no_trade_regimes") or []) if variant.get("use_no_trade") else set()
+    allowed_regimes = set(params.get("allowed_regimes") or [])
     out: list[dict[str, Any]] = []
     idx = 240
     while idx < len(bars) - 14 and len(out) < 400:
@@ -141,6 +144,9 @@ def simulate_symbol(symbol: str, bars: list[dict[str, Any]], variant: dict[str, 
             idx += 1
             continue
         side, extra = signal
+        if allowed_regimes and extra["regime"] not in allowed_regimes:
+            idx += 1
+            continue
         if extra["regime"] in no_trade:
             idx += 1
             continue

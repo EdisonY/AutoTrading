@@ -24,6 +24,8 @@ TENCENT_USER=${TENCENT_USER:-ubuntu}
 TENCENT_ROOT=${TENCENT_ROOT:-/opt/crypto-auto-trader}
 mkdir -p server_logs_tencent/runtime server_logs_tencent/reports
 for rel in \
+  runtime/paper_exchange_latest.json \
+  runtime/research_paper_strategy_latest.json \
   runtime/historical_kline_backfill_latest.json \
   runtime/historical_kline_incremental_latest.json \
   runtime/backtest_module_latest.json \

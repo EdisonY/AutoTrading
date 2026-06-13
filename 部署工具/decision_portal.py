@@ -1655,8 +1655,17 @@ def render_cards(state: dict[str, Any]) -> str:
     paper = state.get("paper_exchange") if isinstance(state.get("paper_exchange"), dict) else {}
     market = state.get("market") if isinstance(state.get("market"), dict) else {}
     micro = state.get("microstructure") if isinstance(state.get("microstructure"), dict) else {}
+    research_paper = state.get("research_paper") if isinstance(state.get("research_paper"), dict) else {}
+    research_results = research_paper.get("results") if isinstance(research_paper.get("results"), list) else []
+    research_pressure = research_paper.get("api_pressure") if isinstance(research_paper.get("api_pressure"), dict) else {}
+    research_brief = research_signal_brief(research_paper) if research_paper else "等待采样"
     rows = [
         ("模拟账本", f"{paper.get('open_positions', 0)} 仓 / {number(paper.get('total_unrealized_pnl'), 4)} USDT", "这是当前主 PnL 入口。点击下方策略表，可看每个持仓和入场K线。"),
+        (
+            "R策略采样",
+            f"{plain_status(research_paper.get('status') or 'missing')} / {len(research_results)} 条",
+            f"本轮开 {research_paper.get('opened_this_run', 0)} / 平 {research_paper.get('closed_this_run', 0)}；扫描 {research_paper.get('symbol_count', 0)} 币；{research_brief}；直连 {research_pressure.get('direct_exchange_requests', 0)}。",
+        ),
         ("行情覆盖", f"{len(market.get('available_symbols') or [])} 币 / Top {len(market.get('top_symbols') or [])}", f"来源：{report_text(','.join(market.get('sources') or []) or '外部公开行情')}。"),
         ("盘口/CVD", f"{micro.get('fresh_symbols_240s', 0)} 新鲜", "给 B/v16 和后续复盘用。只存紧凑特征，不存全量原始 tick。"),
         ("策略升级样本", f"可考虑 {expansion.get('ready_count', 0)} / 继续收样 {expansion.get('maturing_count', 0)}", f"过去24小时还缺 {expansion.get('missing_samples_24h', 0)} 个样本。先让系统自然交易，不靠拍脑袋放大。"),
@@ -2026,7 +2035,7 @@ def render_history_or_backtest_panel(state: dict[str, Any]) -> str:
     title = "历史数据拉取进度"
     body = render_historical_kline_progress(state)
     return f"""
-  <section class="panel" id="backtest">
+  <section class="panel" id="history">
     <h2>{h(title)}</h2>
     {body}
   </section>
@@ -2153,12 +2162,6 @@ h1 {{ margin:0; font-size:30px; letter-spacing:0; font-weight:850; }}
 .position-facts p {{ margin:0 0 8px; color:var(--muted); }}
 .mini-btn {{ border:1px solid var(--line); background:#101827; color:#bfe8ff; border-radius:8px; padding:6px 9px; cursor:pointer; }}
 .mini-btn.danger {{ color:#ffd0d6; border-color:rgba(255,91,110,.45); background:#25111a; }}
-.backtest-history-collapse {{ border:1px solid var(--line); border-radius:8px; background:#0b1320; padding:10px 12px; }}
-.backtest-history-collapse summary {{ cursor:pointer; color:#f7fbff; font-weight:800; list-style:none; }}
-.backtest-history-collapse summary::-webkit-details-marker {{ display:none; }}
-.backtest-history-collapse summary span {{ display:block; color:var(--muted); font-size:12px; font-weight:500; margin-top:2px; }}
-.backtest-history-collapse .table-scroll {{ margin-top:10px; }}
-.backtest-progress-line {{ color:#bfe8ff; }}
 .grid {{ display:grid; grid-template-columns:minmax(0, 1.62fr) minmax(360px, .38fr); gap:16px; align-items:start; }}
 .table-scroll {{ width:100%; overflow-x:auto; border:1px solid var(--line); border-radius:8px; background:#0a111c; }}
 table {{ width:100%; border-collapse:collapse; }}
@@ -2209,33 +2212,6 @@ tr:hover td {{ background:#101827; }}
 .history-grid div,.history-detail {{ border:1px solid var(--line); border-radius:8px; background:#0b1320; padding:12px; }}
 .history-grid span,.history-grid small,.history-detail span {{ display:block; color:var(--muted); }}
 .history-grid b,.history-detail b {{ display:block; color:#f7fbff; margin:3px 0; }}
-.backtest-form {{ display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px; border:1px solid var(--line); border-radius:8px; background:#0b1320; padding:12px; }}
-.backtest-form label {{ display:grid; gap:5px; color:var(--muted); font-size:12px; }}
-.backtest-form input,.backtest-form select,.backtest-form textarea {{ width:100%; border:1px solid var(--line); border-radius:8px; background:#08111d; color:var(--ink); padding:8px 9px; font:inherit; }}
-.backtest-form textarea {{ resize:vertical; min-height:78px; }}
-.backtest-form .wide {{ grid-column:span 4; }}
-.backtest-actions {{ grid-column:span 4; display:flex; flex-wrap:wrap; align-items:center; gap:10px; }}
-.backtest-results h3 {{ margin:14px 0 8px; font-size:15px; color:#f7fbff; }}
-.backtest-table {{ min-width:900px; }}
-.backtest-note {{ margin:8px 0 0; color:var(--muted); font-size:12px; }}
-.backtest-param-panel {{ border:1px solid var(--line); border-radius:8px; background:#08111d; padding:10px; display:grid; gap:10px; }}
-.param-head b,.param-head small {{ display:block; }}
-.param-head small,.param-control small,.backtest-advanced small {{ color:var(--muted); }}
-.param-controls {{ display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }}
-.param-control {{ border:1px solid var(--line); border-radius:8px; padding:9px; background:#0b1320; }}
-.param-control span {{ display:flex; align-items:center; gap:6px; color:#e8f0fb; font-weight:800; }}
-.param-control input[type="checkbox"] {{ width:auto; }}
-.backtest-advice-grid,.backtest-metrics,.backtest-detail-grid {{ display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px; }}
-.backtest-detail-grid {{ grid-template-columns:2fr 1fr; }}
-.backtest-advice-grid div,.backtest-metrics div,.backtest-detail-grid > div {{ border:1px solid var(--line); border-radius:8px; background:#0b1320; padding:12px; }}
-.backtest-advice-grid span,.backtest-advice-grid small,.backtest-metrics span,.backtest-metrics small {{ display:block; color:var(--muted); }}
-.backtest-advice-grid b,.backtest-metrics b {{ display:block; color:#f7fbff; margin:3px 0; }}
-.backtest-chart svg {{ width:100%; height:160px; display:block; }}
-.backtest-chart-caption {{ display:flex; justify-content:space-between; color:var(--muted); font-size:12px; margin-top:6px; }}
-.backtest-empty-chart {{ border:1px dashed var(--line); border-radius:8px; padding:48px 12px; color:var(--muted); text-align:center; }}
-.backtest-trades-scroll {{ max-height:420px; overflow:auto; }}
-.backtest-trades-table {{ min-width:1180px; }}
-.backtest-monthly-table {{ min-width:360px; }}
 .gate-grid {{ display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px; }}
 .gate-grid div {{ border:1px solid var(--line); border-radius:8px; background:#0b1320; padding:12px; min-height:76px; }}
 .gate-grid b {{ display:block; margin:2px 0 4px; }}
@@ -2246,7 +2222,7 @@ tr:hover td {{ background:#101827; }}
 .refresh-status {{ color:var(--muted); font-size:12px; }}
 .refresh-countdown {{ display:inline-flex; align-items:center; gap:6px; border:1px solid var(--line); border-radius:8px; padding:7px 10px; color:#dbe7f6; background:#0b1320; font-weight:800; }}
 @media (max-width: 1320px) {{ .metrics,.cards {{ grid-template-columns:repeat(2, minmax(0, 1fr)); }} .app-shell {{ grid-template-columns:1fr; }} .side-rail {{ position:relative; height:auto; display:none; }} }}
-@media (max-width: 980px) {{ .metrics,.cards,.grid,.paper-summary,.paper-cards,.gate-grid,.history-grid,.position-detail-grid,.backtest-form,.param-controls,.backtest-advice-grid,.backtest-metrics,.backtest-detail-grid {{ grid-template-columns:1fr; }} .backtest-form .wide,.backtest-actions {{ grid-column:span 1; }} header {{ grid-template-columns:1fr; }} .wrap {{ padding:18px; }} }}
+@media (max-width: 980px) {{ .metrics,.cards,.grid,.paper-summary,.paper-cards,.gate-grid,.history-grid,.position-detail-grid {{ grid-template-columns:1fr; }} header {{ grid-template-columns:1fr; }} .wrap {{ padding:18px; }} }}
 </style>
 </head>
 <body>
@@ -2411,185 +2387,6 @@ async function refreshReport(btn) {{
     }}
   }}
 }}
-function getBacktestParameterSchema() {{
-  const el = document.getElementById('backtestParameterSchema');
-  if (!el) return {{strategies: {{}}}};
-  try {{
-    return JSON.parse(el.textContent || '{{}}');
-  }} catch (err) {{
-    return {{strategies: {{}}}};
-  }}
-}}
-function renderBacktestParamControls() {{
-  const form = document.querySelector('.backtest-form');
-  const box = document.getElementById('backtestParamControls');
-  if (!form || !box) return;
-  const schema = getBacktestParameterSchema();
-  const strategy = String(form.querySelector('[name="strategy"]')?.value || 'A/v11');
-  const rows = (schema.strategies && schema.strategies[strategy]) || [];
-  box.innerHTML = rows.map((row) => {{
-    const key = String(row.key || '');
-    return `<label class="param-control" data-param-key="${{key}}">
-      <span><input type="checkbox" name="param_enabled" value="${{key}}"> ${{row.label || key}}</span>
-      <input name="param_value_${{key}}" value="" placeholder="${{row.min}} - ${{row.max}}" inputmode="decimal" data-min="${{row.min}}" data-max="${{row.max}}" data-step="${{row.step}}">
-      <small>${{key}}；范围 ${{row.min}} - ${{row.max}}。${{row.note || ''}}</small>
-    </label>`;
-  }}).join('');
-  syncBacktestParamsFromControls();
-}}
-function syncBacktestParamsFromControls() {{
-  const form = document.querySelector('.backtest-form');
-  if (!form) return {{}};
-  const schema = getBacktestParameterSchema();
-  const maxParams = Number(schema.max_tuned_parameters || 3);
-  const params = {{}};
-  const enabled = Array.from(form.querySelectorAll('input[name="param_enabled"]:checked'));
-  const status = document.getElementById('backtestStatus');
-  if (enabled.length > maxParams) {{
-    if (status) status.textContent = '最多只能勾选 ' + maxParams + ' 个参数，避免过拟合。';
-    throw new Error('too_many_tuned_parameters');
-  }}
-  for (const checkbox of enabled) {{
-    const key = checkbox.value;
-    const input = form.querySelector(`[name="param_value_${{key}}"]`);
-    const raw = String(input?.value || '').trim();
-    if (!raw) continue;
-    const value = Number(raw);
-    const min = Number(input.dataset.min);
-    const max = Number(input.dataset.max);
-    if (!Number.isFinite(value)) throw new Error('参数不是数字：' + key);
-    if (Number.isFinite(min) && value < min) throw new Error('参数低于范围：' + key);
-    if (Number.isFinite(max) && value > max) throw new Error('参数高于范围：' + key);
-    params[key] = value;
-  }}
-  const textarea = form.querySelector('[name="params"]');
-  if (textarea && (enabled.length > 0 || !String(textarea.value || '').trim())) {{
-    textarea.value = JSON.stringify(params, null, 2);
-  }}
-  return params;
-}}
-function initBacktestParamControls() {{
-  const form = document.querySelector('.backtest-form');
-  if (!form) return;
-  form.querySelector('[name="strategy"]')?.addEventListener('change', renderBacktestParamControls);
-  form.addEventListener('input', (evt) => {{
-    if (evt.target.closest('.param-control')) {{
-      try {{ syncBacktestParamsFromControls(); }} catch (err) {{}}
-    }}
-  }});
-  form.addEventListener('change', (evt) => {{
-    if (evt.target.closest('.param-control')) {{
-      try {{ syncBacktestParamsFromControls(); }} catch (err) {{}}
-    }}
-  }});
-  renderBacktestParamControls();
-}}
-function estimateBacktestRuntime(payload) {{
-  const symbols = String(payload.symbols || '').split(',').map((x) => x.trim()).filter(Boolean).length || 1;
-  const days = Number(payload.period_days || 365);
-  const interval = String(payload.interval || '1h');
-  const variants = Math.max(1, Number(payload.parameter_variants || 1));
-  const intervalFactor = interval === '15m' ? 4 : interval === '30m' ? 2 : interval === '4h' ? 0.35 : 1;
-  const load = symbols * Math.max(1, days / 90) * intervalFactor * variants;
-  if (load <= 2) return '预计几十秒内';
-  if (load <= 12) return '预计 1-3 分钟';
-  return '预计 3-8 分钟；币种多、15m、参数变体多会更慢';
-}}
-async function submitBacktestJob(evt) {{
-  evt.preventDefault();
-  const form = evt.target;
-  const status = document.getElementById('backtestStatus');
-  const btn = form.querySelector('button[type="submit"]');
-  if (btn) {{
-    btn.disabled = true;
-    btn.textContent = '创建中';
-  }}
-  const fd = new FormData(form);
-  let params = {{}};
-  try {{
-    params = syncBacktestParamsFromControls();
-  }} catch (err) {{
-    if (status) status.textContent = '参数超出范围或数量过多，任务未提交。';
-    if (btn) {{
-      btn.disabled = false;
-      btn.textContent = '创建回测任务';
-    }}
-    return;
-  }}
-  const rawParams = String(form.querySelector('[name="params"]')?.value || '').trim();
-  if (rawParams && Object.keys(params).length === 0) {{
-    try {{
-      params = JSON.parse(rawParams);
-    }} catch (err) {{
-      if (status) status.textContent = '参数 JSON 无效，任务未提交。';
-      if (btn) {{
-        btn.disabled = false;
-        btn.textContent = '创建回测任务';
-      }}
-      return;
-    }}
-  }}
-  const payload = {{
-    user: 'decision_portal',
-    strategy: fd.get('strategy'),
-    symbols: fd.get('symbols'),
-    interval: fd.get('interval'),
-    period_days: fd.get('period_days'),
-    direction: fd.get('direction'),
-    capital_usdt: fd.get('capital_usdt'),
-    fee_bps: fd.get('fee_bps'),
-    slippage_bps: fd.get('slippage_bps'),
-    parameter_variants: fd.get('parameter_variants'),
-    params: params
-  }};
-  const startedAt = Date.now();
-  const estimate = estimateBacktestRuntime(payload);
-  let progressTimer = null;
-  if (status) {{
-    status.classList.add('backtest-progress-line');
-    status.textContent = '创建中：同步执行 research adapter；' + estimate + '；已耗时 0 秒。当前没有分阶段百分比，不显示假进度。';
-    progressTimer = setInterval(() => {{
-      const elapsed = Math.floor((Date.now() - startedAt) / 1000);
-      status.textContent = '创建中：同步执行 research adapter；' + estimate + '；已耗时 ' + elapsed + ' 秒。只读历史仓，不下单。';
-    }}, 1000);
-  }}
-  try {{
-    const resp = await fetch('/api/backtest/jobs', {{
-      method: 'POST',
-      headers: {{'Content-Type': 'application/json'}},
-      body: JSON.stringify(payload)
-    }});
-    const data = await resp.json();
-    if (!data.ok) throw new Error((data.errors || [data.error || '创建失败']).join('；'));
-    if (progressTimer) clearInterval(progressTimer);
-    const summary = (data.result && data.result.summary) || {{}};
-    const elapsed = Math.floor((Date.now() - startedAt) / 1000);
-    if (status) status.textContent = '回测完成：' + data.job_id + '；耗时 ' + elapsed + ' 秒；状态 ' + data.status + '；净收益 ' + (summary.net_profit_usdt ?? '-') + '；交易 ' + (summary.trades ?? 0) + '。结果只做研究建议，不自动改策略。';
-    setTimeout(() => window.location.reload(), 5000);
-  }} catch (err) {{
-    if (progressTimer) clearInterval(progressTimer);
-    if (status) status.textContent = '创建失败：' + (err.message || err);
-    if (btn) {{
-      btn.disabled = false;
-      btn.textContent = '创建回测任务';
-    }}
-  }}
-}}
-async function deleteBacktestJob(jobId) {{
-  if (!jobId || jobId === '-') return;
-  if (!confirm('删除这条回测任务记录？只删除任务 JSON，不删除历史K线仓。')) return;
-  const status = document.getElementById('backtestStatus');
-  if (status) status.textContent = '正在删除回测任务记录：' + jobId;
-  try {{
-    const resp = await fetch('/api/backtest/job?id=' + encodeURIComponent(jobId), {{method: 'DELETE'}});
-    const data = await resp.json();
-    if (!data.ok) throw new Error(data.error || '删除失败');
-    if (status) status.textContent = '已删除：' + jobId + '；剩余任务 ' + (data.remaining_jobs ?? '-') + '。历史K线仓未删除。';
-    setTimeout(() => window.location.reload(), 800);
-  }} catch (err) {{
-    if (status) status.textContent = '删除失败：' + (err.message || err);
-  }}
-}}
 function showPaperStrategy(name) {{
   document.querySelectorAll('.strategy-tab').forEach((el) => {{
     el.classList.toggle('active', el.dataset.strategy === name);
@@ -2616,7 +2413,6 @@ function startRefreshCountdown() {{
   tick();
   setInterval(tick, 1000);
 }}
-initBacktestParamControls();
 startRefreshCountdown();
 </script>
 </body>

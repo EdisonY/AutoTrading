@@ -186,9 +186,9 @@ def research_signal_brief(research_payload: dict[str, Any]) -> str:
             if counts.get("checked"):
                 bits.append(f"查{counts['checked']}")
             if counts.get("no_signal"):
-                bits.append(f"无{counts['no_signal']}")
+                bits.append(f"等信号{counts['no_signal']}")
             if counts.get("data_gap"):
-                bits.append(f"缺{counts['data_gap']}")
+                bits.append(f"缓存缺{counts['data_gap']}")
             parts.append(f"{label}:{'/'.join(bits) or '-'}")
             continue
         signal = row.get("signal") if isinstance(row.get("signal"), dict) else {}
@@ -196,7 +196,7 @@ def research_signal_brief(research_payload: dict[str, Any]) -> str:
         if status == "data_gap" and signal:
             need = int(num(signal.get("need_symbols")))
             times = int(num(signal.get("times")))
-            parts.append(f"{label}:缺横截面{need}币/{times}时点")
+            parts.append(f"{label}:横截面缓存不足({times}时点/需{need}币)")
         else:
             parts.append(f"{label}:{status}")
     return "；".join(parts[:4]) or "等待首轮信号"

@@ -925,6 +925,7 @@ def _decision_from_event(event: dict) -> dict:
     reason = str(event.get("skip_reason") or event.get("reason") or event.get("msg") or "")
     side = str(event.get("side") or "").lower()
     score = event.get("score", event.get("raw_score", event.get("net_score", 0)))
+    raw_payload = _compact_sentinel_scan_event(event) if status == "SENTINEL_SCANNED" else event
     return {
         "time": event.get("time") or event.get("ts") or str(datetime.now(CST)),
         "strategy": "A/v11",
@@ -940,7 +941,7 @@ def _decision_from_event(event: dict) -> dict:
         "event": status,
         "decision_stage": event.get("decision_stage") or event.get("stage") or "",
         "filter_layer": event.get("filter_layer") or event.get("risk_category") or "",
-        "raw": event,
+        "raw": raw_payload,
         "sentinel": event.get("sentinel", False),
         "sentinel_reason": event.get("sentinel_reason", ""),
         "sentinel_change_pct": event.get("sentinel_change_pct"),
@@ -1037,11 +1038,64 @@ def _execution_exception_case(name: str, exc: Exception | str, *, timeframe: str
         meta=meta,
     )
 
+SENTINEL_SCAN_JSONL_MODE = os.environ.get("SENTINEL_SCAN_JSONL_MODE", "actionable").strip().lower()
+SENTINEL_SCAN_JSONL_KEEP_RESULTS = {
+    "analysis_error",
+    "score_rejected",
+    "strategy_rejected",
+    "position_rejected",
+    "tradability_rejected",
+    "open_failed",
+    "opened",
+}
+
+
+def _compact_sentinel_scan_event(event: dict) -> dict:
+    keys = (
+        "time",
+        "event",
+        "symbol",
+        "timeframe",
+        "reason",
+        "category",
+        "decision_stage",
+        "filter_layer",
+        "sentinel_scan_result",
+        "sentinel_reason",
+        "sentinel_change_pct",
+        "sentinel_velocity_pct",
+        "sentinel_abs_velocity_pct",
+        "sentinel_quote_volume",
+        "sentinel_volume_delta",
+        "side",
+        "score",
+        "raw_score",
+        "net_score",
+        "strategy_gate_case",
+        "strategy_gate_cases",
+    )
+    return {key: event.get(key) for key in keys if key in event}
+
+
+def _should_write_sentinel_scan_jsonl(event: dict) -> bool:
+    if SENTINEL_SCAN_JSONL_MODE in {"0", "off", "false", "none"}:
+        return False
+    if SENTINEL_SCAN_JSONL_MODE in {"1", "full", "all", "true"}:
+        return True
+    result = str(event.get("sentinel_scan_result") or "").lower()
+    stage = str(event.get("decision_stage") or "").lower()
+    if result in SENTINEL_SCAN_JSONL_KEEP_RESULTS:
+        return True
+    return stage not in {"pre_filter", "strategy_scan"} and result not in {"pre_filter_rejected", "no_signal"}
+
+
 def _log_sentinel_scan_event(event: dict):
     """Log sentinel scan to dedicated sentinel_scans table (not events)."""
-    write_jsonl_with_daily_shard(EVENTS_LOG, event)
     EVENT_STORE.write_sentinel_scan(event, source="A/v11/events")
-    log_decision(_decision_from_event(event), persist_event_store=False)
+    if _should_write_sentinel_scan_jsonl(event):
+        compact_event = _compact_sentinel_scan_event(event)
+        write_jsonl_with_daily_shard(EVENTS_LOG, compact_event)
+        log_decision(_decision_from_event(compact_event), persist_event_store=False)
 
 def log_trade(trade: dict):
     write_jsonl_with_daily_shard(TRADES_LOG, trade)

@@ -97,6 +97,44 @@ def json_dumps(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, default=str, separators=(",", ":"))
 
 
+SENTINEL_SCAN_PAYLOAD_KEYS = {
+    "time",
+    "ts",
+    "event",
+    "strategy",
+    "symbol",
+    "timeframe",
+    "reason",
+    "category",
+    "decision_stage",
+    "filter_layer",
+    "sentinel_scan_result",
+    "sentinel_reason",
+    "sentinel_change_pct",
+    "sentinel_velocity_pct",
+    "sentinel_abs_velocity_pct",
+    "sentinel_quote_volume",
+    "sentinel_volume_delta",
+    "side",
+    "score",
+    "raw_score",
+    "net_score",
+    "strategy_gate_case",
+    "strategy_gate_cases",
+    "gate_case",
+    "gate_cases",
+    "parity_case",
+    "parity_cases",
+}
+
+
+def compact_sentinel_scan_payload(raw: dict[str, Any]) -> dict[str, Any]:
+    """Keep scan audit fields without duplicating bulky strategy payloads."""
+    compact = {key: raw.get(key) for key in SENTINEL_SCAN_PAYLOAD_KEYS if key in raw}
+    compact.setdefault("event", raw.get("event") or "SENTINEL_SCANNED")
+    return compact
+
+
 def init_db(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(path)
@@ -298,7 +336,7 @@ class EventStoreWriter:
                         raw.get("sentinel_abs_velocity_pct"),
                         raw.get("sentinel_quote_volume"),
                         str(raw.get("sentinel_scan_result") or ""),
-                        json_dumps(raw),
+                        json_dumps(compact_sentinel_scan_payload(raw)),
                     ),
                 )
                 conn.commit()

@@ -541,6 +541,7 @@
 - 2026-06-13：R-* 独立研究 paper 账本已部署到 Tencent。第一次启动暴露 research release 漏依赖 `regime_classifier.py` / `context_alpha_lab.py`，已补进 `release_manager.py` 并重部署。17:35 CST 手动 oneshot 成功，`crypto-research-paper-strategy.timer=active`，runner 输出 `status=completed`、`symbol_count=27`、`opened_this_run=0`、`direct_exchange_requests=0`。当前 R-* 账本无持仓，等待自然信号；这不是策略失败，只是本轮没有触发或缓存仍在加深。
 - 2026-06-13：report 同级展示规则更新。A/v11、B/v16、L1 负跳反弹 1h、J3 压缩突破 4h、E/4h 横截面强弱现在应在入口页模拟账本和策略状态里同级显示；C/v14 仍退役不占主屏。R 三条仍是独立 paper research strategy，不混 A/B，不自动升级。
 - 2026-06-13：Kronos 本地研究线落地第一版。`kronos_research_adapter.py` 只读本地历史 K线，默认 baseline smoke 验证数据管线，输出 `runtime/kronos_research_latest.json` 和 `reports/kronos_research_latest.html`。真实 Kronos 模型只能在本地装好官方 repo/权重后用 `--backend kronos` 运行；结果只能进入信号过滤/排序研究，不得直接进入 paper/live 或自动化升级。
+- 2026-06-13：当日日志分片暴涨根因修复。`logs/decisions/2026-06-13.jsonl` 约 555MB 不是 R 三策略造成，远端统计显示全是 A/v11 `SENTINEL_SCANNED`，主要为 `ATR=0黑名单` 和 `策略分析无信号`。已改为 A/v11 低价值哨兵扫描只进 SQLite `sentinel_scans` 计数字段，不再全量复制到 `logs/decisions` 和 `scanner_data/events` JSONL；可复盘的 `score_rejected/strategy_rejected/position_rejected/analysis_error` 仍保留。已把当天大 shard 原始内容压缩归档到 `/opt/crypto-auto-trader/archive/noisy_shards/20260613-212212/`，当前告警清零。R 策略 runner `status=completed`、timer active、service inactive after oneshot 是正常等待采样，不是策略异常。
 
 ---
 ## 2026-05-29 全局运行自检与账户方向口径修复

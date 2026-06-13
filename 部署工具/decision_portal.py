@@ -135,15 +135,15 @@ def research_result_brief(row: dict[str, Any]) -> str:
         signal = row.get("signal") if isinstance(row.get("signal"), dict) else {}
         status = str(row.get("status") or signal.get("status") or "-")
         if status == "data_gap" and signal:
-            return f"缺横截面{int(num(signal.get('need_symbols')))}币/{int(num(signal.get('times')))}时点"
+            return f"横截面缓存不足：{int(num(signal.get('times')))}时点/需{int(num(signal.get('need_symbols')))}币"
         return report_text(status)
     bits = []
     if counts.get("checked"):
         bits.append(f"查{counts['checked']}")
     if counts.get("no_signal"):
-        bits.append(f"无{counts['no_signal']}")
+        bits.append(f"等信号{counts['no_signal']}")
     if counts.get("data_gap"):
-        bits.append(f"缺{counts['data_gap']}")
+        bits.append(f"缓存缺{counts['data_gap']}")
     return "/".join(bits) or "-"
 
 
@@ -176,9 +176,9 @@ def research_signal_brief(research_paper: dict[str, Any]) -> str:
             if counts.get("checked"):
                 bits.append(f"查{counts['checked']}")
             if counts.get("no_signal"):
-                bits.append(f"无{counts['no_signal']}")
+                bits.append(f"等信号{counts['no_signal']}")
             if counts.get("data_gap"):
-                bits.append(f"缺{counts['data_gap']}")
+                bits.append(f"缓存缺{counts['data_gap']}")
             parts.append(f"{label}:{'/'.join(bits) or '-'}")
             continue
         signal = row.get("signal") if isinstance(row.get("signal"), dict) else {}
@@ -186,7 +186,7 @@ def research_signal_brief(research_paper: dict[str, Any]) -> str:
         if status == "data_gap" and signal:
             need = int(num(signal.get("need_symbols")))
             times = int(num(signal.get("times")))
-            parts.append(f"{label}:缺横截面{need}币/{times}时点")
+            parts.append(f"{label}:横截面缓存不足({times}时点/需{need}币)")
         else:
             parts.append(f"{label}:{report_text(status)}")
     return "；".join(parts[:4]) or "等待首轮信号"
@@ -817,11 +817,12 @@ def strategy_rows(
             bt_brief = research_backtest_brief(result) if result else "本地回测证据已入库；等待采样 JSON"
             opened = int(num(result.get("opened"))) if result else 0
             closed = int(num(result.get("closed"))) if result else 0
-            status_ok = service == "active" and str(research_payload.get("status") or "") in {"completed", "ok"}
+            runner_ok = str(research_payload.get("status") or "") in {"completed", "ok"}
+            timer_ok = service == "active" or (service in {"unknown", "inactive"} and runner_ok)
             rows.append({
-                "level": "good" if status_ok else "warn",
+                "level": "good" if timer_ok else "warn",
                 "name": strategy_display_name(name),
-                "service": "采样中" if service == "active" else f"异常({service})",
+                "service": "等待采样" if timer_ok else f"timer异常({service})",
                 "age": age_text(parse_dt(research_payload.get("generated_at"))),
                 "opens": str(opened),
                 "closes": str(closed),

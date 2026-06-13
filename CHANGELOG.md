@@ -11,6 +11,14 @@ This is the durable reason-and-outcome ledger for every material design, code, c
 - Live impact / deployment: A/v11 scanner restarted for logging-only code. Portal/system-alert service restarted. No strategy threshold, sizing, stop, scan frequency, paper/live order rule, Binance/API queue behavior, automatic tuning, automatic rollback, or automatic upgrade changed.
 - Files / release / commit: `core/event_store.py`, `策略文件/scanner.py`, `部署工具/decision_portal.py`, `部署工具/portal_dashboard.py`, `PROJECT_STATE.md`, `记忆文档/MEMORY.md`, `CHANGELOG.md`; commit/push to follow.
 
+## 2026-06-13 21:45 CST - Apply sentinel JSONL throttle to B/v16
+- Trigger / reason: After the A/v11 shard fix, follow-up inspection showed B/v16 had the same pattern at a smaller scale: `logs_v16/decisions/2026-06-13.jsonl` was about `50MB`, mostly `SENTINEL_SCANNED no_signal` and `loss_blacklist` rows. It was below the alert threshold but would grow into the same disk/report problem.
+- Completed: Applied the same actionable-only sentinel JSONL throttle to `scanner_v16.py`. B/v16 still writes all sentinel scan counts to SQLite `sentinel_scans`, while hot JSONL keeps actionable/reviewable rows and stops duplicating low-value `pre_filter` / `no_signal` scans.
+- Not completed / remaining: Historical B/v16 shards were not rewritten in this change because they are below the current alert threshold. If disk pressure returns, archive/filter old B shards separately.
+- Verification: `python -m py_compile 策略文件\scanner_v16.py`; deployment and post-check to follow.
+- Live impact / deployment: Logging-only B/v16 scanner change. No strategy threshold, confirmation, sizing, stop, scan frequency, paper/live order rule, Binance/API queue behavior, automatic tuning, automatic rollback, or automatic upgrade changed.
+- Files / release / commit: `策略文件/scanner_v16.py`, `CHANGELOG.md`; commit/push to follow.
+
 ## 2026-06-13 20:46 CST - Show R strategies as first-class report rows and add local Kronos adapter
 - Trigger / reason: User saw only A/B in the report and clarified that L1, J3, and E/4h should be shown at the same level as A/B. User also requested local Kronos development.
 - Completed: Updated `decision_portal.py` so `R-L1-NEG-JUMP-1H`, `R-J3-RANGE-CHOP-4H`, and `R-E-CSMOM-4H` appear as first-class strategy cards and strategy-status rows alongside A/v11 and B/v16. The R rows use `crypto-research-paper-strategy.timer`, `research_paper_strategy_latest.json`, and paper-ledger strategy summaries, while mover attribution remains A/B-only to avoid marking low-frequency R strategies as unscanned on every mover. Added local-only `kronos_research_adapter.py`, which reads the local historical Kline warehouse, writes `runtime/kronos_research_latest.json` and `reports/kronos_research_latest.html`, supports baseline smoke and optional `--backend kronos` with a local Kronos repo/model, and explicitly blocks live/paper/order/auto-upgrade use.

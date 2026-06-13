@@ -20,11 +20,13 @@
 - [x] `context_alpha_lab.py`：更高层 context alpha 多轮博弈框架已落地。它不再围绕 J3 参数继续拟合，而是把横截面动量、市场宽度、BTC/ETH 相对强弱、range/chop、compression transition、breadth thrust/crack、range 均值回归转成可检验事件，并要求打赢匹配随机基线、通过 train/validation/test、币种/月度不集中。两年全量 `3012025` context events、`224` rows，只有 `1` 个严格候选。
 - [x] Context alpha 首轮结果：唯一候选是 `X7_range_overbought_reversion_short / 30m / 3bar`，样本 `12736`，信号均值 `+0.048006%`、中位 `+0.101533%`、胜率 `54.012%`，相对匹配基线均值提升 `+0.051334%`、中位提升 `+0.063525%`、胜率提升 `+2.551%`。这是弱但真实的 context edge，不是可上线策略。
 - [x] X7 完整策略复核：`x7_range_reversion_strategy_research.py` 已落地并跑完两年全量。8 个预注册变体全部 rejected。最佳 `x7_exact_3bar_time_exit` 全样本 `-476.469886 USDT`、PF `0.906441`、`9097` 笔，train/validation/test 全亏，10bps 额外成本 `-2295.62`。结论：X7 微边在完整交易、费用、stop-loss 尾部下不可交易，不进 paper/live/research_candidate。
+- [x] K1/K2/K3 首轮：`k_alpha_research.py` 已落地并跑完两年本地主体。K1 发现真实 microstructure/depth 历史不足，不能做两年盘口假回测；K2 找到 `K2_negative_signed_jump_bounce_long / 4h / 12bar` forward-edge 候选；K3 低频动量 5 个变体全部 rejected。
+- [x] K2 完整策略复核：`k2_signed_jump_strategy_research.py` 已落地并跑完两年全量。8 个预注册变体全部 rejected。最佳 `k2_neg_jump_24bar_slow_time` 全样本 `+1531.352396 USDT`、PF `1.203361`、`2197` 笔、10bps 压力仍正，但 validation PF `1.010704`、test `-28.914066`/PF `0.966658`，不通过 OOS/anti-fit。结论：K2 只保留结构线索，不进 paper/live/research_candidate。
 - [ ] 下一轮：校准 regime 阈值，尤其 `compression_watch` 首版占比 `70.65%` 过宽；把模块实验从“完整小策略”进一步拆成 entry-only forward return、filter ablation、exit attribution。
-- [ ] 下一轮并行记录：J3 暂停参数拟合，只保留 range-chop/突破结构线索；4h breadth watchlist 只能作为后续 context filter clue，不能直接 paper/live。
-- [ ] 下一阶段主线 K1：微结构/订单流研究。先用本地/腾讯 compact microstructure 数据做 OFI、盘口不平衡、成交强弱、spread/深度状态的 forward-return 和 matched baseline，不从 Kline 伪造盘口；若历史太短，只作为短窗线上样本研究，不做两年假回测。
-- [ ] 下一阶段主线 K2：signed jump / good-bad volatility。把大阳/大阴、跳变、极端波动后的延续/反转拆开，做 regime + forward edge，而不是继续普通 RSI/Bollinger 均值回归。
-- [ ] 下一阶段主线 K3：低频 time-series momentum + volatility scaling。优先 4h/1d 级别，限制交易频率，控制手续费吞噬；横截面只做流动性过滤和组合选择，不再高频堆指标。
+- [ ] 下一轮并行记录：J3 暂停参数拟合，只保留 range-chop/突破结构线索；X7/K2 只保留结构线索；4h breadth watchlist 和 K2 `high_vol_chop_v2` 下钻只能作为后续预注册 context/filter clue，不能直接 paper/live。
+- [ ] 下一阶段主线 L1：预注册 regime-specific validation。先写清楚假设和过滤器，再跑；禁止根据 K2 breakdown 直接事后挑 `high_vol_chop_v2` 调参。候选方向包括极端波动后反弹/延续、range-chop 突破失败、breadth crack/thrust 后 4h 低频确认。
+- [ ] 下一阶段主线 L2：微结构短窗样本研究。只用真实 compact OFI/CVD/depth/spread/impact 样本做 forward-return 与 matched baseline；历史不足就承认短窗研究，不从 Kline 伪造盘口。
+- [ ] 下一阶段主线 L3：研究执行质量，不只研究入场。把同一 entry 的 time-exit、ATR exit、trailing、partial exit、volatility scaling、cooldown 和 max-trades/day 做模块化归因，先找“哪些出场/降频能稳定减尾部”，再考虑策略候选。
 
 ### 下一阶段核心原则
 

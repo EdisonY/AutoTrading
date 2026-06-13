@@ -33,6 +33,7 @@ MARKET_CACHE_PATH = ROOT / "runtime" / "market_data_cache.json"
 ALERTS_PATH = ROOT / "runtime" / "alerts_latest.json"
 ACCOUNT_SNAPSHOT_PATH = ROOT / "runtime" / "account_snapshot_latest.json"
 PAPER_EXCHANGE_PATH = ROOT / "runtime" / "paper_exchange_latest.json"
+RESEARCH_PAPER_STRATEGY_PATH = ROOT / "runtime" / "research_paper_strategy_latest.json"
 COUNTERFACTUAL_JSON = REPORTS_DIR / "counterfactual_open_skips_latest.json"
 COUNTERFACTUAL_HTML = REPORTS_DIR / "counterfactual_open_skips_latest.html"
 STRATEGY_EVOLUTION_JSON = ROOT / "runtime" / "strategy_evolution_latest.json"
@@ -1975,6 +1976,7 @@ def sqlite_strategy_status() -> list[dict[str, Any]]:
 
 def paper_exchange_summary() -> dict[str, Any]:
     payload = read_json(PAPER_EXCHANGE_PATH)
+    research_payload = read_json(RESEARCH_PAPER_STRATEGY_PATH)
     if not isinstance(payload, dict) or payload.get("mode") != "paper_exchange":
         return {
             "available": False,
@@ -1989,18 +1991,36 @@ def paper_exchange_summary() -> dict[str, Any]:
     age_seconds = (datetime.now(CST) - ts).total_seconds() if ts else None
     by_strategy = payload.get("by_strategy") if isinstance(payload.get("by_strategy"), dict) else {}
     strategy_bits = []
+    research_names = []
     lifecycle = payload.get("strategy_lifecycle") if isinstance(payload.get("strategy_lifecycle"), dict) else {}
     names = ["A/v11", "B/v16", "C/v14"]
     for name in sorted(by_strategy):
         status = lifecycle.get(name)
         row = by_strategy.get(name) if isinstance(by_strategy.get(name), dict) else {}
-        if name not in names and (name.startswith("R-") or status == "research_paper" or int(row.get("positions") or 0) > 0):
+        is_research = name.startswith("R-") or status == "research_paper"
+        if is_research:
+            research_names.append(name)
+        if name not in names and ((not is_research and int(row.get("positions") or 0) > 0) or (is_research and int(row.get("positions") or 0) > 0)):
             names.append(name)
     for name in names:
         row = by_strategy.get(name) if isinstance(by_strategy.get(name), dict) else {}
         status = lifecycle.get(name) or ("retired" if name == "C/v14" else "active")
+        if status == "retired" and int(row.get("positions") or 0) <= 0:
+            continue
         strategy_bits.append(
             f"{name}({status}) {int(row.get('positions') or 0)}仓 {float(row.get('unrealized_pnl') or 0):+.2f}"
+        )
+    if research_names:
+        research_positions = sum(int((by_strategy.get(name) or {}).get("positions") or 0) for name in research_names)
+        research_upnl = sum(num((by_strategy.get(name) or {}).get("unrealized_pnl")) for name in research_names)
+        direct_requests = 0
+        runner_status = "waiting"
+        if isinstance(research_payload, dict):
+            runner_status = str(research_payload.get("status") or "waiting")
+            pressure = research_payload.get("api_pressure") if isinstance(research_payload.get("api_pressure"), dict) else {}
+            direct_requests = int(pressure.get("direct_exchange_requests") or 0)
+        strategy_bits.append(
+            f"研究R({runner_status}) {len(research_names)}条/{research_positions}仓 {research_upnl:+.2f}，直连{direct_requests}"
         )
     return {
         "available": True,
@@ -2566,21 +2586,7 @@ def function_status_cards(data: dict[str, Any]) -> list[dict[str, str]]:
             ),
         },
         (
-            {
-                "level": "ok" if backtest_module.get("fresh") or backtest_module.get("available") else "warn",
-                "name": "历史回测模块",
-                "value": str(backtest_module.get("status") or "backtest_engine_ready"),
-                "body": (
-                    f"历史基线完成；覆盖 {int(backtest_hist.get('covered_symbol_count') or historical_quality.get('covered_symbol_count') or 0)}/"
-                    f"{int(backtest_hist.get('target_symbol_count') or historical_quality.get('target_symbol_count') or 0)} 币、"
-                    f"{int(backtest_hist.get('covered_symbol_interval_count') or historical_quality.get('covered_symbol_interval_count') or 0)}/"
-                    f"{int(backtest_hist.get('target_symbol_interval_count') or historical_quality.get('target_symbol_interval_count') or 0)} 币种周期。"
-                    f"前端任务API {backtest_caps.get('job_submit_api', False)}；反拟合门控 {backtest_caps.get('anti_overfit_gate', False)}；"
-                    f"research replay/PnL {backtest_caps.get('strategy_replay_adapter', False)}；"
-                    f"最近任务 {backtest_latest.get('status') or '-'}，净收益 {backtest_latest_summary.get('net_profit_usdt', '-')} USDT，"
-                    f"交易 {backtest_latest_summary.get('trades', 0)}，OOS {backtest_latest_oos.get('status', '-')}；不自动改策略。"
-                ),
-            }
+            None
             if historical_done
             else {
                 "level": (
@@ -3075,7 +3081,7 @@ def function_status_cards(data: dict[str, Any]) -> list[dict[str, str]]:
             ),
         },
     ]
-    return cards
+    return [card for card in cards if card]
 
 
 def build_findings(data: dict[str, Any]) -> list[dict[str, str]]:
@@ -4613,14 +4619,7 @@ def render_html(out_dir: Path) -> str:
             "slate",
         ),
         (
-            route_card(
-                "历史回测模块",
-                "前端发起回测",
-                "看 A/B/C 策略、币种、分时和参数复测结果；当前是 research adapter，不等同 live scanner 逐行复刻，结果不自动改策略。",
-                data["backtest_module_html"],
-                "看历史回测模块",
-                "blue",
-            )
+            None
             if historical_done
             else route_card(
                 "Top30一年历史K线",
@@ -4776,6 +4775,7 @@ def render_html(out_dir: Path) -> str:
             "blue",
         ),
     ]
+    routes = [route for route in routes if route]
 
     return f"""<!doctype html>
 <html lang="zh-CN">

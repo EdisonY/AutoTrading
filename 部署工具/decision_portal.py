@@ -1363,10 +1363,14 @@ def render_paper_exchange(state: dict[str, Any]) -> str:
     lifecycle = paper.get("strategy_lifecycle") if isinstance(paper.get("strategy_lifecycle"), dict) else {}
     research_paper = state.get("research_paper") if isinstance(state.get("research_paper"), dict) else {}
     strategy_names = list(STRATEGY_NAMES)
+    research_names: list[str] = []
     for name in sorted(by_strategy):
         row = by_strategy.get(name) if isinstance(by_strategy.get(name), dict) else {}
         status = lifecycle.get(name)
-        should_show = name.startswith("R-") or status == "research_paper" or int(row.get("positions") or 0) > 0
+        is_research = name.startswith("R-") or status == "research_paper"
+        if is_research and name not in research_names:
+            research_names.append(name)
+        should_show = (not is_research and int(row.get("positions") or 0) > 0) or (is_research and int(row.get("positions") or 0) > 0)
         if name not in strategy_names and should_show:
             strategy_names.append(name)
     cards = []
@@ -1438,11 +1442,29 @@ def render_paper_exchange(state: dict[str, Any]) -> str:
     research_line = ""
     if research_paper:
         pressure = research_paper.get("api_pressure") if isinstance(research_paper.get("api_pressure"), dict) else {}
+        status_counts = research_paper.get("status_counts") if isinstance(research_paper.get("status_counts"), dict) else {}
+        research_positions = sum(int((by_strategy.get(name) or {}).get("positions") or 0) for name in research_names)
+        research_upnl = sum(num((by_strategy.get(name) or {}).get("unrealized_pnl")) for name in research_names)
+        research_open_notional = sum(num((by_strategy.get(name) or {}).get("open_notional")) for name in research_names)
+        strategy_bits = " / ".join(
+            f"{name.replace('R-', '')}:{int((by_strategy.get(name) or {}).get('positions') or 0)}仓"
+            for name in research_names
+        ) or "等待首轮信号"
         research_line = (
-            f"<p class='empty'>研究策略 runner：{h(report_text(research_paper.get('status') or 'waiting'))}"
-            f"；本轮开 {h(research_paper.get('opened_this_run', 0))} / 平 {h(research_paper.get('closed_this_run', 0))}"
-            f"；扫描币 {h(research_paper.get('symbol_count', 0))}"
-            f"；API：{h(report_text(pressure.get('market_data_source') or 'cache only'))}。</p>"
+            "<div class='research-paper-strip'>"
+            "<div><span>研究账本采样</span>"
+            f"<b>{h(report_text(research_paper.get('status') or 'waiting'))} · {h(len(research_names))} 条</b>"
+            f"<small>{h(strategy_bits)}</small></div>"
+            "<div><span>本轮动作</span>"
+            f"<b>开 {h(research_paper.get('opened_this_run', 0))} / 平 {h(research_paper.get('closed_this_run', 0))}</b>"
+            f"<small>扫描 {h(research_paper.get('symbol_count', 0))} 币；无信号 {h(status_counts.get('no_signal', 0))}；数据缺口 {h(status_counts.get('data_gap', 0))}</small></div>"
+            "<div><span>研究持仓</span>"
+            f"<b>{h(research_positions)} 仓 / {h(number(research_upnl, 4))} USDT</b>"
+            f"<small>名义价值 {h(number(research_open_notional, 2))} USDT；未触发就不展开空表</small></div>"
+            "<div><span>API 压力</span>"
+            f"<b>直连 {h(pressure.get('direct_exchange_requests', 0))}</b>"
+            f"<small>{h(report_text(pressure.get('market_data_source') or '只读中心缓存'))}</small></div>"
+            "</div>"
         )
     return f"""
 <div class="paper-summary">
@@ -1451,9 +1473,9 @@ def render_paper_exchange(state: dict[str, Any]) -> str:
   <div><span>开仓数</span><b>{h(paper.get('open_positions', 0))}</b></div>
   <div><span>盯市刷新</span><b>{h(age_text(paper_ts))}</b></div>
 </div>
+{research_line}
 <div class="paper-cards">{''.join(cards)}</div>
 <div class="paper-panels">{''.join(panels)}</div>
-{research_line}
 <p class="empty">这是自建模拟账本：不下真实单。价格：{h(report_text(fidelity.get('price') or 'OKX/本地K线'))}；时间：{h(report_text(fidelity.get('time') or '按 runner 刷新'))}；滑点：{h(report_text(fidelity.get('slippage') or '非真实撮合'))}；手续费：{h(report_text(fidelity.get('fees') or '按账本费率'))}。</p>
 """
 
@@ -1580,9 +1602,6 @@ def render_cards(state: dict[str, Any]) -> str:
     research = state["research"]
     kline_acceptance = research.get("kline_acceptance") if isinstance(research.get("kline_acceptance"), dict) else {}
     waiting_progress = state.get("waiting_progress") if isinstance(state.get("waiting_progress"), dict) else {}
-    historical = state.get("historical_kline") if isinstance(state.get("historical_kline"), dict) else {}
-    historical_progress = historical.get("progress") if isinstance(historical.get("progress"), dict) else {}
-    historical_quality = historical.get("quality") if isinstance(historical.get("quality"), dict) else {}
     historical_incremental = state.get("historical_kline_incremental") if isinstance(state.get("historical_kline_incremental"), dict) else {}
     incremental_progress = historical_incremental.get("progress") if isinstance(historical_incremental.get("progress"), dict) else {}
     waiting_summary = waiting_progress.get("summary") if isinstance(waiting_progress.get("summary"), dict) else {}
@@ -1591,22 +1610,6 @@ def render_cards(state: dict[str, Any]) -> str:
     paper = state.get("paper_exchange") if isinstance(state.get("paper_exchange"), dict) else {}
     market = state.get("market") if isinstance(state.get("market"), dict) else {}
     micro = state.get("microstructure") if isinstance(state.get("microstructure"), dict) else {}
-    backtest = state.get("backtest_module") if isinstance(state.get("backtest_module"), dict) else {}
-    backtest_caps = backtest.get("capabilities") if isinstance(backtest.get("capabilities"), dict) else {}
-    history_done = historical_kline_complete(historical)
-    history_or_backtest_card = (
-        (
-            "历史回测",
-            plain_status(backtest.get("status") or "backtest_engine_ready"),
-            f"基线已完成；覆盖 {int(historical_quality.get('covered_symbol_count') or 0)}/{int(historical_quality.get('target_symbol_count') or 0)} 币、{int(historical_quality.get('covered_symbol_interval_count') or 0)}/{int(historical_quality.get('target_symbol_interval_count') or 0)} 币种周期。前端任务API {plain_status(backtest_caps.get('job_submit_api', True))}；research replay/PnL {plain_status(backtest_caps.get('strategy_replay_adapter', False))}；结果不自动改策略。",
-        )
-        if history_done
-        else (
-            "一年历史K线",
-            f"{float(historical_progress.get('percent') or 0):.1f}% / {plain_status(historical.get('status') or 'missing')}",
-            f"任务队列 {plain_status(historical.get('status') or 'missing')}；可用覆盖 {int(historical_quality.get('covered_symbol_count') or 0)}/{int(historical_quality.get('target_symbol_count') or 0)} 币、{int(historical_quality.get('covered_symbol_interval_count') or 0)}/{int(historical_quality.get('target_symbol_interval_count') or 0)} 币种周期。不随首页刷新打 API。",
-        )
-    )
     rows = [
         ("模拟账本", f"{paper.get('open_positions', 0)} 仓 / {number(paper.get('total_unrealized_pnl'), 4)} USDT", "这是当前主 PnL 入口。点击下方策略表，可看每个持仓和入场K线。"),
         ("行情覆盖", f"{len(market.get('available_symbols') or [])} 币 / Top {len(market.get('top_symbols') or [])}", f"来源：{report_text(','.join(market.get('sources') or []) or '外部公开行情')}。"),
@@ -1630,7 +1633,6 @@ def render_cards(state: dict[str, Any]) -> str:
         ("回放验收", plain_status(replay.get("status")), f"已准备 {replay_summary.get('ready_components', 0)}/{replay_summary.get('total_components', 0)} 块；下一步：{plain_status(replay.get('next_action'))}。"),
         ("同输入审计", f"{float(parity_summary.get('pass_rate_pct') or 0):.1f}% 通过", f"同一批输入下，已验 {parity_summary.get('gate_cases', 0)} 个策略判断，不一致 {parity_summary.get('mismatched', 0)} 个。"),
         ("K线/深度", plain_status(kline_acceptance.get("status")), "这是以后回测和升级策略的燃料。第一版先看是否在稳定积累，不急着一次补满。"),
-        history_or_backtest_card,
         (
             "每日历史增量",
             f"{plain_status(historical_incremental.get('status') or 'missing')} / {int(incremental_progress.get('written_rows') or 0)} 行",
@@ -1975,11 +1977,9 @@ def render_backtest_module(state: dict[str, Any]) -> str:
 def render_history_or_backtest_panel(state: dict[str, Any]) -> str:
     historical = state.get("historical_kline") if isinstance(state.get("historical_kline"), dict) else {}
     if historical_kline_complete(historical):
-        title = "历史回测模块"
-        body = render_backtest_module(state)
-    else:
-        title = "历史数据拉取进度"
-        body = render_historical_kline_progress(state)
+        return ""
+    title = "历史数据拉取进度"
+    body = render_historical_kline_progress(state)
     return f"""
   <section class="panel" id="backtest">
     <h2>{h(title)}</h2>
@@ -2082,6 +2082,11 @@ h1 {{ margin:0; font-size:30px; letter-spacing:0; font-weight:850; }}
 .paper-summary {{ display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px; margin-bottom:12px; }}
 .paper-summary div,.paper-card {{ border:1px solid var(--line); border-radius:8px; background:#0b1320; padding:12px; }}
 .paper-summary b,.paper-card b {{ display:block; font-size:21px; margin-top:4px; color:#f7fbff; }}
+.research-paper-strip {{ display:grid; grid-template-columns:1.2fr 1fr 1fr 1fr; gap:10px; margin:0 0 12px; }}
+.research-paper-strip div {{ border:1px solid rgba(93,140,255,.34); border-radius:8px; background:linear-gradient(180deg,#101a29,#0a121f); padding:11px 12px; }}
+.research-paper-strip span {{ display:block; color:#8ea2bd; font-size:12px; letter-spacing:.02em; }}
+.research-paper-strip b {{ display:block; color:#f7fbff; font-size:16px; margin-top:3px; }}
+.research-paper-strip small {{ display:block; color:#9fb1c8; margin-top:4px; line-height:1.42; }}
 .paper-cards {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:10px; margin-bottom:12px; }}
 .paper-card {{ width:100%; text-align:left; color:var(--ink); cursor:pointer; font:inherit; }}
 .paper-card.active {{ border-color:var(--cyan); box-shadow:0 0 0 1px rgba(43,212,214,.18), var(--shadow); }}
@@ -2207,7 +2212,6 @@ tr:hover td {{ background:#101827; }}
     <a class="active" href="#overview">总览</a>
     <a href="#paper">模拟账本</a>
     <a href="#movers">涨跌榜</a>
-    <a href="#backtest">历史回测</a>
     <a href="#strategies">三策略</a>
     <a href="#actions">确认事项</a>
   </nav>
@@ -2275,8 +2279,6 @@ tr:hover td {{ background:#101827; }}
           <a href="/reports/long_term_skeleton_latest.md">长期目标骨架</a>
           <a href="/reports/strategy_evolution_latest.html">策略进化</a>
           <a href="/reports/research_store_summary_latest.md">研究仓</a>
-          <a href="/reports/backtest_module_latest.md">历史回测模块</a>
-          <a href="/api/backtest/status">回测状态 API</a>
           <a href="/api/attention">确认事项 API</a>
         </div>
       </section>

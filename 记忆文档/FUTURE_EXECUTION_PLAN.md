@@ -17,9 +17,11 @@
 - [x] J3 v2 完整策略重建：`j3_v2_strategy_research.py` 已落地并跑完两年全量，5 个变体全部 rejected。最佳 P3 filter 变体 full/test/10bps 全失败；no-filter 变体全样本为正但 validation/test/cost stress 失败。J3 v2 当前停止，不继续围绕它调参拟合。
 - [x] `matched_baseline_lab.py`：本地匹配基线验收框架已落地。它把每个信号与同币种、同周期、同月份、同 regime、相近 ATR/成交量分位的随机基线点比较，避免只看信号自身 forward return。已修复信号名被统计字段覆盖的报告 bug。两年全量结果为 `573638` 匹配样本、`2` 个 baseline_outperformer、`16` 个 near_miss、`30` 个 reject。两个 outperformer 都是 `J3_compression_breakout_v2 / 4h` 的 1-bar/3-bar forward edge。
 - [x] J3 matched-baseline 复核：`J3_compression_breakout_v2 / 4h` 的优势主要来自当前 regime 为 `range_chop_v2`，不是 `compression_tight_v2` 本身。`j3_v2_strategy_research.py` 已加入 `range_chop_v2` narrow gate 变体并重跑；最佳 `j3v2_range_chop_1bar_matched_gate` 全样本 `+59.191277 USDT`、PF `1.776237`、`112` 笔，但 validation/test 均亏，仍 rejected。结论：保留结构线索，不进 paper/live，不继续围绕 J3 参数拟合。
+- [x] `context_alpha_lab.py`：更高层 context alpha 多轮博弈框架已落地。它不再围绕 J3 参数继续拟合，而是把横截面动量、市场宽度、BTC/ETH 相对强弱、range/chop、compression transition、breadth thrust/crack、range 均值回归转成可检验事件，并要求打赢匹配随机基线、通过 train/validation/test、币种/月度不集中。两年全量 `3012025` context events、`224` rows，只有 `1` 个严格候选。
+- [x] Context alpha 首轮结果：唯一候选是 `X7_range_overbought_reversion_short / 30m / 3bar`，样本 `12736`，信号均值 `+0.048006%`、中位 `+0.101533%`、胜率 `54.012%`，相对匹配基线均值提升 `+0.051334%`、中位提升 `+0.063525%`、胜率提升 `+2.551%`。这是弱但真实的 context edge，不是可上线策略。
 - [ ] 下一轮：校准 regime 阈值，尤其 `compression_watch` 首版占比 `70.65%` 过宽；把模块实验从“完整小策略”进一步拆成 entry-only forward return、filter ablation、exit attribution。
-- [ ] 下一轮：为 J3 做 compression breakout 的更严格定义，要求普通突破对照组明显更差、分币种不集中、月份不集中、test 不塌。
-- [ ] 下一轮：不要继续对 J3 v2 做参数拟合；优先转向微结构、横截面、市场宽度/联动、事件过滤，或者先证明新信号在 walk-forward/OOS 上稳定后再重开 full-strategy rebuild。
+- [ ] 下一轮优先：为 `X7_range_overbought_reversion_short / 30m / 3bar` 做专门完整策略复核，必须包含 short-only entry/exit、3bar/time exit、ATR stop、均值回归离场、成本/滑点压力、turnover、train/validation/test、walk-forward、币种/月度/regime 贡献拆解；失败则直接淘汰，不反复调参。
+- [ ] 下一轮并行记录：J3 暂停参数拟合，只保留 range-chop/突破结构线索；4h breadth watchlist 只能作为后续 context filter clue，不能直接 paper/live。
 
 ### 下一阶段核心原则
 

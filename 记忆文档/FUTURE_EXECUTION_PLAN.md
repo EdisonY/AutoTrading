@@ -19,9 +19,12 @@
 - [x] J3 matched-baseline 复核：`J3_compression_breakout_v2 / 4h` 的优势主要来自当前 regime 为 `range_chop_v2`，不是 `compression_tight_v2` 本身。`j3_v2_strategy_research.py` 已加入 `range_chop_v2` narrow gate 变体并重跑；最佳 `j3v2_range_chop_1bar_matched_gate` 全样本 `+59.191277 USDT`、PF `1.776237`、`112` 笔，但 validation/test 均亏，仍 rejected。结论：保留结构线索，不进 paper/live，不继续围绕 J3 参数拟合。
 - [x] `context_alpha_lab.py`：更高层 context alpha 多轮博弈框架已落地。它不再围绕 J3 参数继续拟合，而是把横截面动量、市场宽度、BTC/ETH 相对强弱、range/chop、compression transition、breadth thrust/crack、range 均值回归转成可检验事件，并要求打赢匹配随机基线、通过 train/validation/test、币种/月度不集中。两年全量 `3012025` context events、`224` rows，只有 `1` 个严格候选。
 - [x] Context alpha 首轮结果：唯一候选是 `X7_range_overbought_reversion_short / 30m / 3bar`，样本 `12736`，信号均值 `+0.048006%`、中位 `+0.101533%`、胜率 `54.012%`，相对匹配基线均值提升 `+0.051334%`、中位提升 `+0.063525%`、胜率提升 `+2.551%`。这是弱但真实的 context edge，不是可上线策略。
+- [x] X7 完整策略复核：`x7_range_reversion_strategy_research.py` 已落地并跑完两年全量。8 个预注册变体全部 rejected。最佳 `x7_exact_3bar_time_exit` 全样本 `-476.469886 USDT`、PF `0.906441`、`9097` 笔，train/validation/test 全亏，10bps 额外成本 `-2295.62`。结论：X7 微边在完整交易、费用、stop-loss 尾部下不可交易，不进 paper/live/research_candidate。
 - [ ] 下一轮：校准 regime 阈值，尤其 `compression_watch` 首版占比 `70.65%` 过宽；把模块实验从“完整小策略”进一步拆成 entry-only forward return、filter ablation、exit attribution。
-- [ ] 下一轮优先：为 `X7_range_overbought_reversion_short / 30m / 3bar` 做专门完整策略复核，必须包含 short-only entry/exit、3bar/time exit、ATR stop、均值回归离场、成本/滑点压力、turnover、train/validation/test、walk-forward、币种/月度/regime 贡献拆解；失败则直接淘汰，不反复调参。
 - [ ] 下一轮并行记录：J3 暂停参数拟合，只保留 range-chop/突破结构线索；4h breadth watchlist 只能作为后续 context filter clue，不能直接 paper/live。
+- [ ] 下一阶段主线 K1：微结构/订单流研究。先用本地/腾讯 compact microstructure 数据做 OFI、盘口不平衡、成交强弱、spread/深度状态的 forward-return 和 matched baseline，不从 Kline 伪造盘口；若历史太短，只作为短窗线上样本研究，不做两年假回测。
+- [ ] 下一阶段主线 K2：signed jump / good-bad volatility。把大阳/大阴、跳变、极端波动后的延续/反转拆开，做 regime + forward edge，而不是继续普通 RSI/Bollinger 均值回归。
+- [ ] 下一阶段主线 K3：低频 time-series momentum + volatility scaling。优先 4h/1d 级别，限制交易频率，控制手续费吞噬；横截面只做流动性过滤和组合选择，不再高频堆指标。
 
 ### 下一阶段核心原则
 

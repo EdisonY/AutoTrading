@@ -1,5 +1,42 @@
 # AutoTrading 双服务器架构优化 + 长期执行计划
 
+## 2026-06-14 外部三库吸收计划：Kronos + RL 环境 + Alpha2 表达式搜索
+
+本阶段只吸收方法，不复制外部仓为生产依赖。所有新研究仍默认本地运行，重型实验不放云端，结果不直接进入 paper/live/自动升级。
+
+### 结论
+
+- `shiyu-coder/Kronos`：可作为本地预测特征引擎、横截面排序器、候选信号二次过滤器。它已经能在本地用 `NeoQuasar/Kronos-small` 跑通真模型推理，但当前小样证据混合：`1h` 有一点正向预测迹象，`4h` 弱。短期只做本地 feature/ranker，不部署服务器，不进 R paper 账本，不接 A/B/R 过滤器。
+- `Leezans/Reinforcement-Learning-in-Finance_Minimal-implementation`：不适合作为可上线 RL 策略模板。它是单股票、单环境、PPO+LSTM/残差网络最小实现，reward 是资产增量，动作是买卖比例，交易环境和 crypto futures/paper-fill 差距大。可吸收的是“标准化交易环境接口、动作空间、reward/资产曲线日志、策略行为可视化”，不是直接训练 RL 来交易。
+- `x35f/alpha2`：不是可运行完整库，README 明确是论文伪代码/结构。核心价值是“逻辑公式 alpha 搜索”的工程思想：表达式树、操作符/操作数 token、合法动作检查、维度约束、MCTS/价值网络搜索。它适合改造成我们自己的本地 alpha grammar/search lab，用已有 OHLCV/Kronos/L2/regime 特征生成候选公式，再经过 matched baseline、OOS、成本压力和复杂度惩罚过滤。
+
+### P0：Kronos 本地特征库
+
+- 新建本地只读 `kronos_feature_store`：对 clean27、`15m/30m/1h/4h`、horizon `1/3/6/12` 生成 `pred_return_pct`、方向、rank、置信/分歧、baseline delta。
+- 支持断点续跑和覆盖报告；大文件留在 ignored `research_lab/` 或 `runtime/`，Git 只提交工具和小型计划。
+- 先跑预测力验证，不接策略。验收：Kronos 必须稳定打赢 simple baseline 和 matched random，且 train/validation/test 不崩。
+
+### P1：RL 环境抽象，不训练实盘策略
+
+- 把现有 backtest/paper-fill 抽成 gym-like 本地环境：`reset/step/info`、动作空间、position/equity/fees/slippage、episode 日志。
+- 动作先限制为离散风控/过滤动作：`hold/allow/veto/reduce/close`，不要让 RL 直接决定裸开仓。
+- Reward 不用裸资产增量，改为风险调整后 reward：PnL - fee/slippage - drawdown penalty - turnover penalty - invalid action penalty。
+- 目标是以后评估“meta-gate/风控策略”，不是马上做 RL 交易机器人。
+
+### P2：Alpha2 思路改造成本地公式搜索
+
+- 自建表达式 grammar，不直接依赖 alpha2 伪代码：操作数包括 OHLCV、returns、ATR/vol/volume percentile、regime 标签、Kronos 预测、L2 OFI/CVD/depth 特征。
+- 操作符先小而硬：rank、zscore、rolling mean/std/corr、delta、clip、and/or/not、threshold、cross-sectional top/bottom。
+- 必须实现合法动作/维度约束/复杂度惩罚，禁止生成无意义或泄漏未来的公式。
+- 搜索先用枚举/beam/random，后续再考虑 MCTS；每条候选必须落到完整审计：forward edge -> matched baseline -> full strategy rebuild -> OOS/walk-forward -> cost stress。
+
+### P3：三者配合方式
+
+- Kronos 提供预测特征和横截面 rank。
+- Alpha grammar 用 Kronos/L2/regime/OHLCV 组合生成候选条件。
+- RL 环境只在候选策略已通过统计检验后，用来学习 meta-gate、仓位/退出/禁交易行为。
+- 最终进入服务器 paper 的只能是通过本地完整验收的独立策略或 meta-filter 提案；默认 `rollout_evidence_eligible=false`，不能自动晋级。
+
 ## 2026-06-13 下一阶段目标：研究账本采样 + 本地 alpha 方法论
 
 - [x] 服务器侧只接独立研究 paper 策略，不接 shadow 层：`R-L1-NEG-JUMP-1H`、`R-J3-RANGE-CHOP-4H`、`R-E-CSMOM-4H` 各自独立记账，A/B 账本不混入这些候选。

@@ -40,12 +40,24 @@ EVENT_DB = MIRROR_DB if MIRROR_DB.exists() else LOCAL_DB
 CST = timezone(timedelta(hours=8))
 DEFAULT_TAKER_FEE_RATE = 0.0004
 REPORT_REFRESH_SECONDS = 60
-STRATEGY_NAMES = ("A/v11", "B/v16")
+STRATEGY_NAMES = ("A/v11", "B/v16", "R-L1-NEG-JUMP-1H", "R-J3-RANGE-CHOP-4H", "R-E-CSMOM-4H")
+MOVER_STRATEGY_NAMES = ("A/v11", "B/v16")
 RETIRED_STRATEGY_NAMES = ("C/v14",)
 STRATEGY_LIFECYCLE = {
     "A/v11": "active",
     "B/v16": "frozen_observe",
     "C/v14": "retired",
+    "R-L1-NEG-JUMP-1H": "research_paper",
+    "R-J3-RANGE-CHOP-4H": "research_paper",
+    "R-E-CSMOM-4H": "research_paper",
+}
+STRATEGY_DISPLAY_NAMES = {
+    "A/v11": "A/v11",
+    "B/v16": "B/v16",
+    "C/v14": "C/v14",
+    "R-L1-NEG-JUMP-1H": "L1 负跳反弹 1h",
+    "R-J3-RANGE-CHOP-4H": "J3 压缩突破 4h",
+    "R-E-CSMOM-4H": "E/4h 横截面强弱",
 }
 
 
@@ -94,6 +106,56 @@ def research_strategy_label(strategy: Any) -> str:
     if text.startswith("E-"):
         return "E/4h"
     return text or "-"
+
+
+def strategy_display_name(strategy: Any) -> str:
+    text = str(strategy or "")
+    return STRATEGY_DISPLAY_NAMES.get(text, text or "-")
+
+
+def research_result_map(research_paper: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    rows = research_paper.get("results") if isinstance(research_paper.get("results"), list) else []
+    out: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        if isinstance(row, dict):
+            name = str(row.get("strategy") or row.get("strategy_id") or "")
+            if name:
+                out[name] = row
+    return out
+
+
+def research_result_brief(row: dict[str, Any]) -> str:
+    signals = row.get("signals") if isinstance(row.get("signals"), list) else []
+    counts: dict[str, int] = {}
+    for signal in signals:
+        if isinstance(signal, dict):
+            status = str(signal.get("status") or "-")
+            counts[status] = counts.get(status, 0) + 1
+    if not counts:
+        signal = row.get("signal") if isinstance(row.get("signal"), dict) else {}
+        status = str(row.get("status") or signal.get("status") or "-")
+        if status == "data_gap" and signal:
+            return f"缺横截面{int(num(signal.get('need_symbols')))}币/{int(num(signal.get('times')))}时点"
+        return report_text(status)
+    bits = []
+    if counts.get("checked"):
+        bits.append(f"查{counts['checked']}")
+    if counts.get("no_signal"):
+        bits.append(f"无{counts['no_signal']}")
+    if counts.get("data_gap"):
+        bits.append(f"缺{counts['data_gap']}")
+    return "/".join(bits) or "-"
+
+
+def research_backtest_brief(row: dict[str, Any]) -> str:
+    backtest = row.get("backtest") if isinstance(row.get("backtest"), dict) else {}
+    if not backtest:
+        return "回测证据缺失"
+    net = number(backtest.get("full_net_usdt"), 2)
+    pf = fmt_plain(backtest.get("profit_factor"), 2)
+    trades = int(num(backtest.get("trades")))
+    note = report_text(backtest.get("note") or "research only")
+    return f"本地回测 {net} USDT，PF {pf}，{trades}笔；{note}"
 
 
 def research_signal_brief(research_paper: dict[str, Any]) -> str:
@@ -726,6 +788,8 @@ def strategy_rows(
     *,
     include_details: bool = False,
     live_services: dict[str, Any] | None = None,
+    research_paper: dict[str, Any] | None = None,
+    paper_exchange: dict[str, Any] | None = None,
 ) -> list[dict[str, str]]:
     services = alerts.get("services") if isinstance(alerts.get("services"), dict) else {}
     if live_services:
@@ -733,10 +797,43 @@ def strategy_rows(
     service_map = {
         "A/v11": "crypto-scanner.service",
         "B/v16": "crypto-scanner-v16.service",
+        "R-L1-NEG-JUMP-1H": "crypto-research-paper-strategy.timer",
+        "R-J3-RANGE-CHOP-4H": "crypto-research-paper-strategy.timer",
+        "R-E-CSMOM-4H": "crypto-research-paper-strategy.timer",
     }
     by_name = {row["name"]: row for row in event.get("strategies") or [] if isinstance(row, dict)}
+    research_payload = research_paper if isinstance(research_paper, dict) else {}
+    research_by_name = research_result_map(research_payload)
+    paper_by_strategy = {}
+    if isinstance(paper_exchange, dict) and isinstance(paper_exchange.get("by_strategy"), dict):
+        paper_by_strategy = paper_exchange.get("by_strategy") or {}
     rows = []
     for name in STRATEGY_NAMES:
+        if name.startswith("R-"):
+            service = services.get(service_map[name], "unknown")
+            result = research_by_name.get(name, {})
+            paper_row = paper_by_strategy.get(name) if isinstance(paper_by_strategy.get(name), dict) else {}
+            signal_brief = research_result_brief(result) if result else "等待首轮信号"
+            bt_brief = research_backtest_brief(result) if result else "本地回测证据已入库；等待采样 JSON"
+            opened = int(num(result.get("opened"))) if result else 0
+            closed = int(num(result.get("closed"))) if result else 0
+            status_ok = service == "active" and str(research_payload.get("status") or "") in {"completed", "ok"}
+            rows.append({
+                "level": "good" if status_ok else "warn",
+                "name": strategy_display_name(name),
+                "service": "采样中" if service == "active" else f"异常({service})",
+                "age": age_text(parse_dt(research_payload.get("generated_at"))),
+                "opens": str(opened),
+                "closes": str(closed),
+                "open_failed": "0",
+                "close_failed": "0",
+                "open_skipped": signal_brief,
+                "note": f"{bt_brief}；当前 {int(paper_row.get('positions') or 0)} 仓 / {number(paper_row.get('unrealized_pnl'), 4)} USDT；只进独立模拟账本。",
+                "raw_note": "",
+                "note_kind": "normal",
+                "detail_html": "",
+            })
+            continue
         item = by_name.get(name, {})
         service = services.get(service_map[name], "unknown")
         open_failed = int(item.get("open_failed") or 0)
@@ -759,7 +856,7 @@ def strategy_rows(
             note_kind = "skip"
         rows.append({
             "level": level,
-            "name": name,
+            "name": strategy_display_name(name),
             "service": "运行中" if service == "active" else f"异常({service})",
             "age": age_text(item.get("latest")),
             "opens": str(item.get("opens", 0)),
@@ -1004,7 +1101,7 @@ def _mover_strategy_filter_summary(records: list[dict[str, Any]]) -> str:
         "已扫": [],
         "未扫": [],
     }
-    for name in STRATEGY_NAMES:
+    for name in MOVER_STRATEGY_NAMES:
         strategy_records = [row for row in records if row.get("strategy") == name]
         if not strategy_records:
             grouped["未扫"].append(name)
@@ -1384,7 +1481,7 @@ def render_badges(state: dict[str, Any]) -> str:
     alert_value = "偏旧" if state.get("alerts_stale") else str(alerts.get("alert_count", 0))
     alert_level = "warn" if state.get("alerts_stale") else "bad" if alerts.get("status") == "bad" else "warn" if alerts.get("status") == "warn" else "good"
     items = [
-        ("三策略", "运行中", "good"),
+        ("策略账本", "A/B/R运行中", "good"),
         ("行情源", f"{source_count} 路 / {available_symbols} 币", "good" if source_count >= 2 else "warn"),
         ("盘口/CVD", f"{micro.get('fresh_symbols_240s', 0)}/{micro.get('coverage_symbols', 0)}", "good" if int(micro.get("fresh_symbols_240s") or 0) >= 80 else "warn"),
         ("模拟持仓", str(paper.get("open_positions", account.get("open_positions", 0))), "good"),
@@ -1425,7 +1522,7 @@ def render_paper_exchange(state: dict[str, Any]) -> str:
         cards.append(
             f"""
 <button class="paper-card strategy-tab {'active' if idx == 0 else ''}" type="button" data-strategy="{h(name)}" onclick="showPaperStrategy('{h(name)}')">
-  <span>{h(name)} · {h(report_text(status))}</span>
+  <span>{h(strategy_display_name(name))} · {h(report_text(status))}</span>
   <b>{h(row.get('positions', 0))} 仓 / {h(number(row.get('unrealized_pnl'), 4))} USDT</b>
   <p>权益 {h(amount(row.get('equity'), 2))}，已实现 {h(number(row.get('realized_pnl'), 4))}，手续费 {h(amount(row.get('fees_paid'), 4))}</p>
 </button>
@@ -2078,7 +2175,14 @@ def render_release_gate(state: dict[str, Any]) -> str:
 def render_html() -> str:
     state = build_state()
     live_services = state.get("live_context", {}).get("services") if isinstance(state.get("live_context"), dict) else {}
-    strategies = strategy_rows(state["event"], state["alerts"], state["account"], live_services=live_services if isinstance(live_services, dict) else {})
+    strategies = strategy_rows(
+        state["event"],
+        state["alerts"],
+        state["account"],
+        live_services=live_services if isinstance(live_services, dict) else {},
+        research_paper=state.get("research_paper") if isinstance(state.get("research_paper"), dict) else {},
+        paper_exchange=state.get("paper_exchange") if isinstance(state.get("paper_exchange"), dict) else {},
+    )
     generated = state["generated_at"].strftime("%Y-%m-%d %H:%M:%S")
     alerts = state["alerts"].get("alerts") if isinstance(state["alerts"].get("alerts"), list) else []
     if state.get("alerts_stale"):
@@ -2233,7 +2337,7 @@ tr:hover td {{ background:#101827; }}
     <a class="active" href="#overview">总览</a>
     <a href="#paper">模拟账本</a>
     <a href="#movers">涨跌榜</a>
-    <a href="#strategies">三策略</a>
+    <a href="#strategies">策略状态</a>
     <a href="#actions">确认事项</a>
   </nav>
   <div class="rail-note">只读报表。策略运行、持仓、盈亏、图表都来自当前模拟账本和外部行情。</div>
@@ -2258,7 +2362,7 @@ tr:hover td {{ background:#101827; }}
   </section>
 {render_history_or_backtest_panel(state)}
   <section class="panel" id="paper">
-    <h2>三策略模拟账本运行总览</h2>
+    <h2>策略模拟账本运行总览</h2>
     {render_paper_exchange(state)}
   </section>
   <section class="panel" id="movers">
@@ -2272,7 +2376,7 @@ tr:hover td {{ background:#101827; }}
   <section class="grid">
     <div>
       <section class="panel" id="strategies">
-        <h2>三策略现在是否正常</h2>
+        <h2>策略现在是否正常</h2>
         {render_strategy_table(strategies)}
       </section>
       <section class="panel" id="actions">

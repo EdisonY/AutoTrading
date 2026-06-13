@@ -539,6 +539,8 @@
 - 2026-06-13：候选 x A/B 匹配矩阵已完成。新增 `candidate_ab_match_research.py`，本地两年 clean27 回测 L1 负跳反弹、E/4h 横截面强弱、J3 压缩突破的 standalone 与 A/B 同向/反向过滤。结果：A/B 过滤器 `0` 个通过；L1 与 J3 继续只作结构线索，不进 paper/live；E/4h 两个 standalone 变体通过本地人工复核门槛（`lookback=48,top=3,hold=8` 和 `lookback=48,top=5,hold=8`），但仍不是自动晋级。下一步如推进，只能先设计独立 `strategy_id` 的 E/4h paper adapter 与风险规格，不能把它直接混进 A/B 策略过滤器。
 - 2026-06-13：用户明确更新策略采样规则：L1、J3、E/4h 只要回测相对较好或正收益，可以作为独立研究账本策略上 Tencent paper 采样，但不能混入 A/B 过滤器，不能算自动升级证据，不能动真实订单。落地的策略 ID 为 `R-L1-NEG-JUMP-1H`、`R-J3-RANGE-CHOP-4H`、`R-E-CSMOM-4H`；runner 必须只读现有 `runtime/kline_cache` / `market_data_cache` / paper-fill 模型，直接交易所请求数为 `0`。新增策略多了不会天然压 API，真正风险是每个策略各自拉 Kline/depth；后续所有研究策略必须走中心缓存/中心特征，不得各自发请求。
 - 2026-06-13：R-* 独立研究 paper 账本已部署到 Tencent。第一次启动暴露 research release 漏依赖 `regime_classifier.py` / `context_alpha_lab.py`，已补进 `release_manager.py` 并重部署。17:35 CST 手动 oneshot 成功，`crypto-research-paper-strategy.timer=active`，runner 输出 `status=completed`、`symbol_count=27`、`opened_this_run=0`、`direct_exchange_requests=0`。当前 R-* 账本无持仓，等待自然信号；这不是策略失败，只是本轮没有触发或缓存仍在加深。
+- 2026-06-13：report 同级展示规则更新。A/v11、B/v16、L1 负跳反弹 1h、J3 压缩突破 4h、E/4h 横截面强弱现在应在入口页模拟账本和策略状态里同级显示；C/v14 仍退役不占主屏。R 三条仍是独立 paper research strategy，不混 A/B，不自动升级。
+- 2026-06-13：Kronos 本地研究线落地第一版。`kronos_research_adapter.py` 只读本地历史 K线，默认 baseline smoke 验证数据管线，输出 `runtime/kronos_research_latest.json` 和 `reports/kronos_research_latest.html`。真实 Kronos 模型只能在本地装好官方 repo/权重后用 `--backend kronos` 运行；结果只能进入信号过滤/排序研究，不得直接进入 paper/live 或自动化升级。
 
 ---
 ## 2026-05-29 全局运行自检与账户方向口径修复

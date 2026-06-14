@@ -2,6 +2,15 @@
 
 This is the durable reason-and-outcome ledger for every material design, code, configuration, deployment, rollback, optimization, or live operational change.
 
+## 2026-06-14 10:33 CST - Fix Aliyun report freshness for R sampling rows
+- Trigger / reason: User reported the three new research strategies still looked unopened and the report still showed abnormal rows. Live inspection showed the R paper runner itself was healthy, but Aliyun had stale report/runtime state and could surface `异常(unknown)` from an older local mirror.
+- Completed: Verified Tencent live context first: `crypto-research-paper-strategy.timer=active`, oneshot service `inactive` after success, `research_paper_strategy.status=completed`, `opened_this_run=0`, `closed_this_run=0`, `status_counts={"checked":2,"data_gap":17,"no_signal":38}`, `direct_exchange_requests=0`. Refreshed Aliyun portal/report, then patched `部署工具/aliyun_decision_portal_refresh.sh` so fresh `runtime/paper_exchange_latest.json` and `runtime/research_paper_strategy_latest.json` pulled from Tencent are also copied into the local runtime mirror before report generation. This prevents stale Aliyun runtime JSON from keeping old R status alive.
+- Result: Public report now shows `异常(unknown)=0`, `timer异常=0`, `等待采样=3`, and the three R rows remain visible as sampling rows. The R strategies still have no open this run because they hit `no_signal`/`data_gap`, not because the service failed.
+- Not completed / remaining: The tiny SQLite mirror sync can still warn if `runtime/event_store.sqlite3` age is older than the chosen max-age window; that warning is report-side only and did not reintroduce the R abnormal display. No strategy thresholds, scanner cadence, order logic, or API behavior changed.
+- Verification: `python -B 部署工具\pull_live_context.py --logs-days 1 --log-tail 600`; public Aliyun report fetch from `http://39.105.156.210:8090/`; remote Aliyun refresh run; local Tencent/Aliyun JSON freshness checks for `runtime/research_paper_strategy_latest.json` and `runtime/paper_exchange_latest.json`.
+- Live impact / deployment: Report-only operational fix on Aliyun refresh path. No Binance request, no scanner restart, no strategy mutation, no order path change, no automatic tuning, no automatic rollback, and no automatic upgrade.
+- Files / release / commit: `部署工具/aliyun_decision_portal_refresh.sh`, `CHANGELOG.md`, `PROJECT_STATE.md`, `记忆文档/MEMORY.md`; commit/push to follow.
+
 ## 2026-06-14 02:05 CST - Stage external-method research plan
 - Trigger / reason: User asked to temporarily stage the Kronos plan and evaluate three external repositories for inspiration: `shiyu-coder/Kronos`, `Leezans/Reinforcement-Learning-in-Finance_Minimal-implementation`, and `x35f/alpha2`.
 - Completed: Cloned the two new external repositories into ignored `research_lab/external/` and reviewed them alongside the already cloned official Kronos repo. Added a new top-level section to `记忆文档/FUTURE_EXECUTION_PLAN.md` that records how to absorb the three methods without turning them into production dependencies. Updated `记忆文档/MEMORY.md` with the durable conclusion.

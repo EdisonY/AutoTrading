@@ -37,6 +37,11 @@ do
   if timeout 15s ssh -o BatchMode=yes -o ConnectTimeout=8 -o ServerAliveInterval=4 -o ServerAliveCountMax=1 \
     "$TENCENT_USER@$TENCENT_HOST" "cat '$TENCENT_ROOT/$rel' 2>/dev/null" > "$tmp" && [ -s "$tmp" ]; then
     mv "$tmp" "server_logs_tencent/$rel"
+    case "$rel" in
+      runtime/paper_exchange_latest.json|runtime/research_paper_strategy_latest.json)
+        cp "server_logs_tencent/$rel" "$rel"
+        ;;
+    esac
   else
     rm -f "$tmp"
   fi
